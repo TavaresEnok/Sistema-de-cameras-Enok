@@ -19,11 +19,25 @@ test('NVENC só é emitido quando o pipeline de transcode DECLARA ter NVENC', ()
 test('a guarda é fail-safe: sem sinal explícito, assume CPU', () => {
   const src = readFileSync('src/camera-stream/mediamtx-proxy.service.ts', 'utf8');
   const i = src.indexOf('private transcodePipelineHasNvenc()');
-  const corpo = src.slice(i, i + 400);
+  const corpo = src.slice(i, i + 900);
   // Só o literal "true" liga. Falso negativo custa desempenho; falso positivo
   // custa a LIVE — então o default tem de ser CPU.
-  assert.match(corpo, /=== 'true'/, 'apenas "true" explícito habilita NVENC');
+  assert.match(corpo, /'true'/, 'apenas "true" explícito habilita NVENC');
   assert.match(corpo, /\?\?\s*''/, 'ausência da variável deve virar string vazia (= CPU)');
+});
+
+test('resiliência: placa ARRANCADA faz o transcode cair para CPU sozinho', () => {
+  // O env GPU_TRANSCODE_AVAILABLE é ESTÁTICO (setado quando o stack subiu com
+  // GPU). Se a placa for removida com o serviço no ar, o env continua 'true' e
+  // o publisher seguiria emitindo h264_nvenc num pipeline sem GPU — o ffmpeg
+  // morre e derruba a LIVE. A guarda tem de conferir a PRESENÇA REAL do
+  // dispositivo, não só o env.
+  const src = readFileSync('src/camera-stream/mediamtx-proxy.service.ts', 'utf8');
+  const i = src.indexOf('private transcodePipelineHasNvenc()');
+  const corpo = src.slice(i, i + 900);
+  assert.match(corpo, /dev\/nvidia0|dev\/nvidiactl/,
+    'a guarda precisa conferir o device node da GPU — senão placa arrancada derruba a live');
+  assert.match(corpo, /existsSync/, 'a checagem do device é por presença de arquivo (nunca quebra)');
 });
 
 test('a imagem de GPU acompanha a versão do MediaMTX de produção', () => {

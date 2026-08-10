@@ -147,14 +147,14 @@ export function buildHeartbeatCameras(
     alerts.push({
       level: totals.stalled >= HEARTBEAT_CAMERAS_STALLED_CRITICAL ? 'critical' : 'warning',
       code: 'cameras_stalled',
-      message: `${totals.stalled} camera(s) com gravacao estagnada (sem segmento novo).`,
+      message: `${totals.stalled} ${totals.stalled === 1 ? 'câmera parou' : 'câmeras pararam'} de gerar novas gravações.`,
     });
   }
   if (expectedInactive > 0) {
     alerts.push({
       level: 'warning',
       code: 'camera_recording_expected_inactive',
-      message: `${expectedInactive} camera(s) com gravacao esperada e nenhum processo ativo.`,
+      message: `${expectedInactive} ${expectedInactive === 1 ? 'câmera deveria estar gravando, mas não está' : 'câmeras deveriam estar gravando, mas não estão'}.`,
     });
   }
 

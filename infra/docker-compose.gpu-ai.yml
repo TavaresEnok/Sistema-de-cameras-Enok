@@ -17,13 +17,9 @@ services:
       context: ../services/ai-service-python
       dockerfile: Dockerfile.gpu
     image: drac-ai-service-gpu:local
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu, utility, compute]
+    # Sem reserva RÍGIDA de device (ver comentário no docker-compose.gpu.yml): a
+    # GPU vem pelo runtime nvidia default + NVIDIA_VISIBLE_DEVICES. Sem placa, o
+    # container sobe e o ObjectDetector cai para CPU (`_gpu_realmente_presente`).
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility

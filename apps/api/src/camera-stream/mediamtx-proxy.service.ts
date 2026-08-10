@@ -9,6 +9,7 @@ import {
   resolveLiveRtspProfile,
 } from '../cameras/helpers/rtsp-url.helper';
 import * as os from 'node:os';
+import { existsSync } from 'node:fs';
 import { envNumber } from '../common/config/env-number.helper';
 import {
   ingestPathNames,
@@ -825,7 +826,14 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
    */
   private transcodePipelineHasNvenc(): boolean {
     const raw = this.configService.get<string>('gpuTranscodeAvailable') ?? process.env.GPU_TRANSCODE_AVAILABLE ?? '';
-    return String(raw).trim().toLowerCase() === 'true';
+    if (String(raw).trim().toLowerCase() !== 'true') return false;
+    // O env é ESTÁTICO (setado quando o stack subiu com GPU). Se a placa for
+    // ARRANCADA com o serviço no ar, o env continua 'true' e o publisher
+    // seguiria emitindo `h264_nvenc` num pipeline sem GPU — o ffmpeg morre na
+    // largada e derruba a LIVE da câmera (runOnDemandRestart=false). O device
+    // node some junto com a placa, então conferimos a presença REAL: sem GPU,
+    // o transcode cai para libx264 sozinho e a live sobrevive.
+    return existsSync('/dev/nvidia0') || existsSync('/dev/nvidiactl');
   }
 
   pathNameFromCameraId(cameraId: string, deliveryMode: LiveViewMode = 'selected') {

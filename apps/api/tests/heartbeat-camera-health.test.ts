@@ -191,7 +191,7 @@ test('alertas: câmeras travadas viram cameras_stalled (warning; critical a part
     { level: few[0].level, code: few[0].code },
     { level: 'warning', code: 'cameras_stalled' },
   );
-  assert.match(few[0].message, /^1 camera/, 'a mensagem tem de dizer QUANTAS');
+  assert.match(few[0].message, /^1 câmera/, 'a mensagem tem de dizer QUANTAS');
 
   const manyList = Array.from({ length: HEARTBEAT_CAMERAS_STALLED_CRITICAL }, (_, i) => stalled(`s-${i}`));
   const many = buildHeartbeatCameras(report(manyList), 250).alerts;
@@ -216,7 +216,7 @@ test('alertas: gravação ESPERADA e INATIVA vira camera_recording_expected_inac
     { level: alerts[0].level, code: alerts[0].code },
     { level: 'warning', code: 'camera_recording_expected_inactive' },
   );
-  assert.match(alerts[0].message, /^2 camera/);
+  assert.match(alerts[0].message, /^2 câmeras/);
 });
 
 test('alertas: travada NÃO é contada também como inativa (um defeito, um alerta)', () => {
@@ -236,7 +236,7 @@ test('alertas contam a FROTA INTEIRA, não só o que coube no teto', () => {
   const stalledAlert = alerts.find((a) => a.code === 'cameras_stalled');
   assert.match(
     stalledAlert?.message ?? '',
-    /^5 camera/,
+    /^5 câmeras/,
     'truncar a lista não pode encolher o alerta — a Central acionaria suporte com o número errado',
   );
 });
@@ -393,6 +393,35 @@ test('heartbeat: CLOUD_HEARTBEAT_CAMERA_LIMIT recorta a lista (frota grande não
   assert.equal(payload.cameras.items[0].cameraId, 'cam-travada');
   assert.equal(payload.cameras.omitted, 5);
   assert.equal(payload.cameras.totals.cameras, 7);
+});
+
+test('heartbeat: modo de segurança da gravação por movimento gera aviso compreensível', async () => {
+  const service = makeConnector({ observability: undefined });
+  (service as any).getMotionFailsafeCount = () => 2;
+
+  const payload = await collect(service);
+  const alert = payload.summary.alerts.find((item: any) => item.code === 'motion_detection_failsafe');
+  assert.ok(alert);
+  assert.equal(alert.level, 'critical');
+  assert.match(alert.message, /detecção de movimento.*2 câmeras.*gravação de segurança/i);
+  assert.doesNotMatch(alert.message, /failsafe|processo|worker/i);
+});
+
+test('heartbeat: atraso e perda confirmada na nuvem viram alertas distintos', async () => {
+  const service = makeConnector({ observability: undefined });
+  (service as any).getCloudOffloadMetrics = async () => ({
+    cloudUploadPending: 12,
+    cloudUploadOldestPendingSeconds: 3700,
+    cloudCopiesMissing: 3,
+  });
+
+  const payload = await collect(service);
+  const atraso = payload.summary.alerts.find((item: any) => item.code === 'cloud_upload_delayed');
+  const ausentes = payload.summary.alerts.find((item: any) => item.code === 'cloud_recordings_missing');
+  assert.equal(atraso?.level, 'critical');
+  assert.match(atraso?.message ?? '', /12 gravações.*envio para a nuvem/);
+  assert.equal(ausentes?.level, 'critical');
+  assert.match(ausentes?.message ?? '', /3 gravações.*nuvem.*não foram encontradas/);
 });
 
 // ── fidelidade do fake ───────────────────────────────────────────────────────

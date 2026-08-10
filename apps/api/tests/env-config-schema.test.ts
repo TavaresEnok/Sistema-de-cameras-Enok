@@ -91,6 +91,7 @@ const DEFAULTS: Record<string, unknown> = {
   recordingControlMode: 'local',
   recordingMinFreeBytes: 2147483648,
   recordingMinFreePercent: 5,
+  recordingSegmentOrphanMaxAgeMs: 21600000,
   recordingSegmentSeconds: 300,
   recordingThumbnailSecond: 2,
   recordingsRoot: './storage/recordings',

@@ -314,38 +314,41 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       this.getCameraHealthForHeartbeat(),
     ]);
 
-    const alerts: Array<{ level: 'warning' | 'critical'; code: string; message: string }> = [];
+    const alerts: Array<{ level: 'warning' | 'critical'; code: string; message: string; key?: string }> = [];
     if (disk?.usagePercent !== null && disk?.usagePercent !== undefined && disk.usagePercent >= 85) {
-      alerts.push({ level: 'critical', code: 'disk_usage_high', message: `Uso de disco em ${disk.usagePercent}%.` });
+      alerts.push({ level: 'critical', code: 'disk_usage_high', key: 'disk_usage', message: `O disco do servidor está com ${disk.usagePercent}% de uso. O espaço para novas gravações está crítico.` });
     } else if (disk?.usagePercent !== null && disk?.usagePercent !== undefined && disk.usagePercent >= 75) {
-      alerts.push({ level: 'warning', code: 'disk_usage_attention', message: `Uso de disco em ${disk.usagePercent}%.` });
+      alerts.push({ level: 'warning', code: 'disk_usage_attention', key: 'disk_usage', message: `O disco do servidor está com ${disk.usagePercent}% de uso e precisa de atenção.` });
     }
     if (cameraCounts.offline + cameraCounts.error > 0) {
+      const indisponiveis = cameraCounts.offline + cameraCounts.error;
       alerts.push({
         level: 'warning',
         code: 'cameras_unavailable',
-        message: `${cameraCounts.offline + cameraCounts.error} camera(s) indisponivel(is).`,
+        message: `${indisponiveis} ${indisponiveis === 1 ? 'câmera está' : 'câmeras estão'} sem comunicação ou com erro.`,
       });
     }
     if (cameraCounts.total > 0 && cameraCounts.online === 0) {
-      alerts.push({ level: 'critical', code: 'no_online_cameras', message: 'Nenhuma camera online.' });
+      alerts.push({ level: 'critical', code: 'no_online_cameras', message: 'Todas as câmeras da instalação estão sem comunicação.' });
     }
     if (streamPerformance?.summary?.highCpuRiskCameras > 0) {
+      const cameras = streamPerformance.summary.highCpuRiskCameras;
       alerts.push({
-        level: streamPerformance.summary.highCpuRiskCameras >= 3 ? 'critical' : 'warning',
+        level: cameras >= 3 ? 'critical' : 'warning',
         code: 'stream_high_cpu_risk',
-        message: `${streamPerformance.summary.highCpuRiskCameras} camera(s) com risco alto de CPU/transcode.`,
+        message: `${cameras} ${cameras === 1 ? 'câmera está exigindo' : 'câmeras estão exigindo'} processamento elevado para exibir vídeo. As imagens podem apresentar lentidão.`,
       });
     }
     if (streamPerformance?.summary?.liveFailuresLast24h > 0) {
+      const falhas = streamPerformance.summary.liveFailuresLast24h;
       alerts.push({
-        level: streamPerformance.summary.liveFailuresLast24h >= 10 ? 'critical' : 'warning',
+        level: falhas >= 10 ? 'critical' : 'warning',
         code: 'live_failures_recent',
-        message: `${streamPerformance.summary.liveFailuresLast24h} falha(s) de live nas ultimas 24h.`,
+        message: `${falhas === 1 ? 'Foi detectada' : 'Foram detectadas'} ${falhas} ${falhas === 1 ? 'falha' : 'falhas'} ao abrir imagens ao vivo nas últimas 24 horas.`,
       });
     }
     if (recordings._count.id > 0 && !recordings._max.startedAt) {
-      alerts.push({ level: 'warning', code: 'recording_without_last_segment', message: 'Gravacoes sem ultimo segmento detectado.' });
+      alerts.push({ level: 'warning', code: 'recording_without_last_segment', message: 'O sistema não conseguiu identificar o horário da gravação mais recente.' });
     }
 
     const mediamtxOriginsRestricted =
@@ -362,20 +365,22 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       alerts.push({
         level: 'warning',
         code: 'recording_disabled_all',
-        message: 'Nenhuma camera esta com gravacao habilitada. O administrador pode ativar gravacao continua, por movimento ou manual conforme o contrato.',
+        message: 'Nenhuma câmera está configurada para gravar, embora a instalação exija gravação.',
       });
     }
     if (recordingCapacityEnforced && recordingCapacity.status === 'blocked') {
       alerts.push({
         level: 'critical',
         code: 'recording_storage_capacity_insufficient',
-        message: `Storage insuficiente para ${recordingCapacity.retentionDays}d de retencao: estimado ${recordingCapacity.estimatedRequiredGb}GB, capacidade segura ${recordingCapacity.safeCapacityGb}GB.`,
+        key: 'recording_storage_capacity',
+        message: `O armazenamento disponível não é suficiente para manter ${recordingCapacity.retentionDays} dias de gravações.`,
       });
     } else if (recordingCapacityEnforced && recordingCapacity.status === 'attention') {
       alerts.push({
         level: 'warning',
         code: 'recording_storage_capacity_attention',
-        message: `Storage apertado para ${recordingCapacity.retentionDays}d de retencao: estimado ${recordingCapacity.estimatedRequiredGb}GB, capacidade segura ${recordingCapacity.safeCapacityGb}GB.`,
+        key: 'recording_storage_capacity',
+        message: `O armazenamento está próximo do limite necessário para manter ${recordingCapacity.retentionDays} dias de gravações.`,
       });
     }
     // Saúde POR CÂMERA → alerts derivados (mesmo esquema level/code/message).
@@ -384,11 +389,43 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
     if (cameraHealth) alerts.push(...cameraHealth.alerts);
 
     // Saúde de INFRA do watchdog → vira alerts (a Central já os exibe/historia).
-    const infraHealth = await this.getInfraWatchdogHealth(recordingsRoot);
+    const motionFailsafeCameras = this.getMotionFailsafeCount();
+    const [infraHealth, cloudOffloadMetrics] = await Promise.all([
+      this.getInfraWatchdogHealth(recordingsRoot),
+      this.getCloudOffloadMetrics(),
+    ]);
+
+    if (motionFailsafeCameras > 0) {
+      alerts.push({
+        level: 'critical',
+        code: 'motion_detection_failsafe',
+        message: `A detecção de movimento deixou de responder em ${motionFailsafeCameras} ${motionFailsafeCameras === 1 ? 'câmera' : 'câmeras'}. A gravação de segurança foi ativada automaticamente.`,
+      });
+    }
+
+    const cloudCopiesMissing = Number(cloudOffloadMetrics.cloudCopiesMissing || 0);
+    if (cloudCopiesMissing > 0) {
+      alerts.push({
+        level: 'critical',
+        code: 'cloud_recordings_missing',
+        message: `${cloudCopiesMissing} ${cloudCopiesMissing === 1 ? 'gravação que deveria estar armazenada na nuvem não foi encontrada' : 'gravações que deveriam estar armazenadas na nuvem não foram encontradas'}.`,
+      });
+    }
+    const cloudUploadPending = Number(cloudOffloadMetrics.cloudUploadPending || 0);
+    const cloudUploadOldestPendingSeconds = Number(cloudOffloadMetrics.cloudUploadOldestPendingSeconds || 0);
+    const cloudUploadAlertAfterSeconds = this.getPositiveInt(process.env.CLOUD_UPLOAD_ALERT_AFTER_SECONDS, 15 * 60);
+    if (cloudUploadPending > 0 && cloudUploadOldestPendingSeconds >= cloudUploadAlertAfterSeconds) {
+      alerts.push({
+        level: cloudUploadOldestPendingSeconds >= 60 * 60 ? 'critical' : 'warning',
+        code: 'cloud_upload_delayed',
+        message: `${cloudUploadPending} ${cloudUploadPending === 1 ? 'gravação aguarda' : 'gravações aguardam'} envio para a nuvem há mais tempo que o esperado.`,
+      });
+    }
+
     if (infraHealth) {
       for (const issue of infraHealth.issues) {
         if (issue.startsWith('disk:')) continue; // disco já coberto pelos alerts acima
-        const critical = /^(live:|container:|api:|web:|build-agent:)/.test(issue);
+        const critical = /^(live:|container:|api:|web:|security:|site-cameras:)/.test(issue);
         alerts.push({
           level: critical ? 'critical' : 'warning',
           code: `infra_${issue.split(':')[0]}`,
@@ -458,9 +495,9 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
         // Detector de movimento cego com gravação de emergência ligada. Zero é
         // o normal; qualquer valor > 0 é a instalação se defendendo de um
         // detector que parou — e o operador da Central PRECISA ver isso.
-        motionFailsafeCameras: this.getMotionFailsafeCount(),
+        motionFailsafeCameras,
         // Saúde do envio à nuvem (fila, última falha) — só quando configurado.
-        ...(await this.getCloudOffloadMetrics()),
+        ...cloudOffloadMetrics,
         activeUsers,
         diskUsagePercent: disk?.usagePercent ?? null,
         infraHealth: infraHealth

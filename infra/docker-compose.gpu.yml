@@ -16,39 +16,30 @@
 # O ffmpeg com NVENC já vem embutido (mediamtx-nvenc.Dockerfile construído acima).
 # A API usa o mesmo ffmpeg do host-image para auto-teste/métricas via nvidia-smi.
 
+# RESILIÊNCIA A PLACA ARRANCADA: aqui NÃO se usa
+# `deploy.resources.reservations.devices` (reserva RÍGIDA de GPU). Aquilo faz o
+# container SE RECUSAR A SUBIR quando não há placa — então, se alguém arranca a
+# GPU e o stack reinicia, o sistema inteiro não voltava. Em vez disso, a GPU é
+# exposta pelo RUNTIME nvidia (default do daemon) + NVIDIA_VISIBLE_DEVICES: com
+# placa, o runtime injeta a GPU; SEM placa, ele só avisa e o container sobe
+# mesmo assim, e o código cai para CPU (transcode→libx264, IA→CPU). Medido:
+# arrancar a placa não derruba mais o boot.
 services:
   api:
-    # Exponha a GPU para o serviço que roda o auto-teste/métricas (nvidia-smi + ffmpeg nvenc).
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu, video, utility, compute]
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
-      # Sinaliza à API que o pipeline de transcode (MediaMTX) tem NVENC embutido,
-      # para o checklist da UI refletir a realidade mesmo que o ffmpeg da própria
-      # API não tenha nvenc. Setado automaticamente quando este override está ativo.
+      # Sinaliza à API que o pipeline de transcode (MediaMTX) tem NVENC embutido.
+      # A checagem final ainda confere o device node em runtime, então placa
+      # arrancada faz o transcode cair para libx264 sozinho.
       - GPU_TRANSCODE_AVAILABLE=true
 
   mediamtx:
-    # Onde o transcode de vídeo realmente acontece. Esta imagem (construída
-    # automaticamente pelo gpu-setup.sh) já vem com ffmpeg NVENC embutido —
-    # não é preciso trocar nada à mão.
+    # Onde o transcode de vídeo realmente acontece. Imagem com ffmpeg NVENC.
     build:
       context: .
       dockerfile: mediamtx-nvenc.Dockerfile
     image: drac-mediamtx-nvenc:local
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu, video, utility, compute]
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
