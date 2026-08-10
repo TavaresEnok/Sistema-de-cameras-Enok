@@ -41,7 +41,7 @@ const NAV_SECTIONS: NavSection[] = [
       // Alertas requerem operador ou superior (viewers não têm acesso)
       { path: '/alarms',   label: 'Alarmes',        icon: Bell,     roles: ['admin', 'operator'] },
       { path: '/ptz',      label: 'Controle PTZ',   icon: Crosshair },
-      { path: '/seguranca', label: 'Segurança',     icon: ShieldAlert, roles: ['admin', 'operator'] },
+      { path: '/perimetro', label: 'Perímetro',     icon: ShieldAlert, roles: ['admin', 'operator'] },
       { path: '/wall',     label: 'Modo Mural',     icon: LayoutGrid },
       { path: '/events',   label: 'Eventos',        icon: Bell,      roles: ['admin', 'operator'] },
     ],

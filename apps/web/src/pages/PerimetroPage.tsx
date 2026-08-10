@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
-import { ExternalLink, ShieldAlert, Spline, SquareDashed, EyeOff, Plus } from 'lucide-react';
+import { ShieldAlert, Spline, SquareDashed, EyeOff } from 'lucide-react';
 import { SeletorDeCamera } from '../components/SeletorDeCamera';
-import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
+import { DetectionZonesEditor, type DetectionZone } from '../components/DetectionZonesEditor';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 
-// ── PÁGINA DE SEGURANÇA — linha e zona de perímetro, por câmera ─────────────
+// ── PÁGINA DE PERÍMETRO — linha e zona de detecção, por câmera ──────────────
 //
-// Irmã da página de PTZ. Mesma filosofia: esta tela AGREGA (mostra a frota e o
-// que cada câmera tem de perímetro) e MANDA CONFIGURAR no editor que já existe
-// no detalhe da câmera (aba "zones"), em vez de duplicar o editor de desenho.
+// Você DESENHA aqui mesmo, sobre o SNAPSHOT da câmera (não o vídeo ao vivo): o
+// snapshot é confiável (aparece mesmo com o streaming instável) e é a MESMA
+// imagem que a detecção vê. Antes esta tela mostrava o player ao vivo, que
+// ficava preto quando o stream falhava — e sem imagem não dá para desenhar.
 //
-// O que é cada coisa, para o operador não confundir:
+// O que é cada coisa:
 //   · Linha       — um limite que não se atravessa (tripwire), com sentido.
 //   · Monitorar   — área onde a detecção vale.
 //   · Ignorar     — área que a detecção descarta (galho, rua movimentada).
@@ -31,23 +32,29 @@ function resumir(zones: Array<{ kind: string }> | undefined): ResumoPerimetro {
 
 const temPerimetro = (r: ResumoPerimetro) => r.linhas + r.monitorar + r.ignorar > 0;
 
-export default function SegurancaPage() {
+export default function PerimetroPage() {
   const [location, setLocation] = useLocation();
   const userRole = useAuthStore((state) => state.user?.role ?? 'viewer');
   const cameras = useVmsDataStore((state) => state.cameras);
 
-  // Só câmeras ativas. Câmera desativada não grava nem detecta — não faz sentido
-  // configurar perímetro nela.
+  // Estado local do resumo por câmera: começa do store e é atualizado quando o
+  // editor salva, para a lista lateral refletir na hora sem recarregar tudo.
+  const [zonasPorCamera, setZonasPorCamera] = useState<Record<string, DetectionZone[]>>({});
+
   const lista = useMemo(
     () => cameras
       .filter((camera) => camera.enabled)
-      .map((camera) => ({ camera, resumo: resumir(camera.detectionZones) }))
+      .map((camera) => {
+        const zonas = zonasPorCamera[camera.id]
+          ?? (camera.detectionZones as DetectionZone[] | undefined)
+          ?? [];
+        return { camera, zonas, resumo: resumir(zonas) };
+      })
       .sort((a, b) =>
-        // Quem já tem perímetro primeiro; depois online; depois nome.
         Number(temPerimetro(b.resumo)) - Number(temPerimetro(a.resumo))
         || Number(b.camera.isOnline) - Number(a.camera.isOnline)
         || a.camera.name.localeCompare(b.camera.name, 'pt-BR')),
-    [cameras],
+    [cameras, zonasPorCamera],
   );
   const camerasSelecionaveis = useMemo(() => lista.map((item) => item.camera), [lista]);
 
@@ -73,8 +80,6 @@ export default function SegurancaPage() {
   const selecionada = lista.find((i) => i.camera.id === selectedCamId) ?? null;
   const totalComPerimetro = lista.filter((i) => temPerimetro(i.resumo)).length;
 
-  const abrirEditor = (cameraId: string) => setLocation(`/cameras/${cameraId}?tab=zones`);
-
   // ── Sem nenhuma câmera ativa ────────────────────────────────────────────
   if (!lista.length) {
     return (
@@ -84,8 +89,8 @@ export default function SegurancaPage() {
             <ShieldAlert className="mx-auto mb-3 h-8 w-8 text-[hsl(var(--muted-foreground))]" />
             <h1 className="text-[17px] font-semibold">Nenhuma câmera ativa</h1>
             <p className="mx-auto mt-2 max-w-md text-[12px] leading-relaxed text-muted-foreground">
-              A segurança de perímetro (linha e zona) é configurada por câmera.
-              Cadastre ou ative uma câmera para começar.
+              O perímetro (linha e zona) é configurado por câmera, desenhado sobre
+              a imagem dela. Cadastre ou ative uma câmera para começar.
             </p>
           </div>
           <div className="flex justify-center gap-2 px-8 py-4">
@@ -104,9 +109,9 @@ export default function SegurancaPage() {
       {/* Cabeçalho */}
       <div className="page-hdr">
         <div>
-          <h1 className="page-title">Segurança de perímetro</h1>
+          <h1 className="page-title">Perímetro de segurança</h1>
           <p className="page-sub">
-            Linha de travessia e zonas de monitorar/ignorar, por câmera ·{' '}
+            Desenhe a linha de travessia e as zonas sobre a imagem da câmera ·{' '}
             {totalComPerimetro} de {lista.length} configurada(s)
           </p>
         </div>
@@ -122,41 +127,29 @@ export default function SegurancaPage() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[1fr_360px]">
-        {/* Câmera selecionada, ao vivo */}
-        <div className="flex min-h-0 flex-col gap-3">
+      <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[1fr_300px]">
+        {/* Editor: DESENHA aqui, sobre o snapshot da câmera */}
+        <div className="min-h-0">
           {selecionada && (
-            <>
-              <div className="relative aspect-video overflow-hidden rounded-xl border border-border bg-black">
-                {selecionada.camera.isOnline ? (
-                  <LiveStreamPlayer
-                    cameraId={selecionada.camera.id}
-                    cameraName={selecionada.camera.name}
-                    aiEnabled={selecionada.camera.aiEnabled}
-                    showOverlay
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-[12px] text-[hsl(var(--muted-foreground))]">
-                    Câmera offline — o perímetro continua salvo e volta a valer quando ela retornar.
-                  </div>
-                )}
-              </div>
-
-              <ResumoSelecionada resumo={selecionada.resumo} aiEnabled={selecionada.camera.aiEnabled} />
-
-              <button
-                type="button"
-                onClick={() => abrirEditor(selecionada.camera.id)}
-                className="btn btn-primary btn-sm self-start"
-              >
-                {temPerimetro(selecionada.resumo) ? 'Editar perímetro' : 'Desenhar perímetro'}
-                <ExternalLink className="h-3.5 w-3.5" />
-              </button>
-            </>
+            <DetectionZonesEditor
+              key={selecionada.camera.id}
+              cameraId={selecionada.camera.id}
+              cameraName={selecionada.camera.name}
+              initialZones={selecionada.zonas}
+              onSaved={(zones) =>
+                setZonasPorCamera((prev) => ({ ...prev, [selecionada.camera.id]: zones }))
+              }
+            />
+          )}
+          {selecionada && !selecionada.camera.aiEnabled && (
+            <p className="mt-3 rounded-lg border border-[hsl(var(--chart-4)_/_0.3)] bg-[hsl(var(--chart-4)_/_0.08)] px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+              A IA está desligada nesta câmera. A linha ainda funciona pela via da própria
+              câmera (ONVIF), mas a detecção por IA local do DRAC só roda com a IA ligada.
+            </p>
           )}
         </div>
 
-        {/* Frota: quem já tem, quem não tem */}
+        {/* Frota: quem já tem perímetro, quem não tem */}
         <aside className="min-h-0">
           <div className="mb-2 text-[10px] font-mono uppercase tracking-[0.18em] text-[hsl(var(--muted-foreground))]">
             Câmeras
@@ -181,11 +174,7 @@ export default function SegurancaPage() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12px] font-medium">{camera.name}</span>
                     <span className="block text-[10px] text-[hsl(var(--muted-foreground))]">
-                      {temPerimetro(resumo) ? (
-                        <ResumoInline resumo={resumo} />
-                      ) : (
-                        'sem perímetro'
-                      )}
+                      {temPerimetro(resumo) ? <ResumoInline resumo={resumo} /> : 'sem perímetro'}
                     </span>
                   </span>
                   {!camera.aiEnabled && (
@@ -196,6 +185,13 @@ export default function SegurancaPage() {
                 </button>
               );
             })}
+          </div>
+
+          {/* Legenda do que cada desenho significa */}
+          <div className="mt-4 space-y-1.5 rounded-lg border border-border bg-background/40 p-3 text-[11px] text-muted-foreground">
+            <div className="flex items-center gap-2"><Spline className="h-3.5 w-3.5" /> Linha — limite que não se atravessa</div>
+            <div className="flex items-center gap-2"><SquareDashed className="h-3.5 w-3.5" /> Monitorar — onde a detecção vale</div>
+            <div className="flex items-center gap-2"><EyeOff className="h-3.5 w-3.5" /> Ignorar — o que a detecção descarta</div>
           </div>
         </aside>
       </div>
@@ -209,33 +205,4 @@ function ResumoInline({ resumo }: { resumo: ResumoPerimetro }) {
   if (resumo.monitorar) partes.push(`${resumo.monitorar} monitorar`);
   if (resumo.ignorar) partes.push(`${resumo.ignorar} ignorar`);
   return <>{partes.join(' · ')}</>;
-}
-
-function ResumoSelecionada({ resumo, aiEnabled }: { resumo: ResumoPerimetro; aiEnabled: boolean }) {
-  return (
-    <div className="grid grid-cols-3 gap-2">
-      <Cartao icon={<Spline className="h-4 w-4" />} valor={resumo.linhas} rotulo="Linhas de travessia" />
-      <Cartao icon={<SquareDashed className="h-4 w-4" />} valor={resumo.monitorar} rotulo="Zonas monitorar" />
-      <Cartao icon={<EyeOff className="h-4 w-4" />} valor={resumo.ignorar} rotulo="Zonas ignorar" />
-      {!aiEnabled && (
-        <p className="col-span-3 rounded-lg border border-[hsl(var(--chart-4)_/_0.3)] bg-[hsl(var(--chart-4)_/_0.08)] px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-          A IA está desligada nesta câmera. A linha ainda funciona pela via da própria
-          câmera (ONVIF), mas a detecção por IA local do DRAC só roda com a IA ligada.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function Cartao({ icon, valor, rotulo }: { icon: React.ReactNode; valor: number; rotulo: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-background/55 p-3">
-      <div className="flex items-center gap-1.5 text-[hsl(var(--muted-foreground))]">
-        {icon}
-        {valor === 0 && <Plus className="h-3 w-3 opacity-50" />}
-      </div>
-      <div className="mt-1 text-[18px] font-semibold tabular-nums">{valor}</div>
-      <div className="text-[10px] leading-tight text-[hsl(var(--muted-foreground))]">{rotulo}</div>
-    </div>
-  );
 }
