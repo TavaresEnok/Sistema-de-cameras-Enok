@@ -125,8 +125,19 @@ if [ "${credential_lines:-0}" -gt 0 ]; then issues+=("security:credencial-em-log
 # Agrupa câmeras HABILITADAS por IP e testa TCP em até 3 portas RTSP do site.
 # Só acusa quando NENHUMA porta responde (site inteiro fora), com reconfirmação
 # após 3s para não alertar num soluço de rede. Uma câmera isolada fora não dispara.
+#
+# Fica de FORA da sondagem quem não tem site sondável:
+#  - câmeras rtmp_push: elas EMPURRAM vídeo para nós; não existe RTSP do lado de
+#    lá para testar (a de teste tinha ip 0.0.0.0 e gerou "site-cameras:0.0.0.0:
+#    inacessivel" a cada execução, o dia inteiro — alarme falso permanente que
+#    afoga alerta verdadeiro);
+#  - IP vazio/0.0.0.0: não é um endereço alcançável, sondar é acusar sempre.
 site_rows="$(docker exec vms-postgres psql -U vms -d vms_db -tAc \
-  "SELECT ip || '|' || string_agg(DISTINCT \"rtspPort\"::text, ',') FROM \"Camera\" WHERE enabled IS DISTINCT FROM false GROUP BY ip;" 2>/dev/null || true)"
+  "SELECT ip || '|' || string_agg(DISTINCT \"rtspPort\"::text, ',') FROM \"Camera\" \
+   WHERE enabled IS DISTINCT FROM false \
+     AND \"sourceMode\" IS DISTINCT FROM 'rtmp_push' \
+     AND ip IS NOT NULL AND ip <> '' AND ip <> '0.0.0.0' \
+   GROUP BY ip;" 2>/dev/null || true)"
 if [ -n "$site_rows" ]; then
   while IFS='|' read -r site_ip site_ports; do
     [ -n "$site_ip" ] || continue
@@ -206,8 +217,11 @@ send_alert() {
       "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" || true
   fi
   if [ -n "$ALERT_WEBHOOK" ]; then
+    # Escapar em shell PURO (json_escapar), como o resto do script: o host do
+    # cliente NÃO tem node (mesma armadilha já corrigida no STATUS JSON acima —
+    # esta chamada era a última sobrevivente e mataria o webhook em produção).
     curl -s -m 10 -o /dev/null -H 'Content-Type: application/json' \
-      --data "$(printf '{"text":%s}' "$(printf '%s' "$text" | node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(0,"utf8")))')")" \
+      --data "$(printf '{"text":"%s"}' "$(json_escapar "$text")")" \
       "$ALERT_WEBHOOK" || true
   fi
 }
