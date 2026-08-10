@@ -23,7 +23,11 @@
 ## App white-label
 
 - O agente deve responder em `http://172.17.0.1:8780/health`.
-- O serviço de usuário e o supervisor `@reboot` mantêm o agente ativo sem login interativo.
+- O agente roda SOMENTE pelo serviço systemd (`drac-build-agent.service`). NUNCA
+  adicionar `@reboot` no crontab para o supervisor: os dois brigam pela porta
+  8780 e o perdedor entra em crash-loop infinito (incidente 10/08/2026: 3.644
+  reinícios num dia, inundando o journal). O supervisor com trava
+  (`run-build-agent-supervised.sh`) fica apenas como execução manual de socorro.
 - Nunca publicar artefato sem hash, metadata, assinatura validada e teste interno.
 
 ## Incidente
