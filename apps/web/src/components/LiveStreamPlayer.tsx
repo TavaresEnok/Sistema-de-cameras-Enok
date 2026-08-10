@@ -533,19 +533,28 @@ export function LiveStreamPlayer({
 
   // Zoom por scroll SÓ na câmera única (1x1). Na grade o scroll não deve
   // sequestrar a rolagem nem dar zoom num tile.
+  //
+  // O listener fica na JANELA, não no container: por cima do vídeo há o botão
+  // "clique para selecionar" (z-15) da página, que NÃO é filho deste container.
+  // Um scroll real do usuário atinge esse botão primeiro, e como ele está fora
+  // do container, o evento nunca chegava ao zoom — o mouse do usuário não fazia
+  // nada (medido no navegador, 10/08/2026). Ouvindo na janela e conferindo se o
+  // cursor está SOBRE este player, o overlay deixa de importar.
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container || liveViewMode !== 'selected') return;
+    if (liveViewMode !== 'selected') return;
     const onWheel = (e: WheelEvent) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      // Só age quando o cursor está sobre ESTE player.
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
       e.preventDefault();
       // Origem do zoom = posição do cursor DENTRO do vídeo, em %. É isso que faz
       // o zoom "entrar" onde o mouse aponta, em vez de sempre no centro.
-      const rect = container.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        const x = ((e.clientX - rect.left) / rect.width) * 100;
-        const y = ((e.clientY - rect.top) / rect.height) * 100;
-        setZoomOrigin(`${Math.max(0, Math.min(100, x))}% ${Math.max(0, Math.min(100, y))}%`);
-      }
+      const x = ((e.clientX - rect.left) / rect.width) * 100;
+      const y = ((e.clientY - rect.top) / rect.height) * 100;
+      setZoomOrigin(`${Math.max(0, Math.min(100, x))}% ${Math.max(0, Math.min(100, y))}%`);
       const step = e.deltaY > 0 ? -0.15 : 0.15;
       setZoom((prev) => {
         const next = Math.min(4, Math.max(1, parseFloat((prev + step).toFixed(2))));
@@ -553,8 +562,8 @@ export function LiveStreamPlayer({
         return next;
       });
     };
-    container.addEventListener('wheel', onWheel, { passive: false });
-    return () => container.removeEventListener('wheel', onWheel);
+    window.addEventListener('wheel', onWheel, { passive: false });
+    return () => window.removeEventListener('wheel', onWheel);
   }, [liveViewMode]);
 
   // Sair do 1x1 (voltar à grade) ou trocar de câmera zera o zoom: cada tela
