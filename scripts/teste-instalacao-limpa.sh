@@ -24,6 +24,7 @@ RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MAQUINA="drac-maquina-virgem"
 IMAGEM="drac-maquina-virgem:ubuntu24"
 VOLUME_DOCKER="drac-maquina-virgem-docker"
+VOLUME_CONTAINERD="drac-maquina-virgem-containerd"
 COMMIT=""
 MANTER=false
 SENHA_ADMIN="Teste-instalacao-limpa-2026"
@@ -63,14 +64,14 @@ limpar() {
   fi
   log "Destruindo a maquina virgem"
   docker rm -f "$MAQUINA" >/dev/null 2>&1 || true
-  docker volume rm "$VOLUME_DOCKER" >/dev/null 2>&1 || true
+  docker volume rm "$VOLUME_DOCKER" "$VOLUME_CONTAINERD" >/dev/null 2>&1 || true
 }
 trap limpar EXIT
 
 # ── A máquina virgem ────────────────────────────────────────────────────────
 titulo "Preparando a maquina virgem"
 docker rm -f "$MAQUINA" >/dev/null 2>&1 || true
-docker volume rm "$VOLUME_DOCKER" >/dev/null 2>&1 || true
+docker volume rm "$VOLUME_DOCKER" "$VOLUME_CONTAINERD" >/dev/null 2>&1 || true
 
 # Só o mínimo de um Ubuntu recém-instalado: systemd, sudo e o suficiente para
 # baixar o instalador. Docker NÃO vem pronto — quem instala é o instalador.
@@ -97,6 +98,7 @@ docker run -d --name "$MAQUINA" --privileged \
   -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   --tmpfs /run --tmpfs /run/lock \
   -v "$VOLUME_DOCKER:/var/lib/docker" \
+  -v "$VOLUME_CONTAINERD:/var/lib/containerd" \
   "$IMAGEM" >/dev/null
 
 log "aguardando o systemd da maquina virgem"
