@@ -276,6 +276,19 @@ detector_runtimes.register(
 
 detector_runtimes.register(
     DetectorRuntime(
+        key="onnxruntime_cuda_general",
+        detector_type="general",
+        device="gpu",
+        class_path="detectors.object_detector:ObjectDetector",
+        description="Objetos (YOLO) via ONNX Runtime CUDA — o ObjectDetector cai para CPU se o provider/kernel faltar. Exige yolo26n.onnx e onnxruntime-gpu (Dockerfile.gpu).",
+        requires=("onnxruntime-gpu", "supervision", "opencv-python-headless"),
+    ),
+    aliases=("onnxruntime_cuda", "cuda_general", "gpu_general"),
+    default_env_var="GENERAL_RUNTIME",
+)
+
+detector_runtimes.register(
+    DetectorRuntime(
         key="onnxruntime_cpu",
         detector_type="face",
         device="cpu",

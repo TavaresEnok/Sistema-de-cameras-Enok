@@ -77,6 +77,33 @@ def ensure_yolo_fp32() -> None:
     _ensure_yolo_export(int8=False, target_name="yolo26n_openvino_model", model_name="yolo26n")
 
 
+def ensure_yolo_onnx() -> None:
+    """Exporta yolo26n.onnx (com NMS) para o backend CUDA de objetos.
+
+    A saída fica [1,300,6] = [x1,y1,x2,y2,score,cls], IDÊNTICA à do modelo
+    OpenVINO — assim o ObjectDetector reusa o mesmo pós-processamento nos dois
+    backends. Só o ONNX serve à GPU NVIDIA (OpenVINO GPU é Intel).
+    """
+    target = MODELS_DIR / "yolo26n.onnx"
+    if target.exists() and target.stat().st_size > 0:
+        print("[models] yolo26n.onnx OK.")
+        return
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        print("[models] ultralytics não instalado — pulando export ONNX.")
+        return
+    source_pt = Path("yolo26n.pt")
+    print("[models] Exportando yolo26n para ONNX (nms=True, 640x640)...")
+    model = YOLO(str(source_pt))
+    exported = Path(model.export(format="onnx", imgsz=640, nms=True, opset=13))
+    if exported.resolve() != target.resolve():
+        shutil.move(str(exported), str(target))
+    if source_pt.exists():
+        source_pt.unlink()
+    print("[models] yolo26n.onnx OK.")
+
+
 def ensure_yolo_int8() -> None:
     # Ultralytics usa quantização pós-treino e requer dataset de calibração.
     # coco8.yaml é leve e atende para gerar artefato INT8 inicial em CPU.
@@ -127,5 +154,7 @@ if __name__ == "__main__":
     ensure_yolo_int8()
     ensure_yolo_fp32()
     ensure_yolo26s_int8_960()
+    # YOLO26n ONNX (com NMS) — backend CUDA de objetos na GPU NVIDIA.
+    ensure_yolo_onnx()
 
     print("[models] Todos os modelos verificados.")

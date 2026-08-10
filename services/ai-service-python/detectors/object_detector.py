@@ -57,6 +57,14 @@ class ObjectDetector(Detector):
         self.explicit_model_path = str(GENERAL_PROFILE.get("model_path", "") or "").strip()
         self.openvino_device = str(GENERAL_PROFILE.get("openvino_device", "CPU") or "CPU").strip() or "CPU"
         self.openvino_performance_hint = str(GENERAL_PROFILE.get("openvino_performance_hint", "LATENCY") or "LATENCY").strip() or "LATENCY"
+        # Backend de inferência. `onnxruntime_cuda` (ou qualquer runtime com
+        # 'onnx'/'cuda') roda o YOLO na GPU NVIDIA via ONNX Runtime; o default
+        # `openvino_cpu` mantém o caminho Intel/CPU intocado. A escolha do
+        # PROVIDER (CUDA→CPU) fica com o onnxruntime — se a GPU faltar, ele cai
+        # para CPU sozinho e a câmera nunca fica cega.
+        runtime_str = str(GENERAL_PROFILE.get("runtime", "openvino_cpu")).strip().lower()
+        self.use_onnx = ("onnx" in runtime_str) or ("cuda" in runtime_str)
+        self._onnx_wants_cuda = "cuda" in runtime_str or "gpu" in runtime_str
         self._runtime_lock = threading.Lock()
         self._runtimes: dict[int, dict] = {}
         self._tracker_lock = threading.Lock()
@@ -125,7 +133,57 @@ class ObjectDetector(Detector):
         joined = ", ".join(searched)
         raise RuntimeError(f"Modelo OpenVINO {input_size}px não encontrado. Diretórios testados: {joined}")
 
+    def _resolve_model_onnx(self, input_size: int) -> str:
+        """Caminho do .onnx para o tamanho pedido, com queda para o genérico."""
+        base_dir = "/app/models"
+        nomes = [
+            f"{self.model_name}_{input_size}.onnx",
+            f"{self.model_name}.onnx",
+        ]
+        if self.explicit_model_path.endswith(".onnx") and os.path.isfile(self.explicit_model_path):
+            return self.explicit_model_path
+        for nome in nomes:
+            caminho = os.path.join(base_dir, nome)
+            if os.path.isfile(caminho):
+                return caminho
+        raise RuntimeError(f"Modelo ONNX {input_size}px não encontrado (procurei {nomes} em {base_dir}).")
+
+    def _compile_onnx_runtime(self, input_size: int) -> dict:
+        import onnxruntime as ort
+
+        model_path = self._resolve_model_onnx(input_size)
+        # CUDA primeiro, CPU como rede — o onnxruntime escolhe o primeiro que
+        # carrega. Sem GPU/kernel, cai para CPU sem erro (a câmera não fica cega).
+        providers = (
+            ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            if self._onnx_wants_cuda
+            else ["CPUExecutionProvider"]
+        )
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = max(1, self.inference_threads)
+        session = ort.InferenceSession(model_path, sess_options=opts, providers=providers)
+        ativo = session.get_providers()
+        input_name = session.get_inputs()[0].name
+        print(
+            f"[ObjectDetector] ONNX carregado model='{model_path}' input_size={input_size} "
+            f"providers_pedidos={providers} provider_ativo='{ativo[0] if ativo else '?'}' "
+            f"classes='{GENERAL_PROFILE.get('classes')}'"
+        )
+        return {
+            "kind": "onnx",
+            "session": session,
+            "input": input_name,
+            "output": None,
+            "pool": None,  # onnxruntime.run() é thread-safe; não precisa de pool
+            "path": model_path,
+            "precision": "onnx-cuda" if "CUDAExecutionProvider" in ativo else "onnx-cpu",
+            "input_size": input_size,
+            "model": session,
+        }
+
     def _compile_runtime(self, input_size: int) -> dict:
+        if self.use_onnx:
+            return self._compile_onnx_runtime(input_size)
         try:
             import openvino as ov
         except Exception as exc:
@@ -170,13 +228,19 @@ class ObjectDetector(Detector):
         return self._runtimes[input_size]
 
     def _available_input_sizes(self) -> list[int]:
+        resolver = self._resolve_model_onnx if self.use_onnx else self._resolve_model_xml
         available: list[int] = []
         for input_size in (960, 640, 512, 416):
             try:
-                self._resolve_model_xml(input_size)
+                resolver(input_size)
                 available.append(input_size)
             except RuntimeError:
                 continue
+        # O ONNX é exportado num tamanho só (o `.onnx` genérico serve para
+        # qualquer size pedido, via o fallback do resolvedor). Garante ao menos
+        # o tamanho padrão para o planejador de regiões não ficar sem opção.
+        if self.use_onnx and self.input_size not in available:
+            available.append(self.input_size)
         return available
 
     def _runtime_for_hint(self, input_size_hint: int | None) -> dict:
@@ -365,23 +429,32 @@ class ObjectDetector(Detector):
         """
         selected_size = int(runtime["input_size"])
         blob, scale, pad_x, pad_y, width, height, _ = self._preprocess(frame, selected_size)
-        pool = runtime["pool"]
-        if pool is None:
-            return [], False
-        # Latest-frame semantics: if no request is available now, drop this
-        # frame and let the next loop consume the newest one from the camera queue.
-        try:
-            infer_request = pool.get_nowait()
-        except Empty:
-            self._pool_busy_drops += 1
-            self._pool_busy_drops_by_size[selected_size] = self._pool_busy_drops_by_size.get(selected_size, 0) + 1
-            return [], False
-        try:
-            infer_request.infer({runtime["input"]: blob})
-            raw = np.array(infer_request.get_output_tensor(0).data, copy=True)
-        finally:
-            pool.put(infer_request)
-        rows = np.squeeze(raw, axis=0)
+
+        if runtime.get("kind") == "onnx":
+            # ONNX Runtime (CUDA na GPU, com queda para CPU). A sessão é
+            # thread-safe em run(), então não há pool de requests como no
+            # OpenVINO. A SAÍDA é idêntica ([1,300,6] = x1,y1,x2,y2,score,cls),
+            # porque o .onnx é exportado com nms=True igual ao modelo OpenVINO —
+            # por isso o pós-processamento abaixo é EXATAMENTE o mesmo.
+            raw = runtime["session"].run(None, {runtime["input"]: blob})[0]
+        else:
+            pool = runtime["pool"]
+            if pool is None:
+                return [], False
+            # Latest-frame semantics: if no request is available now, drop this
+            # frame and let the next loop consume the newest one from the camera queue.
+            try:
+                infer_request = pool.get_nowait()
+            except Empty:
+                self._pool_busy_drops += 1
+                self._pool_busy_drops_by_size[selected_size] = self._pool_busy_drops_by_size.get(selected_size, 0) + 1
+                return [], False
+            try:
+                infer_request.infer({runtime["input"]: blob})
+                raw = np.array(infer_request.get_output_tensor(0).data, copy=True)
+            finally:
+                pool.put(infer_request)
+        rows = np.squeeze(np.asarray(raw), axis=0)
 
         detections: list[Detection] = []
         for row in rows:

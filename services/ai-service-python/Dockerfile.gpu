@@ -11,13 +11,21 @@ WORKDIR /app
 
 # Python 3.11 + libs de sistema do OpenCV/runtimes.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3-pip python3.11-dev \
-    libgl1 libglib2.0-0 build-essential cmake wget \
+    python3.11 python3.11-dev python3.11-venv python3.11-distutils \
+    libgl1 libglib2.0-0 build-essential cmake wget curl ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
- && ln -sf /usr/bin/python3.11 /usr/bin/python
+ && ln -sf /usr/bin/python3.11 /usr/bin/python \
+ && ln -sf /usr/bin/python3.11 /usr/bin/python3
+
+# pip do PRÓPRIO python3.11. A base ubuntu22.04 traz python3.10; usar o pip dela
+# (python3-pip) instalava para o 3.10 enquanto o build do insightface usava os
+# headers do 3.11 — daí o "Python.h não encontrado". Com o pip do 3.11 tudo casa.
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
 
 COPY requirements-gpu.txt .
-RUN pip install --no-cache-dir -r requirements-gpu.txt
+# numpy/cython antes: o setup.py do insightface os importa ao construir o wheel.
+RUN python3.11 -m pip install --no-cache-dir numpy==1.26.4 cython
+RUN python3.11 -m pip install --no-cache-dir -r requirements-gpu.txt
 
 RUN mkdir -p /app/models
 

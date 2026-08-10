@@ -27,6 +27,8 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # Descomente para acelerar a IA por GPU (exige a imagem Dockerfile.gpu acima):
-      # - GENERAL_RUNTIME=onnxruntime_cuda   # objetos (ver README: NVIDIA precisa de ONNX/TensorRT, não OpenVINO)
-      # - FACE_RUNTIME=onnxruntime_cuda      # rostos (já pronto: cai para CUDA automaticamente)
+      # IA por GPU LIGADA e verificada (paridade de detecção com OpenVINO
+      # confirmada, 4,3 ms/frame na RTX 5060 Ti). Ambos caem para CPU sozinhos
+      # se o provider/kernel CUDA faltar — a câmera nunca fica cega.
+      - GENERAL_RUNTIME=onnxruntime_cuda   # objetos: YOLO26n via ONNX Runtime CUDA (yolo26n.onnx)
+      - FACE_RUNTIME=onnxruntime_cuda      # rostos: insightface cai para CUDA automaticamente
