@@ -418,7 +418,42 @@ install_host_dependencies() {
     fail "Docker Compose plugin nao ficou disponivel apos a instalacao."
   fi
 
+  # `docker compose version` funciona com o DAEMON PARADO — ele só lê o
+  # binário. Era a única verificação de Docker que existia aqui, e por isso a
+  # instalação seguia feliz para morrer minutos depois, ao subir os
+  # containers, com "failed to connect to the docker API". Achado pelo teste
+  # de instalação limpa (scripts/teste-instalacao-limpa.sh).
+  ensure_docker_running
+
   run_sudo usermod -aG docker "$DRAC_OPERATING_USER" || true
+}
+
+ensure_docker_running() {
+  if run_sudo docker info >/dev/null 2>&1; then
+    log "Daemon do Docker respondendo."
+    return 0
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    log "Daemon do Docker parado; iniciando"
+    run_sudo systemctl enable --now docker >/dev/null 2>&1 || true
+  elif command -v service >/dev/null 2>&1; then
+    run_sudo service docker start >/dev/null 2>&1 || true
+  fi
+
+  local tentativa
+  for tentativa in $(seq 1 15); do
+    if run_sudo docker info >/dev/null 2>&1; then
+      log "Daemon do Docker respondendo."
+      return 0
+    fi
+    sleep 2
+  done
+
+  fail "Docker instalado, mas o daemon NAO responde ('docker info' falha apos 30s).
+  Sem ele nada sobe. Verifique:
+    systemctl status docker
+    journalctl -u docker -n 50"
 }
 
 sync_repository() {

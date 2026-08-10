@@ -83,6 +83,11 @@ RUN apt-get update \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 RUN printf '%%sudo ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-teste \
  && chmod 440 /etc/sudoers.d/90-teste
+# A imagem oficial do Ubuntu traz /usr/sbin/policy-rc.d devolvendo 101 para
+# impedir que pacotes iniciem serviços durante a construção de imagens. Num
+# SERVIDOR de verdade isso não existe: o apt sobe o docker.service sozinho.
+# Mantê-lo faria a máquina virgem mentir sobre o comportamento real.
+RUN rm -f /usr/sbin/policy-rc.d
 CMD ["/sbin/init"]
 DOCKERFILE
 log "imagem da maquina virgem pronta"
