@@ -459,6 +459,9 @@ export function LiveStreamPlayer({
   const suspendedRef = useRef(false);
   const suspendTimerRef = useRef<number | null>(null);
   const [zoom, setZoom] = useState(1);
+  // Ponto para onde o zoom aponta (em %). O scroll do mouse leva o zoom para
+  // ONDE o cursor está, não para o centro. 'center' é o repouso (zoom = 1).
+  const [zoomOrigin, setZoomOrigin] = useState('center');
   // Qualidade da câmera única (1x1): persistida por câmera; na grade é sempre 'grid'.
   const [qualityMode, setQualityMode] = useState<LiveQualityMode>(() => getStoredLiveQuality(cameraId));
   useEffect(() => {
@@ -528,17 +531,38 @@ export function LiveStreamPlayer({
     setIsMuted(muted);
   }, [muted]);
 
+  // Zoom por scroll SÓ na câmera única (1x1). Na grade o scroll não deve
+  // sequestrar a rolagem nem dar zoom num tile.
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || liveViewMode !== 'selected') return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      // Origem do zoom = posição do cursor DENTRO do vídeo, em %. É isso que faz
+      // o zoom "entrar" onde o mouse aponta, em vez de sempre no centro.
+      const rect = container.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const x = ((e.clientX - rect.left) / rect.width) * 100;
+        const y = ((e.clientY - rect.top) / rect.height) * 100;
+        setZoomOrigin(`${Math.max(0, Math.min(100, x))}% ${Math.max(0, Math.min(100, y))}%`);
+      }
       const step = e.deltaY > 0 ? -0.15 : 0.15;
-      setZoom((prev) => Math.min(4, Math.max(1, parseFloat((prev + step).toFixed(2)))));
+      setZoom((prev) => {
+        const next = Math.min(4, Math.max(1, parseFloat((prev + step).toFixed(2))));
+        if (next === 1) setZoomOrigin('center'); // voltou ao normal → repouso
+        return next;
+      });
     };
     container.addEventListener('wheel', onWheel, { passive: false });
     return () => container.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [liveViewMode]);
+
+  // Sair do 1x1 (voltar à grade) ou trocar de câmera zera o zoom: cada tela
+  // nasce mostrando o quadro inteiro. Sem isto, o zoom "grudava" ao voltar.
+  useEffect(() => {
+    setZoom(1);
+    setZoomOrigin('center');
+  }, [cameraId, liveViewMode]);
 
   useEffect(() => {
     failedProtocolsRef.current.clear();
@@ -2034,7 +2058,7 @@ export function LiveStreamPlayer({
         className="absolute inset-0 w-full h-full"
         style={{
           transform: zoom !== 1 ? `scale(${zoom})` : undefined,
-          transformOrigin: 'center',
+          transformOrigin: zoomOrigin,
           transition: zoom === 1 ? 'transform 0.2s ease-out' : 'none',
         }}
       >
