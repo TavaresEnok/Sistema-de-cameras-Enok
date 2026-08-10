@@ -181,6 +181,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             type="button"
             onClick={() => setDrawKind('exclude')}
             className={`seg-btn ${drawKind === 'exclude' ? 'active' : ''}`}
+            title="Área onde a detecção é DESCARTADA (rua movimentada, galhos, um outdoor)."
           >
             Ignorar área
           </button>
@@ -188,6 +189,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             type="button"
             onClick={() => setDrawKind('include')}
             className={`seg-btn ${drawKind === 'include' ? 'active' : ''}`}
+            title="A detecção passa a valer SÓ dentro desta área — todo o resto é ignorado."
           >
             Monitorar só aqui
           </button>
@@ -195,7 +197,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             type="button"
             onClick={() => setDrawKind('line')}
             className={`seg-btn ${drawKind === 'line' ? 'active' : ''}`}
-            title="Linha que não deve ser atravessada"
+            title="Limite que não deve ser atravessado: dispara quando um objeto cruza a linha."
           >
             Linha de perímetro
           </button>
@@ -235,6 +237,41 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             Salvar zonas
           </button>
         </div>
+      </div>
+
+      {/* Ajuda contextual: explica o modo selecionado na própria tela, para o
+          operador não precisar adivinhar o que cada botão faz. */}
+      <div className="flex items-start gap-2 rounded-md border border-border bg-background/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+        <span
+          className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-sm"
+          style={{ background: ZONE_COLOR[drawKind].stroke }}
+        />
+        <span>
+          {drawKind === 'exclude' && (
+            <>
+              <strong className="font-medium text-foreground">Ignorar área:</strong>{' '}
+              tudo que acontecer DENTRO desta área é descartado. Use para o que gera alarme
+              à toa — rua movimentada, galhos ao vento, um outdoor, o céu. A detecção
+              continua valendo no resto da cena.
+            </>
+          )}
+          {drawKind === 'include' && (
+            <>
+              <strong className="font-medium text-foreground">Monitorar só aqui:</strong>{' '}
+              a detecção passa a valer SÓ dentro da(s) área(s) que você desenhar — todo o
+              resto da imagem é ignorado. Use quando apenas um pedaço da cena interessa
+              (um portão, um corredor). {hasInclude ? 'Já há área de monitorar: fora dela, nada é detectado.' : ''}
+            </>
+          )}
+          {drawKind === 'line' && (
+            <>
+              <strong className="font-medium text-foreground">Linha de perímetro:</strong>{' '}
+              um limite que não deve ser atravessado (2 pontos). Dispara quando um objeto
+              CRUZA a linha, no sentido que você definir — a seta na tela mostra a direção.
+              É sobre atravessar, não sobre ficar parado.
+            </>
+          )}
+        </span>
       </div>
 
       <div
