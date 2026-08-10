@@ -801,9 +801,14 @@ provision_watchdog() {
   # sudo sem senha: no D-GUARDIAN isso foi contornado a mao e o defeito
   # continuou no produto. Quem tem privilegio para resolver e o instalador, e e
   # aqui que se resolve. Reencontrado pelo teste de instalacao limpa.
-  local state_dir="$DRAC_INSTALL_DIR/infra/storage/.monitor"
-  run_sudo mkdir -p "$state_dir"
-  run_sudo chown -R "$DRAC_OPERATING_USER:$DRAC_OPERATING_USER" "$state_dir"
+  # Vale para todo diretório sob `storage` que o OPERADOR precisa escrever, não
+  # só o do watchdog: o de backups é usado pelo script de atualização, e ele
+  # abortava pelo mesmo motivo (visto ao atualizar o D-GUARDIAN, 10/08/2026).
+  local dir
+  for dir in "$DRAC_INSTALL_DIR/infra/storage/.monitor" "$DRAC_INSTALL_DIR/infra/storage/backups"; do
+    run_sudo mkdir -p "$dir"
+    run_sudo chown -R "$DRAC_OPERATING_USER:$DRAC_OPERATING_USER" "$dir"
+  done
 
   # Intervalo em minutos (1..59); cai para 5 se invalido.
   local interval="$DRAC_WATCHDOG_INTERVAL_MINUTES"

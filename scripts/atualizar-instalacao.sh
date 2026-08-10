@@ -85,8 +85,27 @@ fi
 # ── Rede de segurança ANTES de mexer ────────────────────────────────────────
 titulo "Backup do banco antes de qualquer mudança"
 CARIMBO="$(date -u +%Y%m%dT%H%M%SZ)"
-BACKUP="$RAIZ/infra/storage/backups/pre-atualizacao-$CARIMBO.sql"
-mkdir -p "$(dirname "$BACKUP")"
+
+# `infra/storage` nasce do ROOT — quem o cria são os containers — e este script
+# roda como o usuário operador. Sem tratar isso, o backup falhava e a
+# atualização abortava (corretamente, mas por um motivo bobo). Mesmo defeito de
+# classe que derrubou o watchdog no primeiro disparo.
+#
+# Ordem: o lugar certo; senão o lugar certo via sudo; senão a casa do operador,
+# DIZENDO onde foi parar. Backup em lugar inesperado é muito melhor que
+# atualização sem backup.
+DIR_BACKUP="$RAIZ/infra/storage/backups"
+if ! mkdir -p "$DIR_BACKUP" 2>/dev/null; then
+  if sudo -n mkdir -p "$DIR_BACKUP" 2>/dev/null \
+     && sudo -n chown "$(id -u):$(id -g)" "$DIR_BACKUP" 2>/dev/null; then
+    log "diretório de backup criado com sudo"
+  else
+    DIR_BACKUP="${HOME:-/tmp}/drac-backups"
+    mkdir -p "$DIR_BACKUP" 2>/dev/null || { erro "Sem onde gravar o backup."; exit 1; }
+    aviso "Sem permissão em $RAIZ/infra/storage; o backup vai para $DIR_BACKUP"
+  fi
+fi
+BACKUP="$DIR_BACKUP/pre-atualizacao-$CARIMBO.sql"
 PG_USER="$(env_get POSTGRES_USER)"; PG_DB="$(env_get POSTGRES_DB)"
 COMPOSE=(docker compose --env-file "$RAIZ/infra/.env" -f "$RAIZ/infra/docker-compose.yml" -f "$RAIZ/infra/docker-compose.prod.yml")
 if "${COMPOSE[@]}" exec -T postgres pg_dump -U "$PG_USER" "$PG_DB" > "$BACKUP" 2>/dev/null && [ -s "$BACKUP" ]; then
