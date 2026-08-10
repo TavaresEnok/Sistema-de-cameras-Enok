@@ -12,6 +12,20 @@ from onnxruntime_session import inference_threading_status
 from runtime_profiles import GENERAL_PROFILE
 
 
+def _gpu_realmente_presente() -> bool:
+    """A GPU NVIDIA está de fato acessível a este container?
+
+    Checa o DEVICE NODE, não a lista de providers do onnxruntime (que mente:
+    lista CUDA sempre que os libs existem, mesmo sem placa). É uma checagem de
+    sistema de arquivos — NUNCA quebra. Pedir CUDA sem placa segfalta o
+    onnxruntime; esta função é o que impede isso.
+    """
+    visiveis = os.environ.get("NVIDIA_VISIBLE_DEVICES", "").strip().lower()
+    if visiveis in ("", "void", "none"):
+        return False
+    return os.path.exists("/dev/nvidia0") or os.path.exists("/dev/nvidiactl")
+
+
 PERSON_CLASS_ID = 0
 BICYCLE_CLASS_ID = 1
 CAR_CLASS_ID = 2
@@ -152,11 +166,18 @@ class ObjectDetector(Detector):
         import onnxruntime as ort
 
         model_path = self._resolve_model_onnx(input_size)
-        # CUDA primeiro, CPU como rede — o onnxruntime escolhe o primeiro que
-        # carrega. Sem GPU/kernel, cai para CPU sem erro (a câmera não fica cega).
+        # NÃO confiar em ort.get_available_providers(): ele LISTA CUDA sempre que
+        # os libs estão na imagem, MESMO SEM PLACA. E pedir CUDAExecutionProvider
+        # sem GPU faz o onnxruntime SEGFALTAR (exit 139) — a câmera não cai para
+        # CPU, o worker MORRE. Medido ao simular a placa arrancada (10/08/2026).
+        #
+        # Por isso a checagem é pela PRESENÇA REAL do dispositivo (device node),
+        # que nunca quebra: se a GPU não está acessível ao container, nem se pede
+        # CUDA. Assim, arrancar a placa e reiniciar → volta em CPU, sem crash.
+        usar_cuda = self._onnx_wants_cuda and _gpu_realmente_presente()
         providers = (
             ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            if self._onnx_wants_cuda
+            if usar_cuda
             else ["CPUExecutionProvider"]
         )
         opts = ort.SessionOptions()
