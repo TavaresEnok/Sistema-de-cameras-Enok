@@ -108,6 +108,13 @@ fi
 BACKUP="$DIR_BACKUP/pre-atualizacao-$CARIMBO.sql"
 PG_USER="$(env_get POSTGRES_USER)"; PG_DB="$(env_get POSTGRES_DB)"
 COMPOSE=(docker compose --env-file "$RAIZ/infra/.env" -f "$RAIZ/infra/docker-compose.yml" -f "$RAIZ/infra/docker-compose.prod.yml")
+# Host com GPU: soma o overlay de transcode SEMPRE, senão um rebuild/up desta
+# atualização reverteria o MediaMTX para a imagem sem NVENC. `-f` explícito
+# ignora o COMPOSE_FILE do .env, então a decisão precisa ser tomada aqui também.
+if [ "$(env_get DRAC_GPU_ENABLED)" = "true" ] && [ -f "$RAIZ/infra/docker-compose.gpu.yml" ]; then
+  COMPOSE+=(-f "$RAIZ/infra/docker-compose.gpu.yml")
+  log "GPU habilitada neste host: overlay de transcode incluído."
+fi
 if "${COMPOSE[@]}" exec -T postgres pg_dump -U "$PG_USER" "$PG_DB" > "$BACKUP" 2>/dev/null && [ -s "$BACKUP" ]; then
   log "backup: $BACKUP ($(du -h "$BACKUP" | cut -f1))"
 else

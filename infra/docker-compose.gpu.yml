@@ -53,25 +53,8 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 
-  ai-service:
-    # Aceleração de IA por GPU — PRONTA, porém DORMENTE. O ai-service está atrás do
-    # profile `admin-tools` e a feature de IA está desligada, então isto não sobe
-    # no dia a dia. Quando for ativar a IA com GPU, são poucos passos (ver
-    # infra/AI-GPU-README.md): construir esta imagem GPU e ligar os runtimes abaixo.
-    build:
-      context: ../services/ai-service-python
-      dockerfile: Dockerfile.gpu
-    image: drac-ai-service-gpu:local
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu, utility, compute]
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # Descomente para acelerar a IA por GPU (exige a imagem Dockerfile.gpu acima):
-      # - GENERAL_RUNTIME=onnxruntime_cuda   # detector de objetos (ver README: NVIDIA precisa de ONNX/TensorRT, não OpenVINO)
-      # - FACE_RUNTIME=onnxruntime_cuda      # detector de rostos (já pronto: cai para CUDA automaticamente)
+  # A aceleração de IA por GPU (ai-service em imagem CUDA) foi MOVIDA para
+  # docker-compose.gpu-ai.yml — é opt-in e PESADA (build de vários GB), então
+  # não pode entrar no COMPOSE_FILE padrão do host, senão um `docker compose up`
+  # comum tentaria construí-la. Este arquivo agora só acelera o TRANSCODE
+  # (MediaMTX NVENC + API), que é leve e seguro de ser sempre incluído.

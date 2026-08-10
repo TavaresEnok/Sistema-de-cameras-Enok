@@ -1,0 +1,32 @@
+# Override de GPU para o SERVIÇO DE IA (rostos/objetos em CUDA) — OPT-IN, PESADO.
+#
+# Separado do docker-compose.gpu.yml de propósito: aquele (transcode/NVENC) é
+# leve e pode entrar no COMPOSE_FILE padrão do host; ESTE constrói a imagem CUDA
+# do ai-service (base nvidia/cuda, vários GB) e por isso NÃO deve subir sozinho
+# num `docker compose up`. Some-o à mão só quando for ativar a IA por GPU:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     -f docker-compose.gpu.yml -f docker-compose.gpu-ai.yml up -d --build ai-service
+#
+# Ver infra/AI-GPU-README.md. Hoje o caminho de OBJETOS em CUDA ainda é a
+# reimplementação pendente; rostos já caem para CUDA com FACE_RUNTIME.
+
+services:
+  ai-service:
+    build:
+      context: ../services/ai-service-python
+      dockerfile: Dockerfile.gpu
+    image: drac-ai-service-gpu:local
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility, compute]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # Descomente para acelerar a IA por GPU (exige a imagem Dockerfile.gpu acima):
+      # - GENERAL_RUNTIME=onnxruntime_cuda   # objetos (ver README: NVIDIA precisa de ONNX/TensorRT, não OpenVINO)
+      # - FACE_RUNTIME=onnxruntime_cuda      # rostos (já pronto: cai para CUDA automaticamente)
