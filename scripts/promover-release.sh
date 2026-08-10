@@ -48,8 +48,37 @@ done
 
 # Lê a configuração do infra/.env sem executá-lo.
 env_get() { sed -nE "s/^$1=(.*)$/\1/p" "$RAIZ/infra/.env" 2>/dev/null | tail -n 1; }
-CENTRAL_URL="${DRAC_CENTRAL_URL:-$(env_get CLOUD_API_URL)}"
 ADMIN_TOKEN="${DRAC_CENTRAL_ADMIN_TOKEN:-$(env_get DRAC_CENTRAL_ADMIN_TOKEN)}"
+
+# `CLOUD_API_URL` é o endereço que os CONTAINERES usam (ex.: http://drac-central:9765,
+# nome da rede Docker). Este script roda no HOST, onde esse nome não resolve.
+# Por isso a ordem: o que foi dito explicitamente, depois o .env, e por fim a
+# Central local — que é onde ela vive, já que isto roda na matriz.
+CENTRAL_URL="${DRAC_CENTRAL_URL:-}"
+if [ -z "$CENTRAL_URL" ]; then
+  candidato="$(env_get CLOUD_API_URL)"
+  host_do_candidato="$(printf '%s' "$candidato" | sed -E 's#^[a-z]+://##; s#[:/].*$##')"
+  if [ -n "$host_do_candidato" ] && getent hosts "$host_do_candidato" >/dev/null 2>&1; then
+    CENTRAL_URL="$candidato"
+  else
+    CENTRAL_URL="http://127.0.0.1:9765"
+  fi
+fi
+
+# ── Configuração é conferida ANTES da parte cara ────────────────────────────
+# Descobrir que o token está errado depois de 15 minutos de teste é desperdício
+# puro — e foi o que aconteceu na primeira execução real deste script.
+titulo "Conferindo o acesso à Central"
+[ -n "$ADMIN_TOKEN" ] || { erro "Sem DRAC_CENTRAL_ADMIN_TOKEN — é o token administrativo da Central."; exit 1; }
+log "Central: $CENTRAL_URL"
+if ! curl -fsS --max-time 10 -H "Authorization: Bearer $ADMIN_TOKEN" \
+     "${CENTRAL_URL%/}/api/admin/releases" >/dev/null 2>&1; then
+  erro "Não consegui falar com a Central em ${CENTRAL_URL%/} com este token."
+  erro "Defina DRAC_CENTRAL_URL e/ou DRAC_CENTRAL_ADMIN_TOKEN e tente de novo."
+  erro "Nada foi testado ainda — você não perdeu tempo."
+  exit 1
+fi
+log "Central responde e o token vale"
 
 # ── O que exatamente vai ser promovido ──────────────────────────────────────
 titulo "O que vai ser promovido"
@@ -108,8 +137,6 @@ fi
 
 # ── Promoção ────────────────────────────────────────────────────────────────
 titulo "Promovendo na Central"
-[ -n "$CENTRAL_URL" ] || { erro "Sem DRAC_CENTRAL_URL (nem CLOUD_API_URL no infra/.env)."; exit 1; }
-[ -n "$ADMIN_TOKEN" ] || { erro "Sem DRAC_CENTRAL_ADMIN_TOKEN — é o token administrativo da Central."; exit 1; }
 
 REPO_URL="$(git -C "$RAIZ" remote get-url origin 2>/dev/null | sed -E 's#^git@([^:]+):#https://\1/#')"
 AGORA="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
