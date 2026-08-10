@@ -149,6 +149,14 @@ GENERAL_PROFILE = {
     "confidence_motorcycle": _env_float("GENERAL_CONFIDENCE_MOTORCYCLE", 0.25),
     "confidence_rider_vehicle": _env_float("GENERAL_CONFIDENCE_RIDER_VEHICLE", 0.25),
     "confidence_vehicle": _env_float("GENERAL_CONFIDENCE_VEHICLE", 0.25),
+    # ── Confirmação por persistência (o "threshold" do Frigate) ──────────────
+    # O limiar POR QUADRO acima (confidence_*) é de propósito baixo: ele deixa a
+    # detecção entrar no rastreamento e desenhar a caixa na tela. Já virar
+    # EVENTO exige que a MEDIANA das confianças do objeto, ao longo de vários
+    # quadros, passe deste limiar. Um pico espúrio não arrasta a mediana.
+    "confirm_min_frames": _env_int("GENERAL_CONFIRM_MIN_FRAMES", 3),
+    "confirm_median_threshold": _env_float("GENERAL_CONFIRM_MEDIAN_THRESHOLD", 0.70),
+    "confirm_forget_after_misses": _env_int("GENERAL_CONFIRM_FORGET_AFTER_MISSES", 20),
     "tracker": _env_str("GENERAL_TRACKER", "bytetrack"),
     "track_buffer": _env_int("GENERAL_TRACK_BUFFER", 20),
     "lost_ttl_ms": _env_int("GENERAL_LOST_TTL_MS", 2000),

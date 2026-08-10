@@ -12,6 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 from detectors.base import Detection
 from detectors.motion import MotionDetector
 from detectors.tripwire import DetectorDeTravessia
+from detectors.confirmacao_de_objeto import ConfirmadorDeObjeto, PoliticaDeConfirmacao
 from model_registry import registry
 from runtime_profiles import MOTION_PROFILE, runtime_profile
 from reconnect_backoff import compute_reconnect_delay
@@ -141,6 +142,15 @@ class StreamProcessor:
         # Tripwire: as LINHAS viajam na mesma lista das zonas (kind: 'line').
         # Fica inativo — e sem custo — quando não há nenhuma desenhada.
         self.tripwire = DetectorDeTravessia(self.detection_zones)
+        # Confirmação por persistência: um objeto só vira EVENTO depois de
+        # provar que existe em vários quadros. Sem isto, um arbusto no vento
+        # acordava o cliente — o único freio era um debounce de tempo, que
+        # atrasa o alarme seguinte mas não questiona o primeiro.
+        self.confirmador = ConfirmadorDeObjeto(PoliticaDeConfirmacao(
+            minimo_de_quadros=int(self.profile.get("confirm_min_frames", 3)),
+            limiar_mediana=float(self.profile.get("confirm_median_threshold", 0.70)),
+            esquecer_apos_faltas=int(self.profile.get("confirm_forget_after_misses", 20)),
+        ))
         self.last_error = None
         self._snapshot_lock = threading.Lock()
         self._latest_detections = []
@@ -1116,6 +1126,24 @@ class StreamProcessor:
                 continue
 
             if detections and self.emit_events:
+                # A CAIXA NA TELA continua saindo de `detections` (acima): ver
+                # muito é bom. Já ACORDAR ALGUÉM exige evidência — só passam
+                # daqui os objetos que se sustentaram em vários quadros com
+                # mediana de confiança alta. Movimento e travessia de linha não
+                # entram nesta regra: movimento não é objeto, e a travessia já
+                # exige trajeto entre quadros, que é evidência do mesmo tipo.
+                try:
+                    candidatos = [d for d in detections
+                                  if (d.event_type or "AI_DETECTED") == "AI_DETECTED"]
+                    outros = [d for d in detections
+                              if (d.event_type or "AI_DETECTED") != "AI_DETECTED"]
+                    detections = outros + self.confirmador.avaliar(candidatos)
+                except Exception as exc:
+                    # Confirmação quebrada não pode cegar a câmera: sem ela o
+                    # comportamento volta a ser o antigo, que é ruidoso mas vivo.
+                    self.last_error = f"confirmacao: {exc}"
+                    logger.warning("[%s] confirmação falhou: %s", self.camera_id, exc)
+
                 ready = []
                 for detection in detections:
                     event_type = detection.event_type or "AI_DETECTED"
