@@ -11,17 +11,37 @@ import { SimulateAlarmRuleDto } from './dto/simulate-alarm-rule.dto';
 import { UpdateAlarmRuleDto } from './dto/update-alarm-rule.dto';
 import { envNumber } from '../common/config/env-number.helper';
 
+// Eventos de ANÁLISE por IA que NÃO começam com AI_/ANALYTICS_ mas são,
+// semanticamente, analítica — e portanto devem virar ALARME (e notificação).
+//
+// Bug real (achado 10/08/2026): a LINHA de perímetro emite `LINE_CROSSED`, que
+// não casava com nenhum prefixo abaixo → `inferSource` devolvia null → cruzar a
+// linha só gravava um evento na timeline, SEM alarme e SEM push. Ou seja, a
+// intenção de segurança MAIS explícita ("ninguém passa daqui") era a que MENOS
+// avisava. Objeto virava alarme (reporta como AI_DETECTED), a linha não.
+const EVENTOS_ANALITICOS = new Set([
+  'LINE_CROSSED',        // travessia de perímetro (tripwire)
+  'INTRUSION_DETECTED',  // objeto dentro de área proibida
+  'HUMAN_DETECTED',      // pessoa detectada
+  'OBJECT_DETECTED',     // objeto detectado
+]);
+
 function inferSource(type: string): AlarmSource | null {
   if (type.startsWith('STREAM_')) return AlarmSource.STREAM;
   if (type.startsWith('HEALTH_')) return AlarmSource.HEALTH;
   if (type === 'MOTION_DETECTED') return AlarmSource.MOTION;
   if (type.startsWith('MOTION_')) return AlarmSource.MOTION;
   if (type.startsWith('AI_') || type.startsWith('ANALYTICS_')) return AlarmSource.ANALYTICS;
+  if (EVENTOS_ANALITICOS.has(type)) return AlarmSource.ANALYTICS;
   return null;
 }
 
 function defaultPriorityFor(type: string, severity: string): AlarmPriority {
   if (type === 'MOTION_DETECTED') return AlarmPriority.P3;
+  // Perímetro é decisão consciente do operador ("ninguém cruza esta linha").
+  // Cruzar a linha ou invadir área proibida é mais urgente que uma detecção
+  // genérica — sobe para P2 mesmo que a IA tenha mandado severidade baixa.
+  if (type === 'LINE_CROSSED' || type === 'INTRUSION_DETECTED') return AlarmPriority.P2;
   if (severity === 'CRITICAL' || severity === 'ERROR') return AlarmPriority.P1;
   if (severity === 'WARNING' || severity === 'WARN') return AlarmPriority.P2;
   if (severity === 'INFO') return AlarmPriority.P3;
