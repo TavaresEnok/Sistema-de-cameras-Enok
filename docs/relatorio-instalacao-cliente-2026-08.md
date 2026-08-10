@@ -226,6 +226,32 @@ poder ser reportada como concluída. (Lacuna B.)
 
 ---
 
+## 5-bis. Situação: os cinco itens foram implementados (10/08/2026)
+
+A instalação passou a ser **dois comandos** (`docs/clean-install.md`), e o gate
+do item 1 existe: `scripts/teste-instalacao-limpa.sh` sobe uma máquina virgem
+(Ubuntu com systemd em PID 1), roda o instalador **com stdin fechado** — o que
+prova que nada depende de alguém respondendo — e passa a bateria de verificação.
+
+**Na primeira vez que rodou de verdade, encontrou cinco defeitos.** Todos da
+mesma família dos doze originais: invisíveis onde se desenvolve, fatais numa
+máquina nova.
+
+| # | O que o gate achou | Por que era invisível |
+|---|--------------------|------------------------|
+| 13 | **Docker instalado ≠ Docker rodando.** A única checagem era `docker compose version`, que lê o binário e passa com o daemon parado. A instalação seguia e morria minutos depois em "failed to connect to the docker API". | Na máquina de quem desenvolve o daemon está sempre de pé. |
+| 14 | **O watchdog não conseguia escrever seu diretório de estado.** A correção nº 9 (fallback `sudo -n`) era **incompleta**: o operador não tem sudo sem senha. No cliente contornei à mão, então o defeito seguiu vivo no produto. Agora quem cria e dá o dono é o instalador, que tem privilégio para isso. | Só aparece com usuário operador sem sudo livre e `storage` recém-criado pelo root. |
+| 15 | **O watchdog exigia `node` no host.** Usava node só para montar um JSON. Não existe node no host de um servidor — o Node mora nos containers, é essa a arquitetura. Reescrito em shell puro. | Quem desenvolve tem node instalado. |
+| 16 | **`verify_watchdog` reprovava instalação saudável.** O watchdog termina em `[ ${#issues[@]} -eq 0 ]`: sai não-zero quando o *sistema* está degradado (disco cheio, câmera fora). Isso é diagnóstico, não defeito dele — a verificação abortaria a instalação por disco em 86%. Agora compara o mtime do arquivo de estado; problema vira aviso. | Defeito meu, do dia anterior. Nunca teria aparecido sem uma execução real. |
+| 17 | **O check de porta duplicada estava cego.** Achado pelo `test-checks-pegam-defeito.sh`, que injeta cada defeito de volta e exige reprovação. | Check verde que não enxerga nada parece um check bom. |
+
+Dois desses (14 e 16) eram **correções minhas já dadas como concluídas**. Sem uma
+máquina virgem, "corrigido" era só uma afirmação.
+
+Resultado final do gate: instalação limpa **passa**, 6/6 na bateria — containers,
+exposição de portas, 27 tabelas, login do administrador criado pelo instalador,
+todas as rotas em 200 (inclusive `/role-permissions`) e watchdog gravando.
+
 ## 6. O que já ficou protegido por teste
 
 Nem tudo depende do item 1. Estes já não voltam em silêncio:
