@@ -459,9 +459,29 @@ export function LiveStreamPlayer({
   const suspendedRef = useRef(false);
   const suspendTimerRef = useRef<number | null>(null);
   const [zoom, setZoom] = useState(1);
-  // Ponto para onde o zoom aponta (em %). O scroll do mouse leva o zoom para
-  // ONDE o cursor está, não para o centro. 'center' é o repouso (zoom = 1).
-  const [zoomOrigin, setZoomOrigin] = useState('center');
+  // Deslocamento (pan) do vídeo ampliado, em px. Modelo translate+scale com
+  // origem no canto (0 0): permite AMPLIAR no ponto do mouse E ARRASTAR para ver
+  // o resto. Refs espelham o estado para os handlers de janela não pegarem
+  // valores velhos (o closure do addEventListener congela o estado).
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const dragRef = useRef<{ mouseX: number; mouseY: number; panX: number; panY: number } | null>(null);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { panRef.current = pan; }, [pan]);
+
+  // Mantém o vídeo dentro do quadro: com origem no canto, o conteúdo ampliado
+  // tem largura `z×W`, então o pan válido vai de 0 (borda esquerda/topo) até
+  // `-(z-1)×W` (borda direita/baixo). Sem isto, arrastar mostraria fundo preto.
+  const clampPan = useCallback((p: { x: number; y: number }, z: number, rect: DOMRect) => ({
+    x: Math.min(0, Math.max(-(z - 1) * rect.width, p.x)),
+    y: Math.min(0, Math.max(-(z - 1) * rect.height, p.y)),
+  }), []);
+  const resetZoom = useCallback(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, []);
   // Qualidade da câmera única (1x1): persistida por câmera; na grade é sempre 'grid'.
   const [qualityMode, setQualityMode] = useState<LiveQualityMode>(() => getStoredLiveQuality(cameraId));
   useEffect(() => {
@@ -542,36 +562,82 @@ export function LiveStreamPlayer({
   // cursor está SOBRE este player, o overlay deixa de importar.
   useEffect(() => {
     if (liveViewMode !== 'selected') return;
+    const dentro = (rect: DOMRect, e: { clientX: number; clientY: number }) =>
+      e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+
     const onWheel = (e: WheelEvent) => {
       const container = containerRef.current;
       if (!container) return;
       const rect = container.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-      // Só age quando o cursor está sobre ESTE player.
-      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+      if (rect.width <= 0 || rect.height <= 0 || !dentro(rect, e)) return;
       e.preventDefault();
-      // Origem do zoom = posição do cursor DENTRO do vídeo, em %. É isso que faz
-      // o zoom "entrar" onde o mouse aponta, em vez de sempre no centro.
-      const x = ((e.clientX - rect.left) / rect.width) * 100;
-      const y = ((e.clientY - rect.top) / rect.height) * 100;
-      setZoomOrigin(`${Math.max(0, Math.min(100, x))}% ${Math.max(0, Math.min(100, y))}%`);
-      const step = e.deltaY > 0 ? -0.15 : 0.15;
-      setZoom((prev) => {
-        const next = Math.min(4, Math.max(1, parseFloat((prev + step).toFixed(2))));
-        if (next === 1) setZoomOrigin('center'); // voltou ao normal → repouso
-        return next;
-      });
+      const z0 = zoomRef.current;
+      const step = e.deltaY > 0 ? -0.2 : 0.2;
+      const z1 = Math.min(4, Math.max(1, parseFloat((z0 + step).toFixed(2))));
+      if (z1 === z0) return;
+      if (z1 === 1) { resetZoom(); return; }
+      // Ponto do cursor DENTRO do container (px). O pan é ajustado para que o que
+      // está sob o mouse continue sob o mouse — é isso que faz o zoom "entrar"
+      // onde se aponta (translate+scale, origem no canto): pan1 = m − (m−pan0)·z1/z0.
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const p0 = panRef.current;
+      const p1 = clampPan(
+        { x: mx - (mx - p0.x) * (z1 / z0), y: my - (my - p0.y) * (z1 / z0) },
+        z1,
+        rect,
+      );
+      setZoom(z1);
+      setPan(p1);
     };
+
+    // ARRASTAR (pan) com o mouse quando ampliado. mousedown na JANELA (o botão
+    // de seleção z-15 fica por cima e não é filho do container — mesma razão do
+    // wheel); mousemove/up na janela para o arraste continuar mesmo saindo.
+    const onMouseDown = (e: MouseEvent) => {
+      if (zoomRef.current <= 1 || e.button !== 0) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      if (!dentro(rect, e)) return;
+      e.preventDefault();
+      dragRef.current = { mouseX: e.clientX, mouseY: e.clientY, panX: panRef.current.x, panY: panRef.current.y };
+      setDragging(true);
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      const d = dragRef.current;
+      const container = containerRef.current;
+      if (!d || !container) return;
+      const rect = container.getBoundingClientRect();
+      setPan(clampPan(
+        { x: d.panX + (e.clientX - d.mouseX), y: d.panY + (e.clientY - d.mouseY) },
+        zoomRef.current,
+        rect,
+      ));
+    };
+    const onMouseUp = () => {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      setDragging(false);
+    };
+
     window.addEventListener('wheel', onWheel, { passive: false });
-    return () => window.removeEventListener('wheel', onWheel);
-  }, [liveViewMode]);
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [liveViewMode, clampPan, resetZoom]);
 
   // Sair do 1x1 (voltar à grade) ou trocar de câmera zera o zoom: cada tela
   // nasce mostrando o quadro inteiro. Sem isto, o zoom "grudava" ao voltar.
   useEffect(() => {
-    setZoom(1);
-    setZoomOrigin('center');
-  }, [cameraId, liveViewMode]);
+    resetZoom();
+  }, [cameraId, liveViewMode, resetZoom]);
 
   useEffect(() => {
     failedProtocolsRef.current.clear();
@@ -2061,13 +2127,16 @@ export function LiveStreamPlayer({
       ref={containerRef}
       className={`relative overflow-hidden bg-black ${className ?? ''}`}
       aria-label={`Live ${cameraName}`}
-      onDoubleClick={() => setZoom(1)}
+      onDoubleClick={resetZoom}
     >
       <div
         className="absolute inset-0 w-full h-full"
         style={{
-          transform: zoom !== 1 ? `scale(${zoom})` : undefined,
-          transformOrigin: zoomOrigin,
+          // translate ANTES do scale, origem no canto (0 0): assim o pan é em
+          // pixels de tela e o zoom "entra" onde o mouse aponta. A transição
+          // suave só no repouso (voltar ao 1×) — arrastando tem de ser imediato.
+          transform: zoom !== 1 ? `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` : undefined,
+          transformOrigin: '0 0',
           transition: zoom === 1 ? 'transform 0.2s ease-out' : 'none',
         }}
       >
@@ -2101,6 +2170,23 @@ export function LiveStreamPlayer({
           autoPlay={autoPlay}
         />
       </div>
+
+      {/* MÃOZINHA — só existe quando ampliado. Fica ACIMA do botão de seleção
+          (z-[15], irmão do player) para (a) mostrar o cursor de arraste e (b)
+          impedir que arrastar o vídeo dispare a seleção/desseleção da câmera. O
+          arraste em si é tratado pelos ouvintes de janela (o botão cobre o
+          player e não é filho dele); aqui só entregamos o cursor certo. */}
+      {liveViewMode === 'selected' && zoom > 1 && (
+        <div
+          // z-[18]: ACIMA do botão de seleção (z-[15], irmão do player) para
+          // pegar o cursor de mão e barrar a desseleção acidental ao arrastar,
+          // mas ABAIXO dos controles (z-30: mudo, qualidade, selos) — que seguem
+          // clicáveis mesmo ampliado.
+          className="absolute inset-0 z-[18]"
+          style={{ cursor: dragging ? 'grabbing' : 'grab' }}
+          aria-hidden
+        />
+      )}
 
       {aiOverlayEnabled && detections.map((detection) => {
         // MOVIMENTO NUNCA desenha caixa. O MOG2 existe para ARMAR a gravação,
