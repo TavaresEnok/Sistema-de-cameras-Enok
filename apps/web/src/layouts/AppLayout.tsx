@@ -19,6 +19,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/alarms':        'Alarmes',
   '/cameras':       'Câmeras',
   '/ptz':           'Controle PTZ',
+  '/seguranca':     'Segurança de perímetro',
   '/investigation': 'Investigação',
   '/storage':       'Armazenamento',
   '/settings':      'Configurações',

@@ -170,6 +170,12 @@ export class SettingsService {
     const all = await this.loadAll();
     const branding: SettingsMap = {};
     for (const key of BRANDING_KEYS) branding[key] = all[key];
+    // Flag de FEATURE (não é marca, não é segredo): decide se a página de IA
+    // aparece no menu. Vai aqui de propósito — o menu é montado logo após o
+    // login, e o web já carrega este endpoint no arranque, então não custa uma
+    // requisição extra. Cada instalação tem o seu valor: ligada na matriz,
+    // desligada num cliente que não contratou IA.
+    branding.aiFeatureEnabled = all.aiFeatureEnabled;
     return branding;
   }
 

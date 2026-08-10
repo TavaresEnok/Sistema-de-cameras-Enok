@@ -70,6 +70,9 @@ export interface Camera {
   isPrivate?: boolean;
   /** Este usuário pode ver o CONTEÚDO? (false p/ admin numa câmera privada de terceiro). */
   canViewContent?: boolean;
+  /** Zonas/linhas de perímetro. Só o `kind`/`sentido` importam para o resumo da
+   *  página de Segurança; o desenho fica no editor do detalhe da câmera. */
+  detectionZones?: Array<{ kind: 'include' | 'exclude' | 'line'; sentido?: 'ambos' | 'ab' | 'ba' }>;
 }
 
 export interface User {
@@ -320,6 +323,7 @@ function mapCameraItems(
       ptzDetectado: camera.ptzCapable === true ? true : camera.ptzCapable === false ? false : null,
       hasAudio: Boolean(camera.audioEnabled),
       aiEnabled: camera.aiEnabled !== false,
+      detectionZones: Array.isArray(camera.detectionZones) ? camera.detectionZones : [],
       alarmsEnabled: camera.alarmsEnabled !== false,
       enabled: camera.enabled !== false,
       isPrivate: camera.isPrivate === true,

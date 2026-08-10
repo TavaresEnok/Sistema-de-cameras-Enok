@@ -26,11 +26,14 @@ type PublicBranding = {
   brandLightPrimaryTextColor?: string;
   brandLightSecondaryTextColor?: string;
   brandLightBorderColor?: string;
+  // Feature flag (não é marca): a página de IA aparece no menu? Por instalação.
+  aiFeatureEnabled?: boolean;
 };
 
 type BrandingState = {
   facilityName: string;
   logoDataUrl: string;
+  aiFeatureEnabled: boolean;
   loaded: boolean;
   load: () => Promise<void>;
 };
@@ -78,6 +81,9 @@ function applyBrandColors(data: PublicBranding) {
 export const useBrandingStore = create<BrandingState>((set) => ({
   facilityName: PRODUCT_NAME,
   logoDataUrl: '',
+  // Default FALSE: enquanto o servidor não responde, a página de IA fica
+  // escondida. Uma instalação sem IA nunca deve piscar o item no menu.
+  aiFeatureEnabled: false,
   loaded: false,
   load: async () => {
     try {
@@ -85,6 +91,7 @@ export const useBrandingStore = create<BrandingState>((set) => ({
       set({
         facilityName: normalizeFacilityName(data.facilityName),
         logoDataUrl: data.brandLogoDataUrl?.trim() || '',
+        aiFeatureEnabled: data.aiFeatureEnabled === true,
         loaded: true,
       });
       applyBrandColors(data);

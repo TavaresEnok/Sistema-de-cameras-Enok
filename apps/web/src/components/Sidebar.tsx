@@ -5,7 +5,7 @@ import {
   Camera, Settings,
   ChevronLeft, ChevronRight, LogOut, Keyboard, Shield,
   Server, Users, Radar, FolderKey, ShieldCheck, Search, Sun, Moon,
-  Bell, Crosshair, HardDrive, UserCircle,
+  Bell, Crosshair, HardDrive, UserCircle, ShieldAlert,
   CircleHelp, LayoutGrid, Activity, FileSearch, ScrollText, Brain,
   type LucideIcon,
 } from 'lucide-react';
@@ -41,6 +41,7 @@ const NAV_SECTIONS: NavSection[] = [
       // Alertas requerem operador ou superior (viewers não têm acesso)
       { path: '/alarms',   label: 'Alarmes',        icon: Bell,     roles: ['admin', 'operator'] },
       { path: '/ptz',      label: 'Controle PTZ',   icon: Crosshair },
+      { path: '/seguranca', label: 'Segurança',     icon: ShieldAlert, roles: ['admin', 'operator'] },
       { path: '/wall',     label: 'Modo Mural',     icon: LayoutGrid },
       { path: '/events',   label: 'Eventos',        icon: Bell,      roles: ['admin', 'operator'] },
     ],
@@ -82,16 +83,16 @@ const NAV_SECTIONS: NavSection[] = [
 ];
 
 /**
- * Páginas ESCONDIDAS do menu.
+ * Páginas SEMPRE escondidas do menu.
  *
  * A rota continua existindo e funcionando — quem tem o endereço direto entra
  * normalmente. É só a porta de entrada visível que sai do caminho do operador.
- * Para voltar a exibir qualquer uma, basta tirá-la desta lista.
  *
- * Uma seção que fique sem nenhum item visível desaparece junto (é o caso de
- * "Investigação", cujo único item é /investigation).
+ * A página de IA (/ia) NÃO entra aqui: ela é por-instalação, controlada pela
+ * flag `aiFeatureEnabled` do servidor — visível onde a IA foi contratada
+ * (a matriz), escondida onde não foi (um cliente sem IA). Ver mais abaixo.
  */
-const PAGINAS_OCULTAS = new Set<string>(['/ia', '/investigation', '/audit-logs']);
+const PAGINAS_OCULTAS = new Set<string>(['/investigation', '/audit-logs']);
 
 /* Role accent — no red for admin; steel blue hierarchy */
 const ROLE_COLOR: Record<string, string> = {
@@ -117,13 +118,19 @@ export function Sidebar({
   const role = user?.role ?? 'operator';
   const facilityName = useBrandingStore((state) => state.facilityName);
   const logoDataUrl = useBrandingStore((state) => state.logoDataUrl);
+  const aiFeatureEnabled = useBrandingStore((state) => state.aiFeatureEnabled);
 
   const roleColor = ROLE_COLOR[user?.role ?? 'operator'] ?? ROLE_COLOR.operator;
+  // A página de IA só aparece onde a feature está ligada. Enquanto o servidor
+  // não respondeu, `aiFeatureEnabled` é false — a IA não pisca no menu.
+  const escondida = (path: string) =>
+    PAGINAS_OCULTAS.has(path) || (path === '/ia' && !aiFeatureEnabled);
+
   const visibleSections = NAV_SECTIONS
     .map((section) => ({
       ...section,
       items: section.items.filter(
-        (item) => (!item.roles || item.roles.includes(role)) && !PAGINAS_OCULTAS.has(item.path),
+        (item) => (!item.roles || item.roles.includes(role)) && !escondida(item.path),
       ),
     }))
     // Seção que ficou sem nenhum item some junto (é o que apaga "Investigação").
