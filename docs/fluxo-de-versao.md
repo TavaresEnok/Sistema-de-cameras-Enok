@@ -67,6 +67,21 @@ A sequência tem rede de segurança:
 > depender disso, o backup do passo 1 é o caminho. Use `--sem-volta` para
 > manter a versão nova no ar mesmo reprovada e decidir à mão.
 
+## Limite conhecido: a evidência é declarada, não verificada
+
+A Central confere que a evidência **existe e está completa**, não que ela é
+verdadeira. Quem tem o token administrativo consegue afirmar "o gate passou" com
+um `curl` e promover sem ter testado nada.
+
+Isso é uma escolha consciente por ora — a disciplina mora no
+`promover-release.sh`, que é o caminho normal e roda os testes de verdade —, mas
+**não confunda com garantia**. Enquanto for assim, promover à mão é burlar o
+processo, não usá-lo.
+
+O fechamento correto seria a evidência vir assinada por quem realmente rodou o
+gate (o CI), com a Central verificando a assinatura. Está anotado como próximo
+passo; até lá, o combinado é: **promove-se pelo script**.
+
 ## Rollback de emergência
 
 A Central aceita voltar para um commit **que já esteve aprovado** sem exigir
