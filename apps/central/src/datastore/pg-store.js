@@ -121,7 +121,22 @@ class PgStore {
     const sessionsOut = {};
     for (const row of sessions.rows) sessionsOut[row.token_hash] = mappers.rowToSession(row);
     const auditEvents = audit.rows.map((row) => mappers.rowToAuditEvent(row));
-    return { installations, users: usersOut, sessions: sessionsOut, auditEvents };
+    // Configuração SINGLETON da frota (não é por instalação, por usuário nem
+    // por sessão) vive na tabela `meta`. Sem isto, uma chave de topo do db era
+    // aceita, respondida e PERDIA-SE no recarregamento: a promoção de versão
+    // respondia 200 e a instalação continuava sem ver release nenhuma.
+    const [release, releaseHistorico] = await Promise.all([
+      this.getMeta('release'),
+      this.getMeta('releaseHistorico'),
+    ]);
+    return {
+      installations,
+      users: usersOut,
+      sessions: sessionsOut,
+      auditEvents,
+      release: release || null,
+      releaseHistorico: Array.isArray(releaseHistorico) ? releaseHistorico : [],
+    };
   }
 
   // Conjuntos de chaves já presentes (para reconciliação/backfill).
@@ -218,6 +233,23 @@ class PgStore {
         await this._upsertAuditEvent(client, ev);
       }
       await client.query(`DELETE FROM ${TABLES.auditEvents} WHERE NOT (id = ANY($1::text[]))`, [auditIds]);
+
+      // `undefined` = quem escreveu não mexeu nisso; não apaga o que existe.
+      // `null` explícito continua podendo limpar.
+      if (source.release !== undefined) {
+        await client.query(
+          `INSERT INTO ${TABLES.meta} (key, value) VALUES ($1,$2)
+           ON CONFLICT (key) DO UPDATE SET value=$2`,
+          ['release', JSON.stringify(source.release ?? null)],
+        );
+      }
+      if (source.releaseHistorico !== undefined) {
+        await client.query(
+          `INSERT INTO ${TABLES.meta} (key, value) VALUES ($1,$2)
+           ON CONFLICT (key) DO UPDATE SET value=$2`,
+          ['releaseHistorico', JSON.stringify(source.releaseHistorico ?? [])],
+        );
+      }
 
       await client.query('COMMIT');
     } catch (error) {
