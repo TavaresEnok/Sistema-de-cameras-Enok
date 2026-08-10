@@ -206,6 +206,31 @@ else
   fi
 fi
 
+# ─── 7. A instalação reporta a versão que ela REALMENTE roda ────────────────
+# A versão que sobe para a Central vem de DRAC_VERSION no .env, não do git. Se
+# os dois divergem, a Central mostra a instalação como atrasada para sempre e
+# alguém roda a atualização em laço — foi o que aconteceu ao atualizar o
+# D-GUARDIAN pela primeira vez.
+secao '7. Versão reportada bate com a instalada'
+
+VERSAO_ENV="$(env_get "$ENV_FILE" DRAC_VERSION)"
+VERSAO_GIT="$(git -C "$DIR" rev-parse HEAD 2>/dev/null || echo '')"
+if [ -z "$VERSAO_GIT" ]; then
+  aviso "não é um repositório git" "$DIR — instalação fora do padrão do instalador"
+elif [ -z "$VERSAO_ENV" ]; then
+  aviso "DRAC_VERSION ausente no infra/.env" "a Central não saberá em que versão esta instalação está"
+elif [ "$VERSAO_ENV" = "$VERSAO_GIT" ]; then
+  ok "reporta ${VERSAO_GIT:0:12}, que é o que está instalado"
+elif ! printf '%s' "$VERSAO_ENV" | grep -qE '^[0-9a-f]{40}$'; then
+  # Marcador deliberado (ex.: "local" na matriz, onde o código muda o tempo
+  # todo e fixar um commit seria mentira na maior parte do tempo). Não é
+  # deriva — mas a Central fica sem saber em que versão ela está, e isso
+  # precisa aparecer.
+  aviso "reporta \"$VERSAO_ENV\", não um commit" "instalação de desenvolvimento; a Central não consegue situá-la na frota"
+else
+  falha "versão reportada ≠ versão instalada" "reporta ${VERSAO_ENV:0:12}, roda ${VERSAO_GIT:0:12} — a Central a verá eternamente atrasada"
+fi
+
 # ─── Resultado ──────────────────────────────────────────────────────────────
 printf '\n'
 if [ "$falhas" -eq 0 ] && [ "$avisos" -eq 0 ]; then

@@ -120,6 +120,19 @@ aplicar_versao() {
   local commit="$1"
   git -C "$RAIZ" fetch --quiet --depth 1 origin "$commit" || return 1
   git -C "$RAIZ" checkout --quiet --detach "$commit" || return 1
+
+  # A versão que a instalação REPORTA à Central vem de DRAC_VERSION no .env,
+  # escrita pelo instalador — não do git. Sem atualizar isto, o código muda e a
+  # instalação continua se dizendo na versão antiga: a Central a mostraria como
+  # atrasada para sempre e alguém rodaria esta atualização em laço.
+  #
+  # Tem de vir ANTES do `up`, senão os containers sobem com o valor velho.
+  if grep -qE '^DRAC_VERSION=' "$RAIZ/infra/.env" 2>/dev/null; then
+    sed -i -E "s|^DRAC_VERSION=.*|DRAC_VERSION=$commit|" "$RAIZ/infra/.env" || return 1
+  else
+    printf 'DRAC_VERSION=%s\n' "$commit" >> "$RAIZ/infra/.env" || return 1
+  fi
+
   "${COMPOSE[@]}" up -d --build || return 1
   "${COMPOSE[@]}" exec -T -w /app/apps/api api npx prisma migrate deploy || return 1
   return 0
