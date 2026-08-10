@@ -14,6 +14,8 @@ import {
   execFileWithSecretUrl,
   spawnWithSecretUrl,
 } from '../common/process/secret-url-process.helper';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 
 type FfmpegStreamConfig = {
   rtspTransport: string;
@@ -367,11 +369,65 @@ export class FfmpegMjpegService {
     ];
   }
 
+  // Thumbnail mais recente da gravação, no disco. É INSTANTÂNEO (só lê arquivo)
+  // e existe sempre que a câmera está gravando — o pipeline gera um `.thumb.jpg`
+  // por segmento. Serve de poster imediato: antes, a 1ª carga esperava o FFmpeg
+  // conectar no RTSP e pescar um keyframe (vários segundos), e o editor de
+  // perímetro ficava em "Carregando imagem…". Cai para o grab RTSP só quando
+  // NÃO há thumbnail recente (câmera sem gravação).
+  private async latestDiskThumbnail(cameraId: string): Promise<PosterCacheEntry | null> {
+    const root = this.configService.get<string>('recordingsRoot') ?? process.env.RECORDINGS_ROOT ?? './storage/recordings';
+    const maxAgeMs = 15 * 60 * 1000; // até 15 min: fundo estável, não precisa ser "ao vivo"
+    const maiorSubpasta = async (dir: string): Promise<string | null> => {
+      const subs = (await readdir(dir, { withFileTypes: true }))
+        .filter((e) => e.isDirectory() && /^\d+$/.test(e.name))
+        .map((e) => e.name)
+        .sort();
+      return subs.length ? join(dir, subs[subs.length - 1]) : null;
+    };
+    try {
+      // Desce até o DIA (YYYY/MM/DD) pela pasta de maior nome.
+      let dia: string | null = join(root, `camera-${cameraId}`);
+      for (let nivel = 0; nivel < 3 && dia; nivel += 1) dia = await maiorSubpasta(dia);
+      if (!dia) return null;
+      // Dentro do dia, varre as HORAS da mais NOVA para a mais antiga — assim
+      // uma pasta de hora vazia (recém-criada) não engana a busca.
+      const horas = (await readdir(dia, { withFileTypes: true }))
+        .filter((e) => e.isDirectory() && /^\d+$/.test(e.name))
+        .map((e) => e.name)
+        .sort()
+        .reverse();
+      for (const hora of horas) {
+        const dir = join(dia, hora);
+        const thumbs = (await readdir(dir)).filter((n) => n.endsWith('.thumb.jpg')).sort();
+        if (!thumbs.length) continue;
+        const caminho = join(dir, thumbs[thumbs.length - 1]);
+        const info = await stat(caminho);
+        if (Date.now() - info.mtimeMs > maxAgeMs) return null; // o mais novo já é velho → grab ao vivo
+        const buffer = await readFile(caminho);
+        return buffer.length ? { buffer, generatedAt: info.mtimeMs } : null;
+      }
+      return null;
+    } catch {
+      return null; // sem pasta/arquivo → cai para o RTSP
+    }
+  }
+
   async getLivePosterFrame(cameraId: string): Promise<PosterCacheEntry> {
     const now = Date.now();
     const cached = this.posterCache.get(cameraId);
     if (cached && now - cached.generatedAt < this.posterCacheTtlMs) {
       return cached;
+    }
+
+    // Sem cache fresco: um thumbnail recente do disco responde NA HORA, sem
+    // esperar o FFmpeg. Só quando não há é que se paga o grab RTSP.
+    if (!cached) {
+      const disco = await this.latestDiskThumbnail(cameraId);
+      if (disco) {
+        this.posterCache.set(cameraId, disco);
+        return disco;
+      }
     }
 
     const inFlight = this.posterInFlight.get(cameraId);
