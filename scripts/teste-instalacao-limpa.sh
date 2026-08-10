@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# ════════════════════════════════════════════════════════════════════════════
+# TESTE DE INSTALAÇÃO LIMPA — o gate que faltava.
+#
+# Sobe uma MÁQUINA VIRGEM, roda o instalador do zero SEM NINGUÉM NA FRENTE, e
+# passa a bateria de verificação. É o único teste que exercita o caminho real
+# do cliente: nada de /home/flashnet, nada de Central já rodando, nada de
+# banco com tabelas que chegaram por `db push`, nada de portas já ligadas.
+#
+# Os 12 defeitos da primeira instalação de cliente (07/08/2026) eram todos
+# invisíveis na máquina de quem desenvolve e todos apareceriam aqui.
+#
+#   bash scripts/teste-instalacao-limpa.sh                 # HEAD atual
+#   bash scripts/teste-instalacao-limpa.sh --commit <sha>
+#   bash scripts/teste-instalacao-limpa.sh --manter        # não destrói no fim
+#
+# Requisitos: Docker no host. A máquina virgem é um container Ubuntu
+# privilegiado com systemd de verdade (PID 1) — o instalador precisa instalar
+# o Docker dele e agendar o watchdog por systemd timer, como faz num servidor.
+# ════════════════════════════════════════════════════════════════════════════
+set -uo pipefail
+
+RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MAQUINA="drac-maquina-virgem"
+IMAGEM="drac-maquina-virgem:ubuntu24"
+VOLUME_DOCKER="drac-maquina-virgem-docker"
+COMMIT=""
+MANTER=false
+SENHA_ADMIN="Teste-instalacao-limpa-2026"
+
+log()   { printf '\033[1;36m[teste]\033[0m %s\n' "$*"; }
+erro()  { printf '\033[1;31m[teste]\033[0m %s\n' "$*" >&2; }
+titulo(){ printf '\n\033[1m══ %s\033[0m\n' "$*"; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --commit) COMMIT="$2"; shift 2 ;;
+    --manter) MANTER=true; shift ;;
+    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) erro "Opcao desconhecida: $1"; exit 2 ;;
+  esac
+done
+
+command -v docker >/dev/null 2>&1 || { erro "Docker e necessario no host."; exit 2; }
+
+# ── O commit precisa estar PUBLICADO ────────────────────────────────────────
+# O instalador clona do GitHub num commit fixo; testar um commit que só existe
+# na sua máquina daria "not our ref" depois de minutos de espera.
+[ -n "$COMMIT" ] || COMMIT="$(git -C "$RAIZ" rev-parse HEAD)"
+titulo "Commit sob teste"
+log "$COMMIT"
+if ! git -C "$RAIZ" branch -r --contains "$COMMIT" 2>/dev/null | grep -q .; then
+  erro "O commit $COMMIT nao esta em nenhum branch remoto."
+  erro "O instalador clona do GitHub: publique-o antes (git push)."
+  exit 1
+fi
+log "commit publicado, o instalador conseguira busca-lo"
+
+limpar() {
+  if [ "$MANTER" = true ]; then
+    log "Maquina virgem MANTIDA: docker exec -it $MAQUINA bash"
+    return
+  fi
+  log "Destruindo a maquina virgem"
+  docker rm -f "$MAQUINA" >/dev/null 2>&1 || true
+  docker volume rm "$VOLUME_DOCKER" >/dev/null 2>&1 || true
+}
+trap limpar EXIT
+
+# ── A máquina virgem ────────────────────────────────────────────────────────
+titulo "Preparando a maquina virgem"
+docker rm -f "$MAQUINA" >/dev/null 2>&1 || true
+docker volume rm "$VOLUME_DOCKER" >/dev/null 2>&1 || true
+
+# Só o mínimo de um Ubuntu recém-instalado: systemd, sudo e o suficiente para
+# baixar o instalador. Docker NÃO vem pronto — quem instala é o instalador.
+docker build -q -t "$IMAGEM" - >/dev/null <<'DOCKERFILE'
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      systemd systemd-sysv dbus sudo curl ca-certificates gnupg iproute2 openssl \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN printf '%%sudo ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-teste \
+ && chmod 440 /etc/sudoers.d/90-teste
+CMD ["/sbin/init"]
+DOCKERFILE
+log "imagem da maquina virgem pronta"
+
+docker run -d --name "$MAQUINA" --privileged \
+  --cgroupns=host \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  --tmpfs /run --tmpfs /run/lock \
+  -v "$VOLUME_DOCKER:/var/lib/docker" \
+  "$IMAGEM" >/dev/null
+
+log "aguardando o systemd da maquina virgem"
+for _ in $(seq 1 30); do
+  estado="$(docker exec "$MAQUINA" systemctl is-system-running 2>/dev/null || true)"
+  case "$estado" in running|degraded) break ;; esac
+  sleep 1
+done
+[ -n "${estado:-}" ] || { erro "systemd nao subiu na maquina virgem"; exit 1; }
+log "systemd: $estado"
+
+docker exec "$MAQUINA" bash -c 'id operador >/dev/null 2>&1 || (useradd -m -s /bin/bash operador && usermod -aG sudo operador)'
+
+# ── Arquivo de respostas ────────────────────────────────────────────────────
+titulo "Arquivo de respostas"
+docker exec -i "$MAQUINA" bash -c 'cat > /root/cliente.env && chmod 600 /root/cliente.env' <<EOF
+DRAC_INSTALLER_COMMIT=$COMMIT
+DRAC_CUSTOMER_NAME=Cliente de Teste
+DRAC_INSTALLATION_ID=teste-instalacao-limpa
+DRAC_CAMERA_ALLOWED_CIDRS=192.168.99.0/24
+DRAC_SERVER_IP=127.0.0.1
+DRAC_OPERATING_USER=operador
+DRAC_ADMIN_EMAIL=admin@teste.local
+DRAC_ADMIN_PASSWORD=$SENHA_ADMIN
+DRAC_BUILD_AGENT_EXPECTED=false
+EOF
+log "gravado em /root/cliente.env (nenhuma pergunta sera feita)"
+
+# ── A instalação ────────────────────────────────────────────────────────────
+titulo "Instalando (do zero, sem intervencao)"
+log "isto constroi as imagens do zero e leva varios minutos"
+docker exec "$MAQUINA" bash -c "curl -fsSL 'https://raw.githubusercontent.com/TavaresEnok/SISTEMA-CAMERA-2.0-Ajustcam/${COMMIT}/scripts/install-drac.sh' -o /root/install-drac.sh" \
+  || { erro "nao consegui baixar o instalador do commit $COMMIT"; exit 1; }
+
+# stdin fechado DE PROPÓSITO: prova que a instalação nunca depende de alguém
+# respondendo. Se algo tentar perguntar, tem de falhar dizendo o nome da
+# variável — nunca travar.
+if docker exec "$MAQUINA" bash -c 'bash /root/install-drac.sh --config /root/cliente.env < /dev/null' 2>&1 | tail -40; then
+  log "instalador terminou com sucesso"
+else
+  erro "O INSTALADOR FALHOU. Acima esta o motivo (ele agora sempre diz)."
+  exit 1
+fi
+
+# ── A bateria ───────────────────────────────────────────────────────────────
+titulo "Verificando a instalacao"
+docker cp "$RAIZ/scripts/verificar-instalacao.sh" "$MAQUINA:/root/verificar.sh" >/dev/null
+if docker exec "$MAQUINA" bash -c "DRAC_ADMIN_EMAIL=admin@teste.local DRAC_ADMIN_PASSWORD='$SENHA_ADMIN' bash /root/verificar.sh --dir /opt/drac"; then
+  titulo "RESULTADO"
+  printf '\033[1;32mInstalacao limpa PASSOU: o instalador entrega um sistema utilizavel sozinho.\033[0m\n\n'
+  exit 0
+fi
+titulo "RESULTADO"
+erro "A instalacao subiu mas a verificacao reprovou (detalhes acima)."
+exit 1

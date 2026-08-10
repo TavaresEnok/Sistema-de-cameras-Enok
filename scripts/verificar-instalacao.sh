@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# ════════════════════════════════════════════════════════════════════════════
+# BATERIA DE VERIFICAÇÃO DE UMA INSTALAÇÃO DRAC
+#
+# Roda contra QUALQUER instalação: a máquina virgem do teste automatizado, ou
+# um servidor de cliente já em produção.
+#
+#   bash scripts/verificar-instalacao.sh
+#   bash scripts/verificar-instalacao.sh --dir /opt/drac
+#
+# Cada check corresponde a um defeito REAL encontrado na primeira instalação de
+# cliente (07/08/2026). Não são checagens genéricas de saúde: é a lista do que
+# já passou despercebido até o cliente.
+#
+# Saída 0 = instalação sadia. Qualquer outra = há pendência descrita na saída.
+# ════════════════════════════════════════════════════════════════════════════
+set -uo pipefail
+
+DIR="${DRAC_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+ENV_FILE=""
+API="${DRAC_API_URL:-http://127.0.0.1:3000}"
+WEB="${DRAC_WEB_URL:-http://127.0.0.1:5173}"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d|--dir) DIR="$2"; shift 2 ;;
+    --api) API="$2"; shift 2 ;;
+    --web) WEB="$2"; shift 2 ;;
+    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) printf 'Opcao desconhecida: %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+ENV_FILE="$DIR/infra/.env"
+
+falhas=0
+avisos=0
+secao() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+ok()    { printf '  \033[1;32mok\033[0m      %s\n' "$1"; }
+falha() { printf '  \033[1;31mFALHOU\033[0m  %s\n          %s\n' "$1" "$2"; falhas=$((falhas + 1)); }
+aviso() { printf '  \033[1;33maviso\033[0m   %s\n          %s\n' "$1" "$2"; avisos=$((avisos + 1)); }
+
+env_get() { sed -nE "s/^$2=(.*)$/\1/p" "$1" 2>/dev/null | tail -n 1; }
+
+compose() {
+  local f="-f $DIR/infra/docker-compose.yml -f $DIR/infra/docker-compose.prod.yml"
+  # shellcheck disable=SC2086
+  docker compose --env-file "$ENV_FILE" $f "$@"
+}
+
+# ─── 1. Containers ──────────────────────────────────────────────────────────
+secao '1. Containers'
+
+esperados="vms-postgres vms-redis vms-api vms-web vms-mediamtx"
+for c in $esperados; do
+  estado="$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo ausente)"
+  saude="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}sem-healthcheck{{end}}' "$c" 2>/dev/null || echo '-')"
+  case "$estado:$saude" in
+    running:healthy|running:sem-healthcheck) ok "$c ($estado/$saude)" ;;
+    running:starting) aviso "$c ainda subindo" "healthcheck em 'starting'; rode de novo em instantes" ;;
+    *) falha "$c" "estado=$estado saude=$saude — 'docker logs $c'" ;;
+  esac
+done
+
+# ─── 2. Nada exposto além do combinado ──────────────────────────────────────
+# O defeito mais grave da instalação do D-GUARDIAN: o Docker escreve DNAT
+# avaliado ANTES do ufw. O firewall estava certo e a API inteira respondia da
+# internet. Aqui olhamos a LIGAÇÃO real dos containers, que é o que manda.
+secao '2. Exposição à internet (ligações dos containers)'
+
+# Só é público o que NÃO PODE passar pelo nginx.
+PUBLICO_PERMITIDO="1935/tcp 8189/udp"
+exposto=""
+while read -r linha; do
+  [ -n "$linha" ] || continue
+  nome="${linha%% *}"
+  portas="${linha#* }"
+  # Formato do docker: 0.0.0.0:8888->8888/tcp
+  while read -r mapa; do
+    [ -n "$mapa" ] || continue
+    case "$mapa" in
+      0.0.0.0:*|:::*|\[::\]:*) ;;
+      *) continue ;;
+    esac
+    destino="${mapa##*->}"          # 8888/tcp
+    case " $PUBLICO_PERMITIDO " in
+      *" $destino "*) continue ;;
+    esac
+    exposto="$exposto\n    $nome  $mapa"
+  done < <(printf '%s' "$portas" | tr ',' '\n' | sed 's/^ *//')
+done < <(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null)
+
+if [ -z "$exposto" ]; then
+  ok "nada em 0.0.0.0 além de $PUBLICO_PERMITIDO"
+else
+  falha "porta(s) publicadas na internet indevidamente" "$(printf '%b' "$exposto")"
+fi
+
+# Confere também a INTENÇÃO declarada no .env, para o defeito não voltar pelo
+# arquivo mesmo que os containers de agora estejam certos.
+if [ -f "$ENV_FILE" ]; then
+  for chave in DRAC_API_BIND DRAC_WEB_BIND DRAC_POSTGRES_BIND DRAC_REDIS_BIND \
+               DRAC_MEDIAMTX_RTSP_BIND DRAC_MEDIAMTX_HLS_BIND DRAC_MEDIAMTX_WEBRTC_HTTP_BIND; do
+    valor="$(env_get "$ENV_FILE" "$chave")"
+    if [ "$valor" = "0.0.0.0" ]; then
+      falha "$chave=0.0.0.0 no infra/.env" "esse serviço passa pelo nginx; deve ligar em 127.0.0.1"
+    fi
+  done
+  [ "$falhas" -eq 0 ] && ok "infra/.env não declara 0.0.0.0 para serviço que passa pelo nginx"
+fi
+
+# ─── 3. O banco tem TODAS as tabelas do schema ──────────────────────────────
+# `migrate deploy` diz "up to date" mesmo faltando tabela que nunca teve
+# migração (chegou por `db push`). Foi assim que RolePermission sumiu.
+secao '3. Banco cobre o schema inteiro'
+
+PG_USER="$(env_get "$ENV_FILE" POSTGRES_USER)"
+PG_DB="$(env_get "$ENV_FILE" POSTGRES_DB)"
+if [ -z "$PG_USER" ] || [ -z "$PG_DB" ]; then
+  falha "não consegui ler POSTGRES_USER/DB" "$ENV_FILE"
+else
+  tabelas="$(compose exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -tAc \
+    "SELECT tablename FROM pg_tables WHERE schemaname='public'" 2>/dev/null | tr -d '\r')"
+  if [ -z "$tabelas" ]; then
+    falha "não consegui listar as tabelas" "o postgres respondeu vazio"
+  else
+    faltando=""
+    while read -r modelo; do
+      [ -n "$modelo" ] || continue
+      printf '%s\n' "$tabelas" | grep -qxF "$modelo" || faltando="$faltando $modelo"
+    done < <(grep -oE '^model[[:space:]]+[A-Za-z0-9_]+' "$DIR/apps/api/prisma/schema.prisma" 2>/dev/null | awk '{print $2}')
+    if [ -z "$faltando" ]; then
+      ok "todas as tabelas do schema.prisma existem no banco ($(printf '%s\n' "$tabelas" | grep -c .) tabelas)"
+    else
+      falha "tabela(s) do schema AUSENTES no banco:$faltando" "migrate deploy diria 'up to date' assim mesmo"
+    fi
+  fi
+fi
+
+# ─── 4. Dá para ENTRAR ──────────────────────────────────────────────────────
+# Uma instalação sem usuário nenhum "sobe" perfeitamente e não serve para nada.
+secao '4. Login funciona'
+
+CRED_FILE="$DIR/infra/.credenciais-iniciais"
+LOGIN_EMAIL="${DRAC_ADMIN_EMAIL:-}"
+LOGIN_SENHA="${DRAC_ADMIN_PASSWORD:-}"
+if [ -z "$LOGIN_EMAIL" ] && [ -r "$CRED_FILE" ]; then
+  LOGIN_EMAIL="$(env_get "$CRED_FILE" usuario)"
+  LOGIN_SENHA="$(env_get "$CRED_FILE" senha)"
+fi
+
+TOKEN=""
+if [ -z "$LOGIN_EMAIL" ] || [ -z "$LOGIN_SENHA" ]; then
+  aviso "sem credenciais para testar o login" "defina DRAC_ADMIN_EMAIL/DRAC_ADMIN_PASSWORD ou mantenha $CRED_FILE"
+else
+  resposta="$(curl -fsS --max-time 10 -X POST "$API/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$LOGIN_EMAIL\",\"password\":\"$LOGIN_SENHA\"}" 2>/dev/null || true)"
+  TOKEN="$(printf '%s' "$resposta" | sed -nE 's/.*"access_?[Tt]oken"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
+  if [ -n "$TOKEN" ]; then
+    ok "login do administrador ($LOGIN_EMAIL) devolveu token"
+  else
+    falha "login do administrador falhou" "usuario=$LOGIN_EMAIL — o banco foi semeado? resposta: ${resposta:0:120}"
+  fi
+fi
+
+# ─── 5. As telas respondem (inclusive a que quebrava) ───────────────────────
+secao '5. Rotas da aplicação'
+
+curl -fsS --max-time 10 "$API/health" >/dev/null 2>&1 \
+  && ok "API /health" || falha "API /health não respondeu" "$API/health"
+curl -fsS --max-time 10 "$WEB/" >/dev/null 2>&1 \
+  && ok "painel web" || falha "painel web não respondeu" "$WEB/"
+
+if [ -n "$TOKEN" ]; then
+  # /role-permissions é a rota que respondia 500 em TODA instalação de cliente
+  # por causa da tabela sem migração. Entra aqui de propósito.
+  for rota in role-permissions cameras users settings audit-logs; do
+    codigo="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+      -H "Authorization: Bearer $TOKEN" "$API/$rota" 2>/dev/null || echo 000)"
+    case "$codigo" in
+      200|201) ok "GET /$rota → $codigo" ;;
+      403) ok "GET /$rota → 403 (permissão, não defeito)" ;;
+      *) falha "GET /$rota → $codigo" "esperado 200; 500 aqui costuma ser tabela ausente" ;;
+    esac
+  done
+else
+  aviso "rotas autenticadas não verificadas" "sem token (ver check 4)"
+fi
+
+# ─── 6. Monitoramento provou que funciona ───────────────────────────────────
+secao '6. Watchdog'
+
+STATUS_FILE="$DIR/infra/storage/.monitor/runtime-status.json"
+if [ ! -f "$STATUS_FILE" ]; then
+  falha "watchdog nunca gravou estado" "$STATUS_FILE ausente — instalação sem monitoramento"
+else
+  idade=$(( $(date +%s) - $(stat -c %Y "$STATUS_FILE" 2>/dev/null || echo 0) ))
+  problemas="$(sed -nE 's/.*"issues"[[:space:]]*:[[:space:]]*\[([^]]*)\].*/\1/p' "$STATUS_FILE" | tr -d ' "')"
+  if [ -z "$problemas" ]; then
+    ok "watchdog reportou issues: [] (estado de ${idade}s atrás)"
+  else
+    aviso "watchdog reportou problemas" "$problemas"
+  fi
+  if [ "$idade" -gt 1800 ]; then
+    falha "estado do watchdog velho (${idade}s)" "o agendamento parou? 'systemctl list-timers | grep drac-watchdog'"
+  fi
+fi
+
+# ─── Resultado ──────────────────────────────────────────────────────────────
+printf '\n'
+if [ "$falhas" -eq 0 ] && [ "$avisos" -eq 0 ]; then
+  printf '\033[1;32mInstalação sadia: todos os checks passaram.\033[0m\n\n'
+  exit 0
+fi
+if [ "$falhas" -eq 0 ]; then
+  printf '\033[1;33mInstalação de pé, com %s aviso(s) acima.\033[0m\n\n' "$avisos"
+  exit 0
+fi
+printf '\033[1;31m%s check(s) FALHARAM e %s aviso(s). A instalação NÃO está pronta.\033[0m\n\n' "$falhas" "$avisos"
+exit 1

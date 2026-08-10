@@ -5,6 +5,10 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
+  # Permite disparar a instalação limpa à mão antes de instalar num cliente.
+  workflow_dispatch:
 
 jobs:
   scripts:
@@ -19,6 +23,31 @@ jobs:
       - name: Syntax check scripts
         run: |
           bash -n scripts/*.sh
+
+      - name: Testes do instalador (arquivo de respostas, falha alta)
+        run: bash scripts/tests/test-instalador.sh
+
+  infra-estatica:
+    name: infraestrutura (checks estaticos)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Estes checks pegam as CLASSES de defeito que quebraram a primeira
+      # instalacao de cliente e eram invisiveis na maquina de desenvolvimento:
+      # porta ligada duas vezes, servico exposto em 0.0.0.0 por tras do nginx,
+      # compose que so e valido com a Central, tabela sem migracao.
+      - name: Checks estaticos de infraestrutura
+        run: bash scripts/tests/test-compose-estatico.sh
+
+      # E este prova que os checks acima REALMENTE enxergam: injeta cada
+      # defeito de volta e exige reprovacao. Check verde que nao enxerga nada
+      # e pior do que nenhum check.
+      - name: Os checks enxergam mesmo o defeito?
+        run: bash scripts/tests/test-checks-pegam-defeito.sh
 
   python-tests:
     name: ai-service python tests
@@ -219,3 +248,21 @@ jobs:
           name: android-release-ci-not-for-distribution
           path: apps/mobile/android/app/build/outputs/bundle/release/*.aab
           retention-days: 7
+
+  instalacao-limpa:
+    name: instalacao limpa numa maquina virgem
+    # Constroi todas as imagens do zero: caro. Roda sob demanda e nas tags de
+    # release — que e quando o numero importa, porque e o que vai para o
+    # cliente. NENHUMA instalacao de cliente deveria sair sem este verde.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar do zero e verificar
+        run: bash scripts/teste-instalacao-limpa.sh --commit "${{ github.sha }}"

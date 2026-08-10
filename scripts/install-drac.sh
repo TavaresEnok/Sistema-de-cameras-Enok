@@ -22,6 +22,17 @@ DRAC_AUTO_YES="${DRAC_AUTO_YES:-false}"
 DRAC_WATCHDOG_ENABLED="${DRAC_WATCHDOG_ENABLED:-true}"
 DRAC_WATCHDOG_INTERVAL_MINUTES="${DRAC_WATCHDOG_INTERVAL_MINUTES:-5}"
 DRAC_CAMERA_ALLOWED_CIDRS="${DRAC_CAMERA_ALLOWED_CIDRS:-}"
+# Arquivo de respostas: o caminho PADRÃO de instalação. Ver
+# scripts/instalacao-cliente.exemplo.env.
+DRAC_CONFIG_FILE="${DRAC_CONFIG_FILE:-}"
+# Primeiro administrador. Sem isto a instalação terminava sem NENHUM usuário e
+# ninguém conseguia entrar — o `docs/clean-install.md` mandava criar à mão.
+DRAC_ADMIN_EMAIL="${DRAC_ADMIN_EMAIL:-}"
+DRAC_ADMIN_PASSWORD="${DRAC_ADMIN_PASSWORD:-}"
+DRAC_ADMIN_NAME="${DRAC_ADMIN_NAME:-Administrador}"
+# Preenchido em tempo de execução quando a senha é gerada por nós (só então o
+# resumo final a imprime — senha escolhida pelo operador não é ecoada).
+DRAC_ADMIN_PASSWORD_GERADA=""
 
 log() {
   printf '\033[1;36m[DRAC]\033[0m %s\n' "$*"
@@ -34,6 +45,23 @@ warn() {
 fail() {
   printf '\033[1;31m[DRAC]\033[0m %s\n' "$*" >&2
   exit 1
+}
+
+# ── FALHAR ALTO, NUNCA EM SILÊNCIO ──────────────────────────────────────────
+#
+# Os dois piores momentos da primeira instalação de cliente foram falhas MUDAS:
+# o instalador saindo sem dizer nada, e um `mkdir` sem permissão que morreu
+# calado. Quem instala não tem como diagnosticar o que não fala.
+#
+# Daqui em diante, qualquer comando que quebre diz a linha, o comando e o
+# código — e deixa claro que a instalação NÃO terminou.
+trap 'drac_erro_fatal $? "$LINENO" "$BASH_COMMAND"' ERR
+
+drac_erro_fatal() {
+  local rc="$1" linha="$2" comando="$3"
+  printf '\033[1;31m[DRAC]\033[0m FALHOU na linha %s (codigo %s): %s\n' "$linha" "$rc" "$comando" >&2
+  printf '\033[1;31m[DRAC]\033[0m A INSTALACAO NAO FOI CONCLUIDA. Nada foi declarado pronto.\n' >&2
+  exit "$rc"
 }
 
 run_sudo() {
@@ -88,7 +116,15 @@ prompt() {
       printf -v "$var_name" '%s' "$default_value"
       return
     fi
-    fail "Variavel obrigatoria nao informada: $var_name"
+    fail "Variavel obrigatoria nao informada: $var_name (defina-a no arquivo de respostas ou no ambiente)"
+  fi
+
+  # Entrada NAO e um terminal (instalador vindo de pipe, cron, CI, one-liner da
+  # Central). Perguntar aqui era um laco infinito: `read` retorna EOF, a resposta
+  # fica vazia, o laco avisa "Campo obrigatorio" e volta a perguntar — para
+  # sempre, sem ninguem para responder. Agora diz exatamente o que faltou.
+  if [ ! -t 0 ]; then
+    fail "Sem terminal para perguntar '$label'. Informe $var_name no arquivo de respostas (--config) ou no ambiente."
   fi
 
   local answer
@@ -105,6 +141,102 @@ prompt() {
       warn "Campo obrigatorio."
     done
   fi
+}
+
+# Chaves que o arquivo de respostas aceita. Qualquer outra é ERRO, não um
+# palpite: um `DRAC_CUSTUMER_NAME` mal digitado passaria despercebido e a
+# instalação seguiria com o padrão errado — exatamente o tipo de falha muda que
+# este trabalho está eliminando.
+DRAC_CHAVES_VALIDAS="
+DRAC_REPO_URL DRAC_INSTALLER_COMMIT DRAC_INSTALL_DIR DRAC_OPERATING_USER
+DRAC_CENTRAL_URL DRAC_ENVIRONMENT DRAC_AUTO_YES
+DRAC_WATCHDOG_ENABLED DRAC_WATCHDOG_INTERVAL_MINUTES DRAC_BUILD_AGENT_EXPECTED
+DRAC_CAMERA_ALLOWED_CIDRS DRAC_CUSTOMER_NAME DRAC_INSTALLATION_ID
+DRAC_LICENSE_KEY DRAC_SERVER_IP DRAC_RTMP_SHORT_HOST
+DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME
+"
+
+usage() {
+  cat <<'EOF'
+Instalador DRAC VMS
+
+  install-drac.sh --config cliente.env      instalação sem intervenção (recomendado)
+  install-drac.sh                           instalação interativa (pergunta tudo)
+
+Opções:
+  -c, --config ARQUIVO   arquivo de respostas (ver scripts/instalacao-cliente.exemplo.env)
+  -h, --help             esta ajuda
+
+O arquivo de respostas aceita uma chave por linha, no formato CHAVE=valor.
+Linhas em branco e começadas por # são ignoradas. Chave desconhecida é erro.
+EOF
+}
+
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -c|--config)
+        [ $# -ge 2 ] || fail "--config exige o caminho de um arquivo."
+        DRAC_CONFIG_FILE="$2"
+        shift 2
+        ;;
+      --config=*) DRAC_CONFIG_FILE="${1#*=}"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage >&2; fail "Opcao desconhecida: $1" ;;
+    esac
+  done
+}
+
+# Lê o arquivo de respostas SEM interpretá-lo como shell: `source` executaria
+# o que estivesse lá dentro. Aqui só entram pares CHAVE=valor conhecidos.
+load_config_file() {
+  [ -n "$DRAC_CONFIG_FILE" ] || return 0
+  [ -f "$DRAC_CONFIG_FILE" ] || fail "Arquivo de respostas nao encontrado: $DRAC_CONFIG_FILE"
+
+  local perms
+  perms="$(stat -c '%a' "$DRAC_CONFIG_FILE" 2>/dev/null || echo '')"
+  case "$perms" in
+    *[24567]) warn "$DRAC_CONFIG_FILE e legivel por outros usuarios (modo $perms) e pode conter a senha do administrador. Use chmod 600." ;;
+  esac
+
+  log "Lendo respostas de $DRAC_CONFIG_FILE"
+  local linha numero=0 chave valor
+  while IFS= read -r linha || [ -n "$linha" ]; do
+    numero=$((numero + 1))
+    linha="${linha%$'\r'}"
+    case "$linha" in
+      ''|'#'*) continue ;;
+    esac
+    if [[ ! "$linha" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=(.*)$ ]]; then
+      fail "$DRAC_CONFIG_FILE linha $numero: esperado CHAVE=valor, veio: $linha"
+    fi
+    chave="${BASH_REMATCH[1]}"
+    valor="${BASH_REMATCH[2]}"
+    # Tira aspas envolventes, se houver, e espaços nas pontas.
+    valor="${valor#"${valor%%[![:space:]]*}"}"
+    valor="${valor%"${valor##*[![:space:]]}"}"
+    case "$valor" in
+      \"*\") valor="${valor:1:${#valor}-2}" ;;
+      \'*\') valor="${valor:1:${#valor}-2}" ;;
+    esac
+    if [[ " $(printf '%s' "$DRAC_CHAVES_VALIDAS" | tr '\n' ' ') " != *" $chave "* ]]; then
+      fail "$DRAC_CONFIG_FILE linha $numero: chave desconhecida '$chave'. Veja scripts/instalacao-cliente.exemplo.env."
+    fi
+    # O ambiente tem precedência: quem exporta na hora manda mais que o arquivo.
+    if [ -z "${!chave:-}" ]; then
+      printf -v "$chave" '%s' "$valor"
+    fi
+  done < "$DRAC_CONFIG_FILE"
+
+  # Com arquivo de respostas, perguntar não faz sentido: o objetivo é instalar
+  # sem ninguém na frente do terminal.
+  DRAC_AUTO_YES=true
+}
+
+# Lê uma chave já gravada no infra/.env (para não reinventar valores).
+env_get() {
+  local file="$1" key="$2"
+  run_sudo sed -nE "s/^${key}=(.*)$/\\1/p" "$file" | tail -n 1
 }
 
 slugify() {
@@ -466,6 +598,65 @@ run_migrations() {
   run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files exec -T -w /app/apps/api api npx prisma migrate deploy"
 }
 
+# ── O INSTALADOR TERMINA COM UM SISTEMA UTILIZÁVEL ──────────────────────────
+#
+# Até 07/08/2026 a instalação terminava sem NENHUM usuário: `migrate deploy`
+# criava as tabelas e pronto. Ninguém conseguia entrar, e o procedimento
+# documentado mandava criar o administrador à mão (docs/clean-install.md,
+# passo 5). Se o instalador termina sem erro, tem de dar para entrar.
+#
+# Idempotente pelo lado seguro: se JÁ existe qualquer usuário, não toca em
+# nada. Reinstalar/atualizar não pode resetar a senha de quem está usando.
+seed_admin() {
+  local files env_file pg_user pg_db total e_q p_q n_q
+  files="$(compose_files)"
+  env_file="$DRAC_INSTALL_DIR/infra/.env"
+  pg_user="$(env_get "$env_file" POSTGRES_USER)"
+  pg_db="$(env_get "$env_file" POSTGRES_DB)"
+  [ -n "$pg_user" ] && [ -n "$pg_db" ] || fail "Nao consegui ler POSTGRES_USER/POSTGRES_DB de $env_file."
+
+  # shellcheck disable=SC2086
+  total="$(run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files exec -T postgres psql -U '$pg_user' -d '$pg_db' -tAc 'SELECT count(*) FROM \"User\"'" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ ! "$total" =~ ^[0-9]+$ ]]; then
+    fail "Nao consegui contar os usuarios do banco (resposta: '${total:-vazio}'). O banco subiu? 'docker logs vms-postgres'."
+  fi
+
+  if [ "$total" -gt 0 ]; then
+    log "Banco ja tem $total usuario(s); o administrador nao sera recriado (senha preservada)."
+    return 0
+  fi
+
+  prompt DRAC_ADMIN_EMAIL "E-mail do administrador" "admin@${DRAC_INSTALLATION_ID}.local"
+  if [ -z "$DRAC_ADMIN_PASSWORD" ]; then
+    # 17 caracteres, com maiúscula, minúscula, dígito e separador — passa
+    # folgado no mínimo de 10 exigido pelo seed e é digitável.
+    DRAC_ADMIN_PASSWORD="Drac-$(random_hex 6)"
+    DRAC_ADMIN_PASSWORD_GERADA="$DRAC_ADMIN_PASSWORD"
+  fi
+
+  log "Criando o primeiro administrador ($DRAC_ADMIN_EMAIL)"
+  printf -v e_q '%q' "$DRAC_ADMIN_EMAIL"
+  printf -v p_q '%q' "$DRAC_ADMIN_PASSWORD"
+  printf -v n_q '%q' "$DRAC_ADMIN_NAME"
+  # shellcheck disable=SC2086
+  if ! run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files exec -T -e ADMIN_EMAIL=$e_q -e ADMIN_PASSWORD=$p_q -e ADMIN_NAME=$n_q -w /app/apps/api api npx tsx prisma/seed.ts"; then
+    fail "O seed do administrador falhou. A instalacao NAO esta utilizavel: ninguem consegue entrar. Veja 'docker logs vms-api'."
+  fi
+
+  # Guarda as credenciais num arquivo só do dono — o terminal rola, e perder a
+  # senha inicial significa reinstalar.
+  local cred_file="$DRAC_INSTALL_DIR/infra/.credenciais-iniciais"
+  {
+    printf 'painel=%s\n' "http://${DRAC_SERVER_IP}:5173"
+    printf 'usuario=%s\n' "$DRAC_ADMIN_EMAIL"
+    printf 'senha=%s\n' "$DRAC_ADMIN_PASSWORD"
+    printf '# Troque esta senha no primeiro acesso e apague este arquivo.\n'
+  } | run_sudo tee "$cred_file" >/dev/null
+  run_sudo chmod 600 "$cred_file"
+  run_sudo chown "$DRAC_OPERATING_USER:$DRAC_OPERATING_USER" "$cred_file"
+  log "Administrador criado. Credenciais tambem em $cred_file (modo 600)."
+}
+
 remove_watchdog_cron() {
   # Remove QUALQUER agendamento antigo do watchdog no crontab do usuario operacional
   # (marcado por "drac-runtime-watchdog"), preservando as demais linhas. Idempotente:
@@ -581,6 +772,30 @@ provision_watchdog() {
   return 0
 }
 
+# ── O WATCHDOG PRECISA TER RESPONDIDO UMA VEZ ───────────────────────────────
+#
+# Agendar não é o mesmo que funcionar. Na instalação do D-GUARDIAN o watchdog
+# foi agendado e morreu no primeiro disparo (mkdir sem permissão, em silêncio):
+# a instalação parecia monitorada e não estava. Aqui ele roda de verdade, uma
+# vez, e a instalação só segue se tiver produzido o arquivo de estado.
+verify_watchdog() {
+  if [ "$DRAC_WATCHDOG_ENABLED" != "true" ]; then
+    return 0
+  fi
+  local script_path="$DRAC_INSTALL_DIR/scripts/runtime-watchdog.sh"
+  local status_file="$DRAC_INSTALL_DIR/infra/storage/.monitor/runtime-status.json"
+  [ -f "$script_path" ] || { warn "runtime-watchdog.sh ausente; sem verificacao de monitoramento."; return 0; }
+
+  log "Disparando o watchdog uma vez para confirmar que ele funciona"
+  if ! run_as_user "$DRAC_OPERATING_USER" bash -lc "'$script_path'"; then
+    fail "O watchdog falhou no primeiro disparo. A instalacao ficaria SEM monitoramento sem ninguem perceber. Rode '$script_path' e leia o erro."
+  fi
+  if [ ! -f "$status_file" ]; then
+    fail "O watchdog rodou mas nao gravou $status_file. Verifique permissao de escrita em $(dirname "$status_file")."
+  fi
+  log "Watchdog confirmado: $status_file"
+}
+
 register_central_now() {
   local base="${DRAC_CENTRAL_URL%/}"
   local payload response_file
@@ -640,9 +855,23 @@ validate_installation() {
 }
 
 print_summary() {
+  # Se a senha foi gerada por nós, ela aparece aqui — é a única vez. Senha
+  # escolhida pelo operador nao e ecoada (ele ja a conhece).
+  local bloco_acesso
+  if [ -n "$DRAC_ADMIN_PASSWORD_GERADA" ]; then
+    bloco_acesso="$(printf 'Acesso (TROQUE a senha no primeiro login):\n  usuario: %s\n  senha:   %s\n  copia em: %s/infra/.credenciais-iniciais\n' \
+      "$DRAC_ADMIN_EMAIL" "$DRAC_ADMIN_PASSWORD_GERADA" "$DRAC_INSTALL_DIR")"
+  elif [ -n "$DRAC_ADMIN_EMAIL" ]; then
+    bloco_acesso="$(printf 'Acesso:\n  usuario: %s (senha definida por voce)\n' "$DRAC_ADMIN_EMAIL")"
+  else
+    bloco_acesso='Acesso: administrador ja existia; credenciais preservadas.'
+  fi
+
   cat <<EOF
 
 Instalacao DRAC concluida.
+
+${bloco_acesso}
 
 Painel local:
   http://${DRAC_SERVER_IP}:5173
@@ -671,6 +900,8 @@ EOF
 }
 
 main() {
+  parse_args "$@"
+  load_config_file
   log "Instalador DRAC VMS"
   preflight
   ensure_operating_user
@@ -679,10 +910,18 @@ main() {
   prepare_env
   start_stack
   run_migrations
+  # A instalação só é "concluída" depois que dá para ENTRAR nela e depois que o
+  # monitoramento provou que funciona. Ambos falham alto.
+  seed_admin
   provision_watchdog || warn "Watchdog nao pode ser agendado automaticamente; agende scripts/runtime-watchdog.sh manualmente."
+  verify_watchdog
   register_central_now
   validate_installation
   print_summary
 }
 
-main "$@"
+# Executa só quando chamado direto. Sob `source`, expõe as funções para teste
+# sem instalar nada — é o que permite testar prompt/config sem uma máquina.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
