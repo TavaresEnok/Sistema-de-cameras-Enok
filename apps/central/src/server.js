@@ -18,6 +18,7 @@ const {
   decryptSecret: decryptStorageSecret,
 } = require('./cloud-storage');
 const alertas = require('./alertas');
+const releases = require('./releases');
 const { testS3Access, measureS3Performance, diagnosticarConexao, localizarServidor } = require('./s3-probe');
 const { resolverEndpoint } = require('./endpoint-scheme');
 const scheduler = require('./scheduler');
@@ -895,7 +896,12 @@ function updateAlertHistory(existing, alerts, now) {
   return { history: ordenado, novos, resolvidos };
 }
 
-function publicInstallation(item) {
+/** A versão aprovada da frota, ou null enquanto ninguém promoveu nada. */
+function releaseAtual(db) {
+  return db?.release?.commit ? db.release : null;
+}
+
+function publicInstallation(item, release = null) {
   const lastHeartbeatAt = item.lastHeartbeatAt ? new Date(item.lastHeartbeatAt).getTime() : 0;
   const updatedAt = item.updatedAt ? new Date(item.updatedAt).getTime() : 0;
   const ageSeconds = lastHeartbeatAt ? Math.round((Date.now() - lastHeartbeatAt) / 1000) : null;
@@ -929,6 +935,10 @@ function publicInstallation(item) {
     policyPending,
     launchProfile: item.launchProfile || item.metrics?.launchProfile || null,
     version: item.version || null,
+    // Onde esta instalação está em relação à versão APROVADA da frota.
+    // `desconhecida` (nunca reportou versão) é diferente de `atrasada`: o
+    // operador precisa ver que não se sabe, em vez de supor.
+    versaoSituacao: releases.situacaoDaInstalacao(item, release),
     lastHeartbeatAt: item.lastHeartbeatAt || null,
     metrics: item.metrics || {},
     alerts: item.alerts || [],
@@ -1436,6 +1446,10 @@ async function handleHeartbeat(req, res) {
     accepted: true,
     serverTime: now,
     ...licenseResponse(item),
+    // A versão aprovada desce pelo canal que JÁ existe. Abrir porta na
+    // instalação para empurrar atualização funcionaria mal atrás de NAT, que é
+    // a maioria delas — aqui quem pergunta é sempre a instalação.
+    release: releases.releaseParaInstalacao(releaseAtual(db), item),
   });
 }
 
@@ -1469,8 +1483,54 @@ async function handleAgentStatus(req, res) {
     heartbeatAgeSeconds: ageSeconds,
     online: ageSeconds !== null && ageSeconds <= ONLINE_THRESHOLD_SECONDS,
     ...licenseResponse(item),
+    // Também aqui, e não só no heartbeat: o script de atualização precisa de um
+    // GET simples para perguntar "qual é a versão aprovada e eu estou nela?".
+    release: releases.releaseParaInstalacao(releaseAtual(db), item),
   });
 }
+
+// ── PROMOVER UMA VERSÃO PARA A FROTA ────────────────────────────────────────
+//
+// Só chega aqui o que já passou pelo gate: instalação limpa numa máquina
+// virgem MAIS a bateria rodada contra a matriz. Quem monta essa evidência é
+// `scripts/promover-release.sh`, que roda os dois e só então chama esta rota.
+//
+// Promover à mão, sem evidência, é recusado de propósito: foi a ausência
+// exatamente disto que fez a primeira instalação de cliente virar uma
+// sequência de consertos na frente do cliente.
+async function handlePromoverRelease(req, res, db, actor) {
+  const body = await readBody(req);
+  const historico = Array.isArray(db.releaseHistorico) ? db.releaseHistorico : [];
+
+  const resultado = releases.validarPromocao(
+    { ...body, promovidoPor: actor?.email || null },
+    { historico, permitirSemGate: body?.rollback === true },
+  );
+  if (!resultado.ok) {
+    return json(req, res, 400, {
+      error: resultado.erro,
+      message: MENSAGENS_PROMOCAO[resultado.erro] || 'Pedido de promoção inválido.',
+    });
+  }
+
+  db.release = resultado.release;
+  db.releaseHistorico = releases.registrarNoHistorico(historico, resultado.release);
+  await saveDb(db);
+
+  return json(req, res, 200, {
+    atual: db.release,
+    frota: releases.resumoDaFrota(db.installations, db.release),
+  });
+}
+
+const MENSAGENS_PROMOCAO = Object.freeze({
+  commit_invalido: 'Informe o commit completo (40 caracteres). Commit curto pode ficar ambíguo, e branch se move.',
+  gate_ausente: 'Sem evidência de teste. Rode scripts/promover-release.sh, que executa o gate e promove.',
+  gate_instalacao_limpa_ausente: 'Falta o gate de instalação limpa (máquina virgem).',
+  gate_matriz_ausente: 'Falta a verificação na matriz. Instalar do zero não prova que roda com dados reais.',
+  gate_sem_data_valida: 'A evidência de teste veio sem data válida.',
+  repositorio_invalido: 'O repositório precisa ser HTTPS e sem credencial na URL.',
+});
 
 async function handleProvision(req, res, db, actor) {
   const body = await readBody(req);
@@ -1544,7 +1604,7 @@ async function handleProvision(req, res, db, actor) {
   await saveDb(db);
 
   return json(req, res, 201, {
-    installation: publicInstallation(item),
+    installation: publicInstallation(item, releaseAtual(db)),
     ...installer,
   });
 }
@@ -1579,7 +1639,7 @@ async function handleGetInstallerCommand(req, res, db, actor, installationId) {
   });
   await saveDb(db);
   return json(req, res, 200, {
-    installation: publicInstallation(item),
+    installation: publicInstallation(item, releaseAtual(db)),
     ...installer,
   });
 }
@@ -2961,7 +3021,7 @@ async function route(req, res) {
       }
       if (req.method === 'GET' && url.pathname === '/api/admin/installations') {
         await saveDb(db);
-        return json(req, res, 200, { items: Object.values(db.installations).map(publicInstallation) });
+        return json(req, res, 200, { items: Object.values(db.installations).map((i) => publicInstallation(i, releaseAtual(db))) });
       }
       if (req.method === 'GET' && url.pathname === '/api/admin/summary') {
         await saveDb(db);
@@ -2969,6 +3029,19 @@ async function route(req, res) {
       }
       if (req.method === 'POST' && url.pathname === '/api/admin/provision') {
         return handleProvision(req, res, db, actor);
+      }
+
+      // ── Versão aprovada da frota ──────────────────────────────────────────
+      if (req.method === 'GET' && url.pathname === '/api/admin/releases') {
+        await saveDb(db);
+        return json(req, res, 200, {
+          atual: releaseAtual(db),
+          historico: Array.isArray(db.releaseHistorico) ? db.releaseHistorico : [],
+          frota: releases.resumoDaFrota(db.installations, releaseAtual(db)),
+        });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/admin/releases') {
+        return handlePromoverRelease(req, res, db, actor);
       }
 
       // O documento técnico não faz parte dos assets públicos e exige sessão
