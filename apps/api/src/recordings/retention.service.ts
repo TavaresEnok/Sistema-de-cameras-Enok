@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync, wri
 import { statfs, readdir, rmdir } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { retencaoEfetiva } from './helpers/retencao-efetiva.helper';
+import { segmentoOrfaoObsoleto, IDADE_SEGMENTO_ORFAO_MS_PADRAO } from './helpers/segmento-orfao.helper';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { CloudConnectorService } from '../cloud-connector/cloud-connector.service';
@@ -32,6 +33,8 @@ type CleanupResult = {
   eventsDeleted: number;
   orphanThumbnailsDeleted: number;
   orphanCompatibleFilesDeleted: number;
+  /** Segmentos `.ts` órfãos (intermediários que o mux deixou para trás). */
+  orphanSegmentsDeleted: number;
   /** Objetos recolhidos do bucket por já não terem linha em `Recording`. */
   orphanCloudObjectsDeleted?: number;
   // Campos da retenção em dois níveis: só aparecem quando a feature está ATIVA,
@@ -852,6 +855,7 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
       eventsDeleted: 0,
       orphanThumbnailsDeleted: 0,
       orphanCompatibleFilesDeleted: 0,
+      orphanSegmentsDeleted: 0,
     };
     const autoCleanup = await this.settings.isAutoCleanupEnabled().catch(() => true);
     if (!autoCleanup) {
@@ -918,6 +922,7 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     const derived = await this.cleanupOrphanDerivedArtifacts();
     result.orphanThumbnailsDeleted = derived.orphanThumbnailsDeleted;
     result.orphanCompatibleFilesDeleted = derived.orphanCompatibleFilesDeleted;
+    result.orphanSegmentsDeleted = derived.orphanSegmentsDeleted;
     // Só entra no resultado quando a varredura de fato removeu algo: há um teste
     // que exige que o objeto logado NÃO ganhe campos quando a funcionalidade não
     // agiu, para que instalações sem nuvem continuem com a saída idêntica.
@@ -967,6 +972,13 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
 
     let orphanThumbnailsDeleted = 0;
     let orphanCompatibleFilesDeleted = 0;
+    let orphanSegmentsDeleted = 0;
+    // Janela a partir da qual um `.ts` conta como órfão. Configurável para poder
+    // ser mais conservador numa instalação específica, sem recompilar.
+    const maxIdadeSegmentoMs = Number(
+      this.config.get<number>('recordingSegmentOrphanMaxAgeMs') ?? IDADE_SEGMENTO_ORFAO_MS_PADRAO,
+    );
+    const agoraMs = Date.now();
 
     for (const cameraId of cameraIds) {
       const rows = await this.prisma.recording.findMany({
@@ -997,6 +1009,19 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
             if (this.removeFile(fullPath)) orphanThumbnailsDeleted += 1;
           } else if (compatible && entry.name.endsWith('.mp4') && !expectedCompatible.has(fullPath)) {
             if (this.removeFile(fullPath)) orphanCompatibleFilesDeleted += 1;
+          } else if (!compatible && entry.name.toLowerCase().endsWith('.ts')) {
+            // Segmento intermediário. Só apaga se estiver velho o bastante para
+            // não ser a gravação em escrita — a idade é a prova; nunca cruza com
+            // o banco (o `.ts` nunca está lá) nem toca no que é recente.
+            let mtimeMs = Number.NaN;
+            try {
+              mtimeMs = statSync(fullPath).mtimeMs;
+            } catch {
+              mtimeMs = Number.NaN; // some entre o readdir e o stat → ignora
+            }
+            if (segmentoOrfaoObsoleto(entry.name, mtimeMs, agoraMs, maxIdadeSegmentoMs)) {
+              if (this.removeFile(fullPath)) orphanSegmentsDeleted += 1;
+            }
           }
         }
       };
@@ -1005,7 +1030,7 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.pruneDiagnosticsCache(root);
-    return { orphanThumbnailsDeleted, orphanCompatibleFilesDeleted };
+    return { orphanThumbnailsDeleted, orphanCompatibleFilesDeleted, orphanSegmentsDeleted };
   }
 
   /**

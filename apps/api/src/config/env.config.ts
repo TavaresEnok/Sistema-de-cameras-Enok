@@ -74,6 +74,11 @@ export function readEnvConfig(
     // garante que ela continue sendo uma guarda, e não um bloqueio total.
     recordingMinFreeBytes: num('RECORDING_MIN_FREE_BYTES', 2_147_483_648, { min: 0, max: Number.MAX_SAFE_INTEGER, integer: true }),
     recordingMinFreePercent: num('RECORDING_MIN_FREE_PERCENT', 5, { min: 0, max: 99, integer: true }),
+    // Idade a partir da qual um segmento .ts órfão (intermediário que o mux
+    // deixou para trás) é varrido pela retenção. 6h por padrão: um .ts é
+    // remuxado em minutos, então horas de vida provam que é lixo. Ver
+    // segmento-orfao.helper.ts.
+    recordingSegmentOrphanMaxAgeMs: num('RECORDING_SEGMENT_ORPHAN_MAX_AGE_MS', 6 * 60 * 60 * 1000, { min: 60_000, max: Number.MAX_SAFE_INTEGER, integer: true }),
     ffmpegRecordingFormat: source.FFMPEG_RECORDING_FORMAT ?? 'mp4',
     // Continua STRING de propósito: o consumidor compara com 'false' e a
     // retrocompatibilidade do modo de codec depende do literal.

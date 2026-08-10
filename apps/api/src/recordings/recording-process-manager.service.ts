@@ -348,7 +348,11 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       const { freeBytes, freePercent, usedPercent } = await this.getStorageUsage();
       // NaN aqui DESARMAVA a guarda (o isFinite abaixo virava false) e o disco
       // enchia a 100% com todas as câmeras parando, sem erro nenhum no log.
-      const maxUsedPercent = envNumber('RECORDING_DISK_GUARD_MAX_USED_PERCENT', 92, {
+      // 85% é a regra do dono: ao chegar aí, a rotação por câmera (anel) começa
+      // a liberar espaço, sobrescrevendo a gravação MAIS ANTIGA de cada câmera.
+      // Antes o default era 92% — mais folga agora reduz o risco de encostar no
+      // disco cheio, ao custo de um pouco menos de retenção.
+      const maxUsedPercent = envNumber('RECORDING_DISK_GUARD_MAX_USED_PERCENT', 85, {
         min: 1,
         max: 100,
         onInvalid: (m) => this.logger.warn(m),
