@@ -16,7 +16,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.gpu.yml)
+# Overlay de ambiente: prod por padrão (é o que roda num servidor real). Use
+# DRAC_ENV=dev na máquina de desenvolvimento.
+ENV_OVERLAY="docker-compose.prod.yml"
+[[ "${DRAC_ENV:-prod}" == "dev" ]] && ENV_OVERLAY="docker-compose.dev.yml"
+COMPOSE=(docker compose -f docker-compose.yml -f "$ENV_OVERLAY" -f docker-compose.gpu.yml)
 CUDA_TEST_IMAGE="nvidia/cuda:12.4.1-base-ubuntu22.04"
 INSTALL_TOOLKIT=0
 [[ "${1:-}" == "--install-toolkit" ]] && INSTALL_TOOLKIT=1
