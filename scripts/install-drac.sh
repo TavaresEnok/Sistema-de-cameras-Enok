@@ -834,13 +834,42 @@ verify_watchdog() {
   [ -f "$script_path" ] || { warn "runtime-watchdog.sh ausente; sem verificacao de monitoramento."; return 0; }
 
   log "Disparando o watchdog uma vez para confirmar que ele funciona"
-  if ! run_as_user "$DRAC_OPERATING_USER" bash -lc "'$script_path'"; then
-    fail "O watchdog falhou no primeiro disparo. A instalacao ficaria SEM monitoramento sem ninguem perceber. Rode '$script_path' e leia o erro."
-  fi
+
+  # ATENCAO a semantica: o watchdog termina em `[ ${#issues[@]} -eq 0 ]`, ou
+  # seja, ele sai NAO-ZERO quando o SISTEMA esta degradado — disco cheio, uma
+  # camera fora do ar. Isso e um DIAGNOSTICO, nao um defeito dele.
+  #
+  # Reprovar a instalacao por causa disso seria absurdo (uma instalacao nova,
+  # sem camera nenhuma, tende a reportar algo). O que precisa ser provado aqui
+  # e outra coisa: que o watchdog EXECUTA e GRAVA. Foi isso que faltou no
+  # D-GUARDIAN, onde ele foi agendado e morreu calado no primeiro disparo.
+  local antes=0
+  [ -f "$status_file" ] && antes="$(stat -c %Y "$status_file" 2>/dev/null || echo 0)"
+
+  local saida
+  saida="$(run_as_user "$DRAC_OPERATING_USER" bash -lc "'$script_path'" 2>&1)" || true
+
   if [ ! -f "$status_file" ]; then
-    fail "O watchdog rodou mas nao gravou $status_file. Verifique permissao de escrita em $(dirname "$status_file")."
+    fail "O watchdog nao gravou $status_file. A instalacao ficaria SEM monitoramento sem ninguem perceber.
+  Ele disse: ${saida:-<nada>}
+  Rode '$script_path' e leia o erro."
   fi
-  log "Watchdog confirmado: $status_file"
+  local depois
+  depois="$(stat -c %Y "$status_file" 2>/dev/null || echo 0)"
+  if [ "$depois" -le "$antes" ]; then
+    fail "O watchdog rodou mas NAO atualizou $status_file (arquivo velho).
+  Ele disse: ${saida:-<nada>}"
+  fi
+
+  log "Watchdog confirmado: executou e gravou $status_file"
+  # Problema encontrado agora e informacao para o operador, nao motivo para
+  # abortar: a instalacao esta de pe e monitorada.
+  local problemas
+  problemas="$(sed -nE 's/.*"issues"[[:space:]]*:[[:space:]]*\[([^]]*)\].*/\1/p' "$status_file" | tr -d '"')"
+  if [ -n "$problemas" ]; then
+    warn "O watchdog ja reportou:$problemas"
+    warn "Nao impede a instalacao; acompanhe com 'journalctl -t drac-watchdog'."
+  fi
 }
 
 register_central_now() {

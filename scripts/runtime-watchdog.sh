@@ -145,24 +145,55 @@ if [ -n "$site_rows" ]; then
 fi
 
 # ── STATUS JSON (consumível pela Central / painel) ───────────────────────────
-ISSUES="$(printf '%s\n' "${issues[@]:-}" | sed '/^$/d')" \
-ACTIONS="$(printf '%s\n' "${actions[@]:-}" | sed '/^$/d')" \
-DISK_USED="${disk_used:-null}" \
-INSTANCE="$INSTANCE_NAME" \
-node - "$STATUS_FILE.tmp" <<'NODE'
-const fs = require('node:fs');
-const issues = String(process.env.ISSUES || '').split('\n').filter(Boolean);
-const actions = String(process.env.ACTIONS || '').split('\n').filter(Boolean);
-const payload = {
-  instance: process.env.INSTANCE || null,
-  status: issues.length ? 'degraded' : 'ok',
-  checkedAt: new Date().toISOString(),
-  diskUsedPercent: Number(process.env.DISK_USED),
-  selfHealed: actions,
-  issues,
-};
-fs.writeFileSync(process.argv[2], JSON.stringify(payload, null, 2) + '\n');
-NODE
+# Montado em shell PURO, de propósito. Isto rodava em `node`, que não existe no
+# host de um servidor de cliente — o Node mora nos containers, é essa a
+# arquitetura. O watchdog morria em "node: command not found" e a instalação
+# ficava sem monitoramento. Só apareceu na máquina virgem do teste de
+# instalação limpa, porque quem desenvolve tem node instalado.
+#
+# O resto do watchdog só depende de bash, curl e docker; agora esta parte
+# também.
+json_escapar() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+json_lista() {
+  # Cada linha não vazia da entrada vira um item do array JSON.
+  local linha saida='' sep=''
+  while IFS= read -r linha; do
+    [ -n "$linha" ] || continue
+    saida="$saida$sep\"$(json_escapar "$linha")\""
+    sep=', '
+  done
+  printf '[%s]' "$saida"
+}
+
+json_issues="$(printf '%s\n' "${issues[@]:-}" | sed '/^$/d' | json_lista)"
+json_actions="$(printf '%s\n' "${actions[@]:-}" | sed '/^$/d' | json_lista)"
+
+json_status='ok'
+[ "$json_issues" = '[]' ] || json_status='degraded'
+
+# Número ou null — nunca uma string, para o consumidor não ter de adivinhar.
+json_disk="${disk_used:-null}"
+case "$json_disk" in ''|*[!0-9.]*) json_disk='null' ;; esac
+
+json_instance='null'
+[ -z "$INSTANCE_NAME" ] || json_instance="\"$(json_escapar "$INSTANCE_NAME")\""
+
+cat > "$STATUS_FILE.tmp" <<JSON
+{
+  "instance": $json_instance,
+  "status": "$json_status",
+  "checkedAt": "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)",
+  "diskUsedPercent": $json_disk,
+  "selfHealed": $json_actions,
+  "issues": $json_issues
+}
+JSON
 mv -f "$STATUS_FILE.tmp" "$STATUS_FILE"
 
 # ── ALERTA (só na mudança de estado) ─────────────────────────────────────────
