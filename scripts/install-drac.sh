@@ -793,6 +793,18 @@ provision_watchdog() {
   fi
   run_sudo chmod +x "$script_path" 2>/dev/null || true
 
+  # O diretorio de estado do watchdog TEM de ser gravavel pelo usuario que o
+  # executa. `storage` nasce do root (quem o cria sao os containers) e o
+  # watchdog roda como operador — ele morria no primeiro disparo, calado.
+  #
+  # O watchdog tenta se virar com `sudo -n`, mas o operador normalmente NAO tem
+  # sudo sem senha: no D-GUARDIAN isso foi contornado a mao e o defeito
+  # continuou no produto. Quem tem privilegio para resolver e o instalador, e e
+  # aqui que se resolve. Reencontrado pelo teste de instalacao limpa.
+  local state_dir="$DRAC_INSTALL_DIR/infra/storage/.monitor"
+  run_sudo mkdir -p "$state_dir"
+  run_sudo chown -R "$DRAC_OPERATING_USER:$DRAC_OPERATING_USER" "$state_dir"
+
   # Intervalo em minutos (1..59); cai para 5 se invalido.
   local interval="$DRAC_WATCHDOG_INTERVAL_MINUTES"
   case "$interval" in
