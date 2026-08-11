@@ -252,6 +252,29 @@ function detectHevcPlayback(): boolean {
 function aprenderHevcDireto(valor: 'on' | 'off') {
   try { window.localStorage.setItem(HEVC_APRENDIDO_KEY, valor); } catch { /* melhor esforço */ }
 }
+function lerHevcAprendido(): 'on' | 'off' | null {
+  try {
+    const v = window.localStorage.getItem(HEVC_APRENDIDO_KEY);
+    return v === 'on' ? 'on' : v === 'off' ? 'off' : null;
+  } catch {
+    return null;
+  }
+}
+/**
+ * OTIMISTA POR PADRÃO: tenta o arquivo ORIGINAL primeiro, sempre — a menos que
+ * este navegador já tenha PROVADO que não decodifica HEVC ('off' aprendido).
+ *
+ * A versão anterior confiava na detecção (`canPlayType`/MSE) — que no Chrome
+ * OSCILA com o estado da GPU. Resultado real, relatado pelo dono: navegador que
+ * toca H.265 perfeitamente preso na fila de conversão a cada vídeo ("toda vez
+ * aparece a mensagem de aguardar"). O custo do otimismo é minúsculo e pago UMA
+ * vez: navegador incapaz falha a decodificação em ~1s, aprendemos 'off' e ele
+ * nunca mais tenta. O custo do pessimismo era pago SEMPRE: minutos de
+ * transcode para quem não precisava de conversão nenhuma.
+ */
+function hevcDiretoPermitido(): boolean {
+  return lerHevcAprendido() !== 'off';
+}
 const BROWSER_PLAYS_HEVC = detectHevcPlayback();
 const TOTAL_MINS = TIMELINE_TOTAL_MINUTES;
 const API_TIMEOUT_MS = 20000;
@@ -619,7 +642,7 @@ export default function PlaybackPage() {
   // que decodifica HEVC pede o arquivo original em vez da versão transcodada.
   const vodSegmentUrl = useCallback((segment: VodPlaylistSegment) => {
     const path = refreshSegmentUrl(segment.playUrl, vodTokensRef.current);
-    const suffix = BROWSER_PLAYS_HEVC ? `${path.includes('?') ? '&' : '?'}forceDirect=1` : '';
+    const suffix = hevcDiretoPermitido() ? `${path.includes('?') ? '&' : '?'}forceDirect=1` : '';
     return `${API_URL}${path}${suffix}`;
   }, []);
 
@@ -1450,7 +1473,7 @@ export default function PlaybackPage() {
   const selectedThumbnailUrl = selectedRecordingId ? thumbnailUrls[selectedRecordingId] ?? null : null;
   const standbyThumbnailUrl = selectedThumbnailUrl ?? (recordings.length ? thumbnailUrls[recordings[recordings.length - 1].id] ?? null : null);
   const selectedDiagnostics = useMemo(() => (selectedRecordingId ? diagnosticsByRecordingId[selectedRecordingId] ?? null : null), [diagnosticsByRecordingId, selectedRecordingId]);
-  const playbackMayUseCompatible = compatMode || (Boolean(selectedDiagnostics?.compatibleRecommended) && !BROWSER_PLAYS_HEVC);
+  const playbackMayUseCompatible = compatMode || (Boolean(selectedDiagnostics?.compatibleRecommended) && !hevcDiretoPermitido());
   const recordingById = useMemo(() => new Map(recordings.map((recording) => [recording.id, recording] as const)), [recordings]);
 
   useEffect(() => {
@@ -1505,9 +1528,9 @@ export default function PlaybackPage() {
         // qualquer modo automático — inclusive o compatível já engatado.
         if (forcarHevcDireto) params.set('forceDirect', '1');
         else if (compatMode) params.set('compatible', '1');
-        // Navegador com decodificador HEVC: pede o arquivo ORIGINAL (o servidor
-        // auto-preferiria a versão transcodada para gravações H.265).
-        else if (BROWSER_PLAYS_HEVC) params.set('forceDirect', '1');
+        // Padrão OTIMISTA: pede o arquivo ORIGINAL a menos que este navegador
+        // já tenha provado não decodificar HEVC. Ver hevcDiretoPermitido().
+        else if (hevcDiretoPermitido()) params.set('forceDirect', '1');
         if (token.playToken) params.set('token', token.playToken);
         params.set('v', String(reloadNonce));
         setPlaybackUrl(`${API_URL}/recordings/${selectedRecordingId}/play?${params.toString()}`);
@@ -2935,11 +2958,14 @@ export default function PlaybackPage() {
             setVodFallback(true);
             return;
           }
-          // O operador forçou o H.265 original e o DECODIFICADOR recusou
+          // Fonte DIRETA (original, sem conversão) e o DECODIFICADOR recusou
           // (3=decode, 4=não suportado): este navegador realmente não toca
-          // HEVC. Aprende 'off' (para de oferecer o atalho) e volta ao modo
-          // compatível — sem tela vermelha, é um resultado esperado do teste.
-          if (forcarHevcDireto && (codigoDeMidia === 3 || codigoDeMidia === 4)) {
+          // HEVC. Vale tanto para o clique explícito do operador quanto para a
+          // tentativa otimista padrão. Aprende 'off' (nunca mais tenta neste
+          // navegador) e cai para o modo compatível — sem tela vermelha: a
+          // falha é o resultado esperado do teste, não um defeito.
+          const fonteEraDireta = /forceDirect=1/.test(activeSourceUrl ?? '');
+          if (fonteEraDireta && (codigoDeMidia === 3 || codigoDeMidia === 4)) {
             aprenderHevcDireto('off');
             setForcarHevcDireto(false);
             setCompatMode(true);
@@ -3133,7 +3159,7 @@ export default function PlaybackPage() {
                     userSpeed={compareUserSpeed}
                     fetchPlaylist={fetchComparePlaylist}
                     apiUrl={API_URL}
-                    forceDirect={BROWSER_PLAYS_HEVC}
+                    forceDirect={hevcDiretoPermitido()}
                   />
                 </div>
                 <div className="relative h-8 overflow-hidden rounded bg-[hsl(var(--muted))]" onClick={(event) => onTimelineClick(event.clientX, event.currentTarget.getBoundingClientRect())}>
@@ -3500,7 +3526,7 @@ export default function PlaybackPage() {
                         return;
                       }
                       const recDiag = diagnosticsByRecordingId[segment.recordingId];
-                      if (recDiag?.compatibleRecommended && !BROWSER_PLAYS_HEVC) {
+                      if (recDiag?.compatibleRecommended && !hevcDiretoPermitido()) {
                         setCompatMode(true);
                       }
                       // O PONTO clicado dentro do bloco vale: pular sempre para o
@@ -3615,7 +3641,7 @@ export default function PlaybackPage() {
                 {downloadingRecordingId === selectedRecording?.id ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                 Baixar
               </button>
-              {selectedDiagnostics?.compatibleRecommended && !BROWSER_PLAYS_HEVC && !selectedRecording?.compatibleCached && (
+              {selectedDiagnostics?.compatibleRecommended && !hevcDiretoPermitido() && !selectedRecording?.compatibleCached && (
                 <button
                   type="button"
                   onClick={() => void prepareCompatiblePlayback()}
@@ -3813,7 +3839,7 @@ export default function PlaybackPage() {
                   key={item.id}
                   onClick={() => {
                     if (!usable) return;
-                    if (recDiag?.compatibleRecommended && !BROWSER_PLAYS_HEVC) setCompatMode(true);
+                    if (recDiag?.compatibleRecommended && !hevcDiretoPermitido()) setCompatMode(true);
                     setSelectedRecordingId(item.id);
                     setPendingSeekSeconds(0);
                     setPlayheadFromMinute(minuteOfDay(item.startedAt));
