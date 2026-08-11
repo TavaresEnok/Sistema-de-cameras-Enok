@@ -2084,37 +2084,55 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         `force_original_aspect_ratio=decrease:force_divisible_by=2,` +
         `fps=${GRID_LIVE_TARGET_FPS}`;
       // Aceleração por GPU (NVENC): quando o admin liga o módulo de GPU em
-      // Configurações, o encode H.264 sai da CPU (libx264) e vai para a placa
-      // (h264_nvenc), mantendo o mesmo bitrate/GOP. O decode/scale segue na CPU
-      // (compatível com qualquer driver); o ganho está no encode, que é a parte
-      // mais cara quando há muitas câmeras. Exige imagem do MediaMTX com NVENC.
+      // Configurações, o encode H.264 do 1x1 sai da CPU (libx264) e vai para a
+      // placa (h264_nvenc), mantendo o mesmo bitrate/GOP. O decode/scale segue
+      // na CPU; o ganho está no encode 1080p, que é a parte cara.
       // ⚠️ NÃO basta a configuração estar ligada: o encode roda no container do
       // MediaMTX, e emitir `-c:v h264_nvenc` num ffmpeg SEM NVENC faz o publisher
-      // morrer na largada — com runOnDemandRestart=false, sem retry e sem
-      // fallback, o que derruba a live daquela câmera. Isso era alcançável por um
-      // admin clicando "Ativar GPU" num host INTEL (o hardware mais comum aqui),
-      // porque o portão do painel aceitava vaapi/qsv mas o publisher só sabe NVENC.
-      // Agora exigimos o sinal explícito de que o pipeline de transcode TEM NVENC.
-      const useNvenc = gpuAccel && this.transcodePipelineHasNvenc();
-      const videoArgs = sanitizeGridSource
+      // morrer na largada. Exigimos o sinal explícito de que o pipeline TEM NVENC.
+      //
+      // ── INCIDENTE 11/08/2026: a GRADE não usa mais NVENC ──────────────────
+      // GeForce limita as sessões simultâneas de encode (~8–12 na RTX 5060 Ti).
+      // Com o mosaico aberto, cada tile HEVC pedia uma sessão; da 13ª em diante
+      // o driver recusava ("OpenEncodeSessionEx failed: incompatible client
+      // key (21)" — 52 falhas em 15 min medidas), o ffmpeg morria e, com
+      // runOnDemandRestart=false, o tile ficava PRETO/0fps num loop de
+      // reconexão. Sintoma visto pelo dono: "1 fps, tela preta, travando".
+      // Um tile é 640×360@20 ultrafast ≈ 12% de um núcleo — barato na CPU e
+      // são MUITOS de uma vez: exatamente a carga errada para um recurso
+      // escasso. A grade fica SEMPRE em libx264; a GPU fica para o 1x1
+      // (Equilibrado, 1080p), que é caro e raramente passa de meia dúzia
+      // simultâneos — e mesmo lá com fallback (abaixo) se a sessão for negada.
+      const useNvenc =
+        gpuAccel && this.transcodePipelineHasNvenc() && deliveryMode !== 'grid';
+      const cpuVideoArgs = sanitizeGridSource
         ? '-c:v copy'
-        : useNvenc
-        ? (deliveryMode === 'grid'
+        : deliveryMode === 'grid'
+        // `veryfast`, não `ultrafast`. Quando tirei o NVENC da grade (sessões
+        // esgotadas derrubavam tiles), ela caiu no `ultrafast` — o preset mais
+        // rápido e PIOR do x264 — e o dono viu na hora: "aspecto lavado,
+        // fantasma". Medido contra a mesma fonte (6 s, 900 kbps, 640x360):
+        //
+        //   ultrafast  SSIM 0,9794  PSNR 40,52 dB   0,15 s   <- causava a queixa
+        //   veryfast   SSIM 0,9851  PSNR 41,58 dB   0,22 s
+        //   h264_nvenc SSIM 0,9833  PSNR 41,27 dB   (GPU)    <- o que havia antes
+        //
+        // `veryfast` supera até o NVENC que a grade usava, por ~+0,5 núcleo na
+        // frota inteira. `-refs 2` (era 1) devolve a referência que o x264 usa
+        // para não borrar objeto em movimento — o "fantasma" da queixa.
+        ? '-threads 2 -c:v libx264 -preset veryfast -tune zerolatency -profile:v main ' +
+          `-b:v ${GRID_LIVE_BITRATE_KBPS}k -maxrate ${GRID_LIVE_BITRATE_KBPS}k ` +
+          `-bufsize ${GRID_LIVE_BITRATE_KBPS * 2}k -pix_fmt yuv420p ` +
+          `-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2 -vf "${gridScaleFilter}"`
+        : '-threads 4 -c:v libx264 -preset veryfast -tune zerolatency -profile:v high ' +
+          '-b:v 6000k -maxrate 6000k -bufsize 12000k -pix_fmt yuv420p ' +
+          '-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2';
+      const nvencVideoArgs =
+        useNvenc && !sanitizeGridSource
           ? '-c:v h264_nvenc -preset p4 -tune ll -profile:v main -rc cbr ' +
-            `-b:v ${GRID_LIVE_BITRATE_KBPS}k -maxrate ${GRID_LIVE_BITRATE_KBPS}k ` +
-            `-bufsize ${GRID_LIVE_BITRATE_KBPS * 2}k -pix_fmt yuv420p ` +
-            `-g 30 -bf 0 -vf "${gridScaleFilter}"`
-          : '-c:v h264_nvenc -preset p4 -tune ll -profile:v main -rc cbr ' +
             '-b:v 5000k -maxrate 5000k -bufsize 10000k -pix_fmt yuv420p ' +
-            '-g 30 -bf 0')
-        : (deliveryMode === 'grid'
-          ? '-threads 2 -c:v libx264 -preset ultrafast -tune zerolatency -profile:v main ' +
-            `-b:v ${GRID_LIVE_BITRATE_KBPS}k -maxrate ${GRID_LIVE_BITRATE_KBPS}k ` +
-            `-bufsize ${GRID_LIVE_BITRATE_KBPS * 2}k -pix_fmt yuv420p ` +
-            `-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 1 -vf "${gridScaleFilter}"`
-          : '-threads 4 -c:v libx264 -preset veryfast -tune zerolatency -profile:v high ' +
-            '-b:v 6000k -maxrate 6000k -bufsize 12000k -pix_fmt yuv420p ' +
-            '-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2');
+            '-g 30 -bf 0'
+          : null;
       const audioArgs = transcodeAudioForWebrtc
         ? '-c:a libopus -ar 48000 -ac 2 -application lowdelay -b:a 96k'
         : '-an';
@@ -2124,7 +2142,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // causando 3 × 14 = 42 threads encode + 3 × 15 = 45 threads decode competindo,
       // sobrecarregando C0/C1 por efeito de scheduler clustering.
       const publishUrl = this.buildInternalPublishRtspUrl(pathName);
-      const ffmpegCommand =
+      const buildFfmpegCommand = (videoArgs: string) =>
         `ffmpeg -nostdin -hide_banner -loglevel warning -fflags +genpts+discardcorrupt+nobuffer ` +
         // -analyzeduration/-probesize: o padrão do FFmpeg analisa até 5s/5MB do input
         // antes de começar a transcodificar. Para câmeras H.264/H.265 conhecidas isso é
@@ -2139,6 +2157,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         `-flags low_delay -err_detect careful -rtsp_transport ${rtspTransport} ` +
         `-i "${privateSourceUrl}" -map 0:v:0 -map 0:a:0? ${videoArgs} ${audioArgs} ` +
         `-f rtsp -rtsp_transport tcp -muxdelay 0.1 -pkt_size 1200 "${publishUrl}"`;
+      const cpuFfmpegCommand = buildFfmpegCommand(cpuVideoArgs);
       // AUTO-RECUPERAÇÃO (anti-travamento). Antes de iniciar o restream, mata
       // qualquer ffmpeg ENCRAVADO deste MESMO path. Um ffmpeg que parou de publicar
       // mas continuou vivo segurava o antigo lock `flock -n` e fazia todo runOnDemand
@@ -2156,7 +2175,20 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         `tr "\\0" " " < "$d/cmdline" 2>/dev/null | grep -qF "/${pathName} " ` +
         `&& kill -9 "$(basename "$d")" 2>/dev/null; ` +
         `done`;
-      desiredPath.runOnDemand = `sh -c ${this.shellQuote(`${prekill}; exec ${ffmpegCommand}`)}`;
+      // FALLBACK NVENC→CPU (incidente 11/08/2026): a GeForce limita as sessões
+      // de encode; quando o driver recusa ("OpenEncodeSessionEx failed"), o
+      // ffmpeg morre em ~1–2 s. Se o processo NVENC terminar com erro EM MENOS
+      // DE 10 s, tratamos como falha de INICIALIZAÇÃO e relançamos o mesmo
+      // pipeline em libx264 — a câmera abre mesmo com a GPU lotada. A janela de
+      // 10 s evita o falso-positivo perigoso: um NVENC que rodou horas e foi
+      // morto pelo runOnUnDemand (kill -9, também exit≠0) NÃO pode renascer em
+      // CPU como órfão — com >10 s de vida, o script apenas termina.
+      const runOnDemandScript = nvencVideoArgs
+        ? `${prekill}; inicio=$(date +%s); ${buildFfmpegCommand(nvencVideoArgs)}; rc=$?; ` +
+          `[ "$rc" -ne 0 ] && [ $(( $(date +%s) - inicio )) -lt 10 ] && exec ${cpuFfmpegCommand}; ` +
+          `exit "$rc"`
+        : `${prekill}; exec ${cpuFfmpegCommand}`;
+      desiredPath.runOnDemand = `sh -c ${this.shellQuote(runOnDemandScript)}`;
       // FFMPEG ÓRFÃO: o mesmo prekill, agora também na SAÍDA do último espectador.
       //
       // PROVADO por experimento (31/07): apagar o path (`DELETE`) NÃO mata o
