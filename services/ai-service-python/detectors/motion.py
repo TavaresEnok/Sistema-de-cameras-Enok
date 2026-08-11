@@ -327,6 +327,18 @@ class MotionDetector(Detector):
                 "componentRatio": round(area / frame_area, 5),
                 "motionBoxIndex": index,
                 "motionBoxCount": len(boxes),
+                # ESPAÇO DA BBOX, declarado junto com ela. A bbox sai em
+                # coordenadas do frame ORIGINAL (scale_x/scale_y acima), mas o
+                # stream_processor não sabia disso e caía no fallback
+                # `self.frame_width` (a largura de ANÁLISE, 320x180). O evento
+                # gravado dizia "frameWidth 320, frameHeight 180" com bbox de
+                # até y=228 — impossível — e quem desenha o overlay dividia
+                # pelas dimensões erradas, jogando a caixa para ~2x a posição
+                # real. Na tela, o movimento aparecia LONGE de onde aconteceu:
+                # foi assim que uma zona funcionando pareceu ignorada
+                # (relato do dono, 11/08/2026, Cam-09).
+                "frameWidth": int(frame.shape[1]),
+                "frameHeight": int(frame.shape[0]),
             }
             if index == 0 and len(boxes) > 1:
                 # Quem consome só o primeiro Detection ainda enxerga a cena toda.
