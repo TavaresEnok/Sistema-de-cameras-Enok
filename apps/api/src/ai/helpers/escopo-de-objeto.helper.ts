@@ -37,6 +37,13 @@ export type CameraParaEscopo = {
   aiEnabled?: boolean | null;
   objectMode?: string | null;
   detectionZones?: unknown;
+  /**
+   * Gravar POR OBJETO exige o YOLO rodando: sem ele não existe evento de
+   * objeto e a câmera simplesmente não gravaria nunca. Por isso o modo de
+   * gravação entra na decisão de escopo — é a diferença entre um recurso
+   * ligado na tela e um recurso que funciona.
+   */
+  recordingMode?: string | null;
 };
 
 export type DecisaoDeObjeto = {
@@ -49,6 +56,7 @@ export type DecisaoDeObjeto = {
     | 'ia-desligada-na-camera'
     | 'desligado-pelo-operador'
     | 'linha-de-perimetro'
+    | 'gravacao-por-objeto'
     | 'sempre-ligado'
     | 'sem-linha-desenhada';
 };
@@ -84,6 +92,15 @@ export function decidirObjetoDaCamera(
   if (modo === 'nunca') return { cameraId, roda: false, motivo: 'desligado-pelo-operador' };
   if (modo === 'sempre') return { cameraId, roda: true, motivo: 'sempre-ligado' };
 
+  // Gravação POR OBJETO manda no escopo. Escolher esse modo na tela é um
+  // pedido inequívoco de "só grave quando for gente ou veículo" — e ele só se
+  // cumpre com o YOLO ligado nesta câmera. Sem este ramo, o operador ligava o
+  // modo, nenhum evento de objeto era gerado e a câmera ficava sem gravar
+  // NADA: o pior desfecho possível para um sistema de segurança.
+  if (String(camera.recordingMode ?? '') === 'object') {
+    return { cameraId, roda: true, motivo: 'gravacao-por-objeto' };
+  }
+
   return temLinhaDePerimetro(camera.detectionZones)
     ? { cameraId, roda: true, motivo: 'linha-de-perimetro' }
     : { cameraId, roda: false, motivo: 'sem-linha-desenhada' };
@@ -110,6 +127,7 @@ export function explicarDecisao(decisao: DecisaoDeObjeto): string {
     case 'ia-desligada-na-camera': return 'IA desligada nesta câmera.';
     case 'desligado-pelo-operador': return 'Desligado manualmente para esta câmera.';
     case 'linha-de-perimetro': return 'Ligado automaticamente: há linha de perímetro desenhada.';
+    case 'gravacao-por-objeto': return 'Ligado automaticamente: a câmera grava por objeto.';
     case 'sempre-ligado': return 'Ligado manualmente para esta câmera.';
     case 'sem-linha-desenhada': return 'Sem linha de perímetro — desenhe uma linha para ativar, ou marque "sempre".';
   }

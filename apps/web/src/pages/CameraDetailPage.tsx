@@ -1270,7 +1270,11 @@ export default function CameraDetailPage() {
   }, [cam?.id]);
 
   const isRecordingActive = recordingOverride ?? recordingRuntimeStatus?.isRecording ?? (cam?.status === 'recording');
-  const isMotionRecordingMode = form.recordingMode === 'motion' || cam?.recordingMode === 'motion';
+  // Modos ARMADOS: a gravação nasce de um evento e para por post-roll. Vale
+  // para movimento e para objeto — os dois compartilham a mesma mecânica, só
+  // muda QUEM dispara (ver gatilho-de-gravacao.helper na API).
+  const modoArmado = (m?: string | null) => m === 'motion' || m === 'object';
+  const isMotionRecordingMode = modoArmado(form.recordingMode) || modoArmado(cam?.recordingMode);
   const isMotionRecordingActive = isMotionRecordingMode && isRecordingActive;
   const cameraMeta = cameraConfigMeta ?? cam;
   const resolutionMatch = cam?.resolution?.match(/(\d+)\s*x\s*(\d+)/i) ?? null;
@@ -1349,8 +1353,12 @@ export default function CameraDetailPage() {
         setForm((current) => ({ ...current, recordingMode: 'motion', recordingEnabled: false }));
         setRecordingOverride(false);
         toast({
-          title: 'Gravação por movimento ativada',
-          description: 'Ao detectar movimento, o sistema grava e mantém o clip por 60s após o último movimento.',
+          title: form.recordingMode === 'object'
+            ? 'Gravação por pessoa/veículo ativada'
+            : 'Gravação por movimento ativada',
+          description: form.recordingMode === 'object'
+            ? 'A IA confirma pessoa ou veículo e o sistema grava, mantendo o clip por 60s após o último evento.'
+            : 'Ao detectar movimento, o sistema grava e mantém o clip por 60s após o último movimento.',
         });
       } else {
         if (isMotionRecordingActive) {
@@ -1900,6 +1908,10 @@ export default function CameraDetailPage() {
                         <SettingsSelect value={form.recordingMode} onChange={(event) => updateField('recordingMode', event.target.value as CameraConfig['recordingMode'])}>
                           <option value="continuous">Contínua</option>
                           <option value="motion">Movimento</option>
+                          {/* Grava só com pessoa/veículo confirmado pela IA. Movimento é
+                              um sinal burro (sombra, folha, chuva disparam); objeto é o
+                              que o operador quer quando o disco enche de nada. */}
+                          <option value="object">Pessoa ou veículo (IA)</option>
                           {form.recordingMode === 'schedule' ? <option value="schedule" disabled>Agenda (indisponível)</option> : null}
                           <option value="manual">Manual</option>
                         </SettingsSelect>

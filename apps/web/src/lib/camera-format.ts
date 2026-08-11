@@ -4,7 +4,7 @@
  */
 
 export type VideoCodec = 'original' | 'h264' | 'h265' | 'mjpeg';
-export type RecordingMode = 'continuous' | 'motion' | 'schedule' | 'manual';
+export type RecordingMode = 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
 export type PreferredLiveProtocol = 'hls' | 'llhls' | 'webrtc' | 'mjpeg';
 
 export const RECORDING_MODE_COPY: Record<RecordingMode, { label: string; detail: string; className: string }> = {
@@ -12,6 +12,11 @@ export const RECORDING_MODE_COPY: Record<RecordingMode, { label: string; detail:
     label: 'Manual',
     detail: 'Só grava quando o operador liga.',
     className: 'border-border bg-muted text-muted-foreground',
+  },
+  object: {
+    label: 'Pessoa ou veículo',
+    detail: 'Armada: só grava quando a IA confirma pessoa ou veículo. Sombra, folha e chuva não gravam.',
+    className: 'border-[hsl(var(--primary)_/_0.35)] bg-[hsl(var(--primary)_/_0.1)] text-[hsl(var(--primary))]',
   },
   motion: {
     label: 'Movimento',

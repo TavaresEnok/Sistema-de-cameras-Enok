@@ -12,6 +12,7 @@ import { envNumber } from '../common/config/env-number.helper';
 import { assertCameraTargetAllowed } from '../common/network/safe-url.helper';
 import { candidateOnvifPorts, streamUriIdentifiesCamera } from './helpers/onvif-port-discovery.helper';
 import { classificarEventoOnvif, deveGravar, tipoDeEventoDoSistema, type EventoOnvifClassificado } from './helpers/evento-onvif.helper';
+import { modoArmado } from './helpers/gatilho-de-gravacao.helper';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const onvif = require('onvif');
 
@@ -337,7 +338,7 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
         });
         this.logger.log(`Auto-detecção de movimento: ${cam.name} → ${target} (ONVIF ${supports ? 'com' : 'sem'} movimento).`);
 
-        const armed = cam.recordingMode === 'motion';
+        const armed = modoArmado(cam.recordingMode);
         if (!armed) continue;
         if (target === 'SYSTEM') {
           // Perdeu a detecção nativa: a local assume JÁ (não espera restart).
@@ -424,7 +425,7 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
 
       // WATCHDOG de reserva: só para câmeras nativas ARMADAS.
       for (const c of cameras) {
-        if (c.enabled === false || c.recordingMode !== 'motion') continue;
+        if (c.enabled === false || !modoArmado(c.recordingMode)) continue;
         const state = this.getNativeState(c.id);
         const listener = this.activeCams.get(c.id);
         const connected = Boolean(listener?.cam);
@@ -561,7 +562,7 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
         where: { id: cameraId },
         select: { recordingMode: true, enabled: true },
       }).catch(() => null);
-      if (cam && cam.enabled !== false && cam.recordingMode === 'motion') {
+      if (cam && cam.enabled !== false && modoArmado(cam.recordingMode)) {
         confirmation = await this.confirmNativeMotion(cameraId).catch(() => null);
       }
     }

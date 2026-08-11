@@ -1,4 +1,5 @@
 // ── GRAVAR POR MOVIMENTO DO SISTEMA EXIGE O DETECTOR LIGADO ──────────────────
+import { modoArmado } from './gatilho-de-gravacao.helper';
 //
 // `motionTrigger` diz QUEM detecta o movimento:
 //   · `SYSTEM` — o MOG2 do DRAC, analisando o vídeo aqui;
@@ -33,7 +34,7 @@ export type EstadoDeteccao = {
  * o MOG2 nesses casos gastaria CPU sem nada em troca.
  */
 export function detectorObrigatorio(estado: EstadoDeteccao): boolean {
-  return estado.recordingMode === 'motion' && estado.motionTrigger === 'SYSTEM';
+  return modoArmado(estado.recordingMode) && estado.motionTrigger === 'SYSTEM';
 }
 
 /**

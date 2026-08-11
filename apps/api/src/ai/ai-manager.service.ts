@@ -23,6 +23,7 @@ function rodaObjetoDe(info: Record<string, unknown>): boolean {
   return (info?.objectDetection as { ativo?: boolean } | undefined)?.ativo === true;
 }
 import { envNumber } from '../common/config/env-number.helper';
+import { modoArmado } from '../cameras/helpers/gatilho-de-gravacao.helper';
 
 const AI_MODES = ['motion', 'face', 'general'] as const;
 type AiMode = typeof AI_MODES[number];
@@ -471,7 +472,7 @@ export class AiManagerService implements OnModuleInit {
         // gastam nossa CPU. Assim nada é analisado sem necessidade. Nos modos de
         // objetos (general/face) segue analisando todas as câmeras habilitadas.
         if (settings.mode === 'motion') {
-          return cam.recordingMode === 'motion' && cam.motionTrigger === 'SYSTEM';
+          return modoArmado(cam.recordingMode) && cam.motionTrigger === 'SYSTEM';
         }
         return true;
       });
@@ -546,7 +547,7 @@ export class AiManagerService implements OnModuleInit {
     // câmera desarmada não arma gravação nenhuma e não desenha nada (o
     // overlay de movimento foi removido de vez): é só custo. Objeto/face
     // (modo avançado) seguem podendo nascer do live — lá o overlay é real.
-    if (options?.liveAutoStart && settings.mode === 'motion' && cam.recordingMode !== 'motion') {
+    if (options?.liveAutoStart && settings.mode === 'motion' && !modoArmado(cam.recordingMode)) {
       return { status: 'disabled', cameraId, reason: 'not_armed' };
     }
     // No modo 'motion', câmeras com detecção própria (motionTrigger='CAMERA')
@@ -583,7 +584,7 @@ export class AiManagerService implements OnModuleInit {
     const politica = await this.commercialPolicy.getPolicy().catch(() => null);
     const classes = classesPermitidas({ aiObjectClasses: politica?.aiObjectClasses });
     const cameras = await this.prisma.camera.findMany({
-      select: { id: true, name: true, enabled: true, aiEnabled: true, objectMode: true, detectionZones: true },
+      select: { id: true, name: true, enabled: true, aiEnabled: true, objectMode: true, detectionZones: true, recordingMode: true },
       orderBy: { name: 'asc' },
     });
     return {

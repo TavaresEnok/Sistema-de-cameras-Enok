@@ -43,6 +43,7 @@ import {
 } from './helpers/ffmpeg-stderr-ring.helper';
 import { CLOUD_OFFLOAD_QUEUE } from '../jobs/queues/cloud-offload.queue';
 import { THUMBNAIL_GENERATION_QUEUE } from '../jobs/queues/thumbnail-generation.queue';
+import { modoArmado } from '../cameras/helpers/gatilho-de-gravacao.helper';
 
 const execFileAsync = promisify(execFile);
 
@@ -774,7 +775,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     // Só vale para câmera habilitada e armada por movimento. Fora disso não há
     // o que compensar: quem grava contínuo já grava, e quem está desabilitada
     // não deve ganhar gravação por um detector cego.
-    if (!camera || camera.enabled === false || camera.recordingMode !== 'motion') {
+    if (!camera || camera.enabled === false || !modoArmado(camera.recordingMode)) {
       this.blindFailsafe.delete(cameraId);
       return 'inalterado';
     }
@@ -836,7 +837,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       where: { id: cameraId },
       select: { recordingMode: true, recordingEnabled: true },
     });
-    if (!camera || camera.recordingMode !== 'motion' || !camera.recordingEnabled) return;
+    if (!camera || !modoArmado(camera.recordingMode) || !camera.recordingEnabled) return;
 
     // A câmera continua ARMADA: o ring de pré-evento volta a ser a cobertura.
     // ORDEM É INVARIANTE — sobe o ring ANTES de parar a gravação. Os dois se
@@ -872,7 +873,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     if (camera.enabled === false) {
       return { status: 'ignored', reason: 'camera_disabled', cameraId };
     }
-    if (camera.recordingMode !== 'motion') {
+    if (!modoArmado(camera.recordingMode)) {
       return { status: 'ignored', reason: 'motion_recording_not_enabled', cameraId };
     }
 
@@ -2122,10 +2123,11 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   }
 
   // Resolve o que gravar em `recordingMode` num start/stop. Uma gravação MANUAL
-  // ad-hoc NÃO pode desarmar uma câmera configurada para 'motion' — senão clicar
-  // "Gravar" numa câmera com gravação por movimento a deixa em 'manual' para
-  // sempre. Então um pedido 'manual' sobre uma câmera 'motion' é ignorado
-  // (preserva o armamento). Os demais modos seguem o pedido normalmente.
+  // ad-hoc NÃO pode DESARMAR a câmera — senão clicar "Gravar" numa câmera
+  // armada a deixa em 'manual' para sempre, e ela nunca mais grava sozinha.
+  // Vale para os dois modos armados (movimento e objeto): o risco é idêntico,
+  // e tratar só 'motion' deixaria a câmera de objeto desarmada por um clique.
+  // Os demais modos seguem o pedido normalmente.
   private async resolveRecordingModeUpdate(
     cameraId: string,
     requested?: Camera['recordingMode'],
@@ -2136,7 +2138,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
         where: { id: cameraId },
         select: { recordingMode: true },
       });
-      if (cam?.recordingMode === 'motion') return {};
+      if (modoArmado(cam?.recordingMode)) return {};
     }
     return { recordingMode: requested };
   }

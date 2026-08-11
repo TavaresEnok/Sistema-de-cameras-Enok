@@ -25,6 +25,7 @@ import { AiManagerService } from '../ai/ai-manager.service';
 import { AiService } from '../ai/ai.service';
 import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
 import { envNumber } from '../common/config/env-number.helper';
+import { eventoDeveGravar } from './helpers/gatilho-de-gravacao.helper';
 
 @Controller('cameras')
 export class CamerasController {
@@ -872,7 +873,17 @@ export class CamerasController {
       metadata,
       dto.occurredAt ? new Date(dto.occurredAt) : undefined,
     );
-    if (dto.type === 'MOTION_DETECTED') {
+    // O gatilho depende do MODO DE GRAVAÇÃO da câmera (ver o helper): em
+    // `motion` grava movimento, como sempre; em `object` só pessoa/veículo
+    // confirmado inicia gravação — sombra e folha deixam de gerar arquivo.
+    const camera = await this.camerasService
+      .getCameraOrThrow(id)
+      .catch(() => null as any);
+    if (eventoDeveGravar({
+      tipo: dto.type,
+      modoDeGravacao: camera?.recordingMode,
+      rotulo: (metadata as any)?.label,
+    })) {
       await this.recordingManager.handleMotionDetected(id, metadata).catch(() => undefined);
     }
     return event;
