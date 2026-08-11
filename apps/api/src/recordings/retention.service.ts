@@ -1030,7 +1030,56 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.pruneDiagnosticsCache(root);
+    this.limitarCacheCompativel(compatibleRoot);
     return { orphanThumbnailsDeleted, orphanCompatibleFilesDeleted, orphanSegmentsDeleted };
+  }
+
+  /**
+   * TETO do cache de versões compatíveis (H.265→H.264 do playback).
+   *
+   * Cada cópia é ~o tamanho da gravação original e fica no disco para sempre —
+   * medido em 11/08/2026: 1,1 GB criados em UM DIA de uso normal, num disco a
+   * 85%. Sem teto, revisar gravações antigas é um jeito silencioso de encher o
+   * disco (e o freio de disco cheio pararia a GRAVAÇÃO para proteger o resto).
+   * Remove as cópias mais ANTIGAS (mtime) até caber no orçamento; quem revisar
+   * de novo paga um novo transcode — gravação original nunca é tocada.
+   */
+  private limitarCacheCompativel(compatibleRoot: string) {
+    const maxBytes = envNumber('PLAYBACK_COMPAT_CACHE_MAX_GB', 5, { min: 1 }) * 1024 ** 3;
+    if (!existsSync(compatibleRoot)) return;
+    const arquivos: Array<{ path: string; size: number; mtimeMs: number }> = [];
+    try {
+      for (const dir of readdirSync(compatibleRoot, { withFileTypes: true })) {
+        if (!dir.isDirectory()) continue;
+        const cameraDir = join(compatibleRoot, dir.name);
+        for (const entry of readdirSync(cameraDir, { withFileTypes: true })) {
+          if (!entry.isFile() || !entry.name.endsWith('.mp4')) continue;
+          const fullPath = join(cameraDir, entry.name);
+          try {
+            const st = statSync(fullPath);
+            arquivos.push({ path: fullPath, size: st.size, mtimeMs: st.mtimeMs });
+          } catch { /* sumiu entre readdir e stat */ }
+        }
+      }
+    } catch {
+      return; // varredura é best-effort; não pode derrubar a retenção
+    }
+    let total = arquivos.reduce((acc, f) => acc + f.size, 0);
+    if (total <= maxBytes) return;
+    arquivos.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    let removidos = 0;
+    for (const f of arquivos) {
+      if (total <= maxBytes) break;
+      if (this.removeFile(f.path)) {
+        total -= f.size;
+        removidos += 1;
+      }
+    }
+    if (removidos > 0) {
+      this.logger.log(
+        `Cache compatível acima do teto (${(maxBytes / 1024 ** 3).toFixed(0)} GB): ${removidos} cópia(s) antiga(s) removida(s).`,
+      );
+    }
   }
 
   /**

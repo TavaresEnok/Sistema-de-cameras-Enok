@@ -186,7 +186,7 @@ test('transcode CPU: os argumentos são exatamente os que produção já rodava'
   assert.deepEqual(buildCpuTranscodeArgs('/in.mkv', '/out.mp4.tmp'), [
     '-y', '-i', '/in.mkv',
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
     '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-ar', '44100', '-ac', '2',
     '-movflags', '+faststart', '-f', 'mp4', '/out.mp4.tmp',

@@ -580,8 +580,13 @@ export function buildCpuTranscodeArgs(input: string, output: string): string[] {
     'libx264',
     '-preset',
     'ultrafast',
+    // crf 23 (era 18): 18 é "quase sem perda" e re-codificava com MUITO mais
+    // bits do que a fonte tinha — medido em 11/08/2026: cópia H.264 com 8x o
+    // tamanho do original H.265 (18,4 Mbps para uma fonte de 2,3 Mbps), disco
+    // a 85%. Não existe detalhe novo a preservar: a fonte é o teto. 23 fica
+    // visualmente transparente para revisão e corta o cache em ~3-4x.
     '-crf',
-    '18',
+    '23',
     '-profile:v',
     'high',
     '-level',
