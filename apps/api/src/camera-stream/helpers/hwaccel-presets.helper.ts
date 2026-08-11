@@ -578,15 +578,30 @@ export function buildCpuTranscodeArgs(input: string, output: string): string[] {
     '0:a:0?',
     '-c:v',
     'libx264',
+    // ── QUALIDADE DO PLAYBACK: medido, não estimado (11/08/2026) ───────────
+    // O dono: "as gravações também estão com aspecto lavado, sendo que
+    // deveria ser de altíssima qualidade". A GRAVAÇÃO no disco está intacta
+    // (é `-c copy`, HEVC cru da câmera) — o que ele via era esta CÓPIA, feita
+    // só para o navegador que não decodifica H.265.
+    //
+    // Eu havia baixado o crf de 18 para 23 para conter o disco, e isso doeu.
+    // Medido sobre uma gravação REAL (1080p HEVC 2,0 Mbps, 18,6 s), contra o
+    // arquivo original:
+    //
+    //   ultrafast crf18  SSIM 0,9912  PSNR 39,21 dB   34,9 MB  (antes de mim)
+    //   ultrafast crf23  SSIM 0,9854  PSNR 38,37 dB   21,9 MB  (a piora)
+    //   veryfast  crf16  SSIM 0,9896  PSNR 38,68 dB   16,9 MB  <- escolhido
+    //   veryfast  crf18  SSIM 0,9874  PSNR 38,24 dB   13,5 MB
+    //   veryfast  crf20  SSIM 0,9842  PSNR 37,66 dB   10,6 MB
+    //
+    // `ultrafast` era o erro maior: gasta MUITOS bits para entregar pouco.
+    // Trocando o preset, `crf 16` devolve praticamente a qualidade original
+    // (0,9896 vs 0,9912) na METADE do tamanho — melhor que o de antes nos dois
+    // eixos. O teto de 5 GB do cache (retention.service) segura o resto.
     '-preset',
-    'ultrafast',
-    // crf 23 (era 18): 18 é "quase sem perda" e re-codificava com MUITO mais
-    // bits do que a fonte tinha — medido em 11/08/2026: cópia H.264 com 8x o
-    // tamanho do original H.265 (18,4 Mbps para uma fonte de 2,3 Mbps), disco
-    // a 85%. Não existe detalhe novo a preservar: a fonte é o teto. 23 fica
-    // visualmente transparente para revisão e corta o cache em ~3-4x.
+    'veryfast',
     '-crf',
-    '23',
+    '16',
     '-profile:v',
     'high',
     '-level',
