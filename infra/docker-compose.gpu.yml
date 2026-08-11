@@ -18,14 +18,33 @@
 
 # RESILIÊNCIA A PLACA ARRANCADA: aqui NÃO se usa
 # `deploy.resources.reservations.devices` (reserva RÍGIDA de GPU). Aquilo faz o
-# container SE RECUSAR A SUBIR quando não há placa — então, se alguém arranca a
-# GPU e o stack reinicia, o sistema inteiro não voltava. Em vez disso, a GPU é
-# exposta pelo RUNTIME nvidia (default do daemon) + NVIDIA_VISIBLE_DEVICES: com
-# placa, o runtime injeta a GPU; SEM placa, ele só avisa e o container sobe
-# mesmo assim, e o código cai para CPU (transcode→libx264, IA→CPU). Medido:
-# arrancar a placa não derruba mais o boot.
+# container SE RECUSAR A SUBIR quando não há placa.
+#
+# ── INCIDENTE 11/08/2026 (14 h de produção fora) ────────────────────────────
+# A versão anterior deste comentário afirmava que, sem placa, "o container sobe
+# mesmo assim". É FALSO, e custou caro. A GPU vinha do `default-runtime: nvidia`
+# no daemon.json — o que fazia TODO container (banco, web, redis, central…)
+# passar pelo nvidia-container-runtime. Quando a VM voltou de um reboot SEM a
+# placa (passthrough não reatachou), o runtime falhou em bloco:
+#
+#   OCI runtime create failed: ... failed to initialize NVML: Driver Not Loaded
+#
+# O nvidia-container-runtime NÃO degrada: sem driver ele ABORTA a criação do
+# container. Resultado: o sistema INTEIRO ficou fora por 14 h — não só a
+# aceleração. Duas correções:
+#
+#  1. `default-runtime` REMOVIDO do daemon.json. Só quem precisa de GPU pede o
+#     runtime (abaixo). Banco, web, redis e central nunca mais caem por falta
+#     de placa — no pior caso o sistema roda sem aceleração.
+#  2. Este overlay só deve ser incluído quando existe GPU DE VERDADE. Use
+#     `./drac-up.sh`, que detecta a placa e escolhe os overlays sozinho, em vez
+#     de fixar o gpu.yml no COMPOSE_FILE.
 services:
   api:
+    # Explícito: sem isto, a API não enxerga a GPU depois que o default-runtime
+    # saiu do daemon. E, sendo explícito, a falha (se houver) fica restrita a
+    # quem realmente quis a placa.
+    runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
@@ -36,6 +55,7 @@ services:
 
   mediamtx:
     # Onde o transcode de vídeo realmente acontece. Imagem com ffmpeg NVENC.
+    runtime: nvidia
     build:
       context: .
       dockerfile: mediamtx-nvenc.Dockerfile
