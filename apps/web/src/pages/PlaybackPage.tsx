@@ -216,17 +216,41 @@ const WINDOWED_TIMELINE = windowedTimelineEnabled();
 // (forceDirect=1), sem transcodificar; senão o servidor serve a versão
 // compatível sob demanda como antes. Falsos positivos ("maybe") são cobertos
 // pelo fallback automático de erro/timeout → modo compatível.
+//
+// A detecção do Chrome OSCILA: no mesmo navegador do dono, `canPlayType`
+// respondeu "sim" num dia e "não" no outro (depende do estado da GPU no
+// momento), enquanto o H.265 tocava normalmente no ao vivo. Por isso:
+//  1. perguntamos por DOIS caminhos (elemento <video> E MediaSource);
+//  2. a EXPERIÊNCIA REAL manda mais que a detecção — quando o H.265 direto
+//     toca de verdade uma vez, gravamos 'on' e nunca mais pedimos conversão
+//     neste navegador; quando falha na DECODIFICAÇÃO, gravamos 'off'.
+const HEVC_APRENDIDO_KEY = 'drac.playback.hevc-direto';
 function detectHevcPlayback(): boolean {
   if (typeof document === 'undefined') return false;
   try {
+    const aprendido = window.localStorage.getItem(HEVC_APRENDIDO_KEY);
+    if (aprendido === 'on') return true;
+    if (aprendido === 'off') return false;
+  } catch {
+    // localStorage bloqueado: segue para a detecção.
+  }
+  try {
     const probe = document.createElement('video');
-    return Boolean(
+    const elemento = Boolean(
       probe.canPlayType('video/mp4; codecs="hvc1.1.6.L123.B0"') ||
       probe.canPlayType('video/mp4; codecs="hev1.1.6.L123.B0"'),
     );
+    const mse = typeof MediaSource !== 'undefined' && (
+      MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L123.B0"') ||
+      MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L123.B0"')
+    );
+    return elemento || mse;
   } catch {
     return false;
   }
+}
+function aprenderHevcDireto(valor: 'on' | 'off') {
+  try { window.localStorage.setItem(HEVC_APRENDIDO_KEY, valor); } catch { /* melhor esforço */ }
 }
 const BROWSER_PLAYS_HEVC = detectHevcPlayback();
 const TOTAL_MINS = TIMELINE_TOTAL_MINUTES;
@@ -448,6 +472,14 @@ export default function PlaybackPage() {
   const [thumbnailRefreshNonce, setThumbnailRefreshNonce] = useState(0);
   const [diagnosticsByRecordingId, setDiagnosticsByRecordingId] = useState<Record<string, RecordingDiagnostics>>({});
   const [preparingCompatibleId, setPreparingCompatibleId] = useState<string | null>(null);
+  // "Preparando compatível" é ESPERA NORMAL, não erro: tem estado e visual
+  // próprios (aviso calmo com spinner), separado do videoError vermelho. O dono
+  // reclamou — com razão — do aviso vermelho de erro para um processo que
+  // termina sozinho: vermelho é para o que quebrou, não para o que trabalha.
+  const [preparandoCompat, setPreparandoCompat] = useState<string | null>(null);
+  // Pedido explícito do operador: "toca o H.265 original AGORA" (sem esperar
+  // conversão). Sobrevive à detecção falha do navegador; se tocar, aprendemos.
+  const [forcarHevcDireto, setForcarHevcDireto] = useState(false);
   const [investigations, setInvestigations] = useState<InvestigationOption[]>([]);
   const [selectedInvestigationId, setSelectedInvestigationId] = useState('__none__');
   const [clipStartSeconds, setClipStartSeconds] = useState<number | null>(null);
@@ -1462,13 +1494,17 @@ export default function PlaybackPage() {
     let cancelled = false;
     setLoadingPlayback(true);
     setVideoError(null);
+    setPreparandoCompat(null);
     playbackReadyRef.current = false;
 
     void createPlaybackToken(selectedRecordingId, accessToken)
       .then((token) => {
         if (cancelled) return;
         const params = new URLSearchParams();
-        if (compatMode) params.set('compatible', '1');
+        // O pedido explícito do operador ("reproduzir o original agora") vence
+        // qualquer modo automático — inclusive o compatível já engatado.
+        if (forcarHevcDireto) params.set('forceDirect', '1');
+        else if (compatMode) params.set('compatible', '1');
         // Navegador com decodificador HEVC: pede o arquivo ORIGINAL (o servidor
         // auto-preferiria a versão transcodada para gravações H.265).
         else if (BROWSER_PLAYS_HEVC) params.set('forceDirect', '1');
@@ -1488,7 +1524,7 @@ export default function PlaybackPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedRecordingId, accessToken, compatMode, selectedRecording?.fileExists, selectedRecording?.fileUsable, reloadNonce, vodActive, vodProbing]);
+  }, [selectedRecordingId, accessToken, compatMode, forcarHevcDireto, selectedRecording?.fileExists, selectedRecording?.fileUsable, reloadNonce, vodActive, vodProbing]);
 
   // Coração do modo contínuo: decide QUAL elemento toca o segmento selecionado.
   // Se o segmento já está PRÉ-CARREGADO no elemento ocioso, apenas TROCAMOS de
@@ -2776,6 +2812,7 @@ export default function PlaybackPage() {
           if (!isActiveVideoElement(event.currentTarget)) return;
           playbackReadyRef.current = true;
           setVideoError(null);
+          setPreparandoCompat(null);
           if (autoResumeRef.current) {
             autoResumeRef.current = false;
             void videoRef.current?.play().catch(() => {});
@@ -2789,6 +2826,13 @@ export default function PlaybackPage() {
           if (!isActiveVideoElement(event.currentTarget)) return;
           setPlaying(true);
           setBuffering(false);
+          // O H.265 direto forçado pelo operador TOCOU com imagem de verdade:
+          // este navegador decodifica HEVC, ponto — a experiência vence a
+          // detecção oscilante do canPlayType. Daqui em diante toda gravação
+          // H.265 abre direta, sem conversão e sem espera.
+          if (forcarHevcDireto && event.currentTarget.videoWidth > 0) {
+            aprenderHevcDireto('on');
+          }
         }}
         onWaiting={(event) => {
           if (!isActiveVideoElement(event.currentTarget)) return;
@@ -2880,6 +2924,8 @@ export default function PlaybackPage() {
         }}
         onError={(event) => {
           if (!isActiveVideoElement(event.currentTarget)) return;
+          // Captura ANTES do async: currentTarget é reciclado pelo React.
+          const codigoDeMidia = event.currentTarget.error?.code ?? null;
           // No modo contínuo, erro devolve o segmento ao caminho antigo: é ele que
           // sabe negociar versão compatível e pular gravação quebrada.
           if (vodActive) {
@@ -2889,6 +2935,17 @@ export default function PlaybackPage() {
             setVodFallback(true);
             return;
           }
+          // O operador forçou o H.265 original e o DECODIFICADOR recusou
+          // (3=decode, 4=não suportado): este navegador realmente não toca
+          // HEVC. Aprende 'off' (para de oferecer o atalho) e volta ao modo
+          // compatível — sem tela vermelha, é um resultado esperado do teste.
+          if (forcarHevcDireto && (codigoDeMidia === 3 || codigoDeMidia === 4)) {
+            aprenderHevcDireto('off');
+            setForcarHevcDireto(false);
+            setCompatMode(true);
+            setVideoError(null);
+            return;
+          }
           void (async () => {
             // Erro do SERVIDOR (404 da nuvem, 401 de token) tem explicação no
             // corpo — e transcodificar não cura nenhum deles.
@@ -2896,12 +2953,16 @@ export default function PlaybackPage() {
             const falhou = selectedRecordingId ? recordingById.get(selectedRecordingId) : null;
             const quando = falhou ? format(new Date(falhou.startedAt), 'HH:mm:ss') : null;
             if (falha?.preparando) {
-              // Transcode em preparo no servidor (assíncrono): mostra o aviso e
-              // tenta de novo sozinho — o vídeo começa quando ficar pronto.
-              setVideoError(falha.mensagem);
+              // Transcode em preparo no servidor (assíncrono): estado de ESPERA
+              // — aviso calmo com spinner, nunca o vermelho de erro (o processo
+              // termina sozinho; vermelho é para o que quebrou). Reclamação
+              // direta do dono: "teria algo melhor do que um aviso vermelho
+              // horrível?" — tinha.
               const tentativas = (preparandoRetryRef.current.get(selectedRecordingId ?? '') ?? 0) + 1;
               preparandoRetryRef.current.set(selectedRecordingId ?? '', tentativas);
               if (tentativas <= 40) {
+                setPreparandoCompat(falha.mensagem);
+                setVideoError(null);
                 // O timer captura a gravação que estava preparando: se antes
                 // dos 4s o operador trocar de gravação/câmera, o disparo
                 // NÃO recarrega a nova (recarregava do zero, com piscada e
@@ -2912,6 +2973,8 @@ export default function PlaybackPage() {
                   setReloadNonce((current) => current + 1);
                 }, 4000);
               } else {
+                // AÍ SIM é anormal (>160s de espera): vira erro de verdade.
+                setPreparandoCompat(null);
                 setVideoError('A preparação da versão compatível está demorando além do normal. Tente novamente mais tarde.');
               }
               return;
@@ -3153,11 +3216,40 @@ export default function PlaybackPage() {
               </div>
             )}
 
-            {buffering && playerActive && !videoError && !loadingPlayback && !loadingRecordings && (
+            {buffering && playerActive && !videoError && !preparandoCompat && !loadingPlayback && !loadingRecordings && (
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
                 <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/55 px-3 py-2 text-xs text-white/80">
                   <LoaderCircle className="h-4 w-4 animate-spin" />
                   Carregando vídeo…
+                </div>
+              </div>
+            )}
+
+            {/* ESPERA de conversão ≠ ERRO: aviso calmo, no mesmo tom do
+                "Carregando vídeo…". E o atalho que respeita o operador: quem
+                sabe que a máquina toca H.265 pula a fila — se tocar, o sistema
+                aprende e nunca mais pede conversão neste navegador. */}
+            {preparandoCompat && !videoError && !loadingPlayback && !loadingRecordings && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/35">
+                <div className="flex max-w-sm flex-col items-center gap-2.5 rounded-lg border border-white/10 bg-black/60 px-4 py-3 text-center text-xs text-white/85">
+                  <div className="flex items-center gap-2">
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    Convertendo o vídeo para este navegador…
+                  </div>
+                  <div className="text-[11px] text-white/55">
+                    Acontece uma única vez por gravação. O vídeo começa sozinho assim que ficar pronto.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreparandoCompat(null);
+                      setCompatMode(false);
+                      setForcarHevcDireto(true);
+                    }}
+                    className="rounded border border-white/25 px-2.5 py-1 text-[11px] text-white/85 hover:bg-white/10"
+                  >
+                    Reproduzir o original (H.265) agora
+                  </button>
                 </div>
               </div>
             )}
