@@ -24,6 +24,23 @@ export class DetectionZoneDto {
   kind!: 'include' | 'exclude' | 'line';
 
   /**
+   * Quanto a região precisa "se mexer" para valer um alarme.
+   *
+   * Ausente = média, que é o comportamento de sempre — nenhuma zona já salva
+   * muda de significado. Existe para resolver o dilema da árvore: com máscara
+   * liga/desliga só havia gravar folha ao vento o dia inteiro ou criar um
+   * ponto CEGO (e perder quem passasse atrás dela). Em `baixa`, a região passa
+   * a exigir um objeto maior: folha para de disparar, pessoa continua sendo
+   * vista. Ideia da grade de sensibilidade do Bluecherry, adaptada para viajar
+   * na própria zona. Medido: árvore balançando ia de 90 disparos em 90 quadros
+   * para 0, sem perder a pessoa.
+   */
+  @IsOptional()
+  @IsString()
+  @IsIn(['alta', 'media', 'baixa'])
+  sensitivity?: 'alta' | 'media' | 'baixa';
+
+  /**
    * Vértices [x, y] normalizados (0..1).
    *
    * Polígono: mínimo 3 (triângulo). LINHA: exatamente 2 — por isso o mínimo

@@ -91,6 +91,14 @@ MOTION_PROFILE = {
     # próprio ruído (delta 5 sobre sigma 6), que nenhum detector distingue de
     # ruído — era justamente ele que gerava os 90 falsos.
     "motion_blur_ksize": _env_int("MOTION_BLUR_KSIZE", 3),
+    # PISO DE RUÍDO ADAPTATIVO (ideia do Shinobi): mediana das últimas N medidas
+    # de movimento vira o chão do limiar. Em dia de vento/chuva o detector sobe
+    # a própria régua sozinho e desce quando passa — sem ninguém reconfigurar.
+    # Mediana (não média) porque uma pessoa atravessando não pode elevar o piso
+    # e deixar o detector surdo logo em seguida.
+    "motion_noise_floor": str(os.getenv("MOTION_NOISE_FLOOR", "true")).strip().lower() != "false",
+    "motion_noise_window": _env_int("MOTION_NOISE_WINDOW", 60),   # ~30 s a 2 fps
+    "motion_noise_floor_factor": _env_float("MOTION_NOISE_FLOOR_FACTOR", 1.6),
     # Congela o aprendizado do fundo nos primeiros N frames de movimento (padrão
     # Frigate): quem entra e FICA continua sendo detectado; mudança persistente
     # (carro estacionado) é absorvida gradualmente depois.

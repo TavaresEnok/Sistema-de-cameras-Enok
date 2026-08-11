@@ -1,9 +1,26 @@
+from collections import deque
+
 import cv2
 import numpy as np
 
 from .base import Detection, Detector
 from .motion_contrast import stretch_lut, uint8_percentile
 from runtime_profiles import MOTION_PROFILE
+
+
+# ── NÍVEIS DE SENSIBILIDADE POR ZONA ────────────────────────────────────────
+# Grade de sensibilidade do Bluecherry (`thresholds[768]`, 32x24, mapa
+# {255,48,26,12,7,3}), adaptada: o nível viaja na PRÓPRIA zona em vez de numa
+# segunda geometria, então reaproveita a tela de perímetro que já existe.
+#
+# O fator multiplica a ÁREA MÍNIMA exigida do objeto naquela região. Com
+# máscara binária o operador só tinha "vigia" ou "ignora": uma árvore que
+# balança obrigava a escolher entre gravar folha o dia inteiro ou abrir um
+# ponto CEGO (e perder quem passasse atrás dela). Com nível, a árvore apenas
+# exige um objeto maior.
+_FATOR_POR_NIVEL = (0.5, 1.0, 3.0)          # alta, media, baixa
+_NIVEL_POR_NOME = {"alta": 0, "media": 1, "média": 1, "baixa": 2}
+_NIVEL_PADRAO = 1                            # media = comportamento de sempre
 
 
 class MotionDetector(Detector):
@@ -35,6 +52,8 @@ class MotionDetector(Detector):
 
     event_type = "MOTION_DETECTED"
 
+
+
     # varThreshold do MOG2 é comparado com a soma dos desvios de TODOS os canais.
     # Em 3 canais (BGR) a distância acumula 3 vezes; no plano Y (1 canal) ela cai,
     # e manter 40 tornaria o caminho novo MENOS sensível — objeto real deixaria de
@@ -52,6 +71,7 @@ class MotionDetector(Detector):
         # Máscara de zonas (0/255) na resolução de ANÁLISE. None = câmera inteira.
         self._zones = zones or []
         self._zone_mask = self._build_zone_mask(self._zones)
+        self._zone_factor_map = self._build_zone_factor_map(self._zones)
         frame_area = float(self.frame_width * self.frame_height)
         # Limiar por OBJETO (componente conectado), proporcional à área analisada.
         self.min_component_pixels = max(
@@ -97,6 +117,63 @@ class MotionDetector(Detector):
         # Teto de caixas devolvidas por frame (a lista não pode explodir numa
         # cena agitada: cada caixa vira um recorte na confirmação semântica).
         self._max_boxes = max(1, int(MOTION_PROFILE.get("motion_max_boxes", 4)))
+        # Piso de ruído adaptativo (ver o bloco em `infer`). A janela é medida em
+        # QUADROS analisados: a 2 fps, 60 quadros ≈ 30 s de história — tempo
+        # suficiente para "o vento está soprando" virar tendência, e curto o
+        # bastante para o piso descer quando ele passa.
+        self._noise_floor_enabled = bool(MOTION_PROFILE.get("motion_noise_floor", True))
+        self._noise_window = deque(maxlen=max(10, int(MOTION_PROFILE.get("motion_noise_window", 60))))
+        self._noise_floor_factor = float(MOTION_PROFILE.get("motion_noise_floor_factor", 1.6))
+
+    def _build_zone_factor_map(self, zones: list | None):
+        """Mapa de NÍVEL DE SENSIBILIDADE por pixel (0..len(_FATOR_POR_NIVEL)-1).
+
+        Ideia portada do Bluecherry, que mantém uma grade 32×24 com um limiar
+        por célula em vez de uma máscara liga/desliga. Adaptamos ao que já
+        existe aqui: o nível viaja na PRÓPRIA zona (`sensitivity`), então não é
+        preciso inventar uma segunda geometria nem uma tela nova para pintá-la.
+
+        Por que importa: com máscara binária o operador só tem "vigia" ou
+        "ignora". Uma árvore que balança obriga a escolher entre gravar folha o
+        dia inteiro ou criar um ponto CEGO — e quem passa atrás da árvore some.
+        Com nível, a árvore só exige um objeto maior para disparar: folha para
+        de gravar, pessoa continua sendo vista.
+
+        Retorna None quando toda a área está no nível padrão — assim quem não
+        usa o recurso não paga nada (nem memória, nem a busca por componente).
+        """
+        if not zones:
+            return None
+        try:
+            padrao = _NIVEL_PADRAO
+            mapa = np.full((self.frame_height, self.frame_width), padrao, dtype=np.uint8)
+            algum = False
+            for zone in zones:
+                if str(zone.get("kind", "exclude")) not in ("include", "exclude"):
+                    continue
+                nivel = _NIVEL_POR_NOME.get(str(zone.get("sensitivity", "")).strip().lower())
+                if nivel is None or nivel == padrao:
+                    continue
+                poly = self._zona_para_poligono(zone)
+                if poly is None:
+                    continue
+                cv2.fillPoly(mapa, [poly], int(nivel))
+                algum = True
+            return mapa if algum else None
+        except Exception:
+            return None  # sensibilidade malformada nunca pode cegar a câmera
+
+    def _zona_para_poligono(self, zone):
+        pts = zone.get("points") or []
+        arr = [
+            [
+                int(max(0.0, min(1.0, float(p[0]))) * (self.frame_width - 1)),
+                int(max(0.0, min(1.0, float(p[1]))) * (self.frame_height - 1)),
+            ]
+            for p in pts
+            if isinstance(p, (list, tuple)) and len(p) >= 2
+        ]
+        return np.array(arr, dtype=np.int32) if len(arr) >= 3 else None
 
     def _build_zone_mask(self, zones: list | None):
         """Converte polígonos normalizados (0..1) numa máscara binária.
@@ -144,6 +221,7 @@ class MotionDetector(Detector):
     def set_zones(self, zones: list | None) -> None:
         self._zones = zones or []
         self._zone_mask = self._build_zone_mask(self._zones)
+        self._zone_factor_map = self._build_zone_factor_map(self._zones)
 
     def _effective_global_change_pixels(self) -> int:
         if self._zone_mask is None:
@@ -276,7 +354,24 @@ class MotionDetector(Detector):
             # e exigir N frames iguais aqui é o mesmo que nunca reportar.
             return self._build_detections(frame, components, motion_pixels, scene_change=True)
 
-        if motion_pixels < self.min_component_pixels:
+        # ── PISO DE RUÍDO ADAPTATIVO (ideia do Shinobi, `filterTheNoise`) ─────
+        # O Shinobi guarda a média das últimas medidas de movimento e exige que
+        # o disparo esteja ACIMA dela. Assim, em dia de vento o limiar sobe
+        # sozinho, sem ninguém reconfigurar nada — e volta a descer quando o
+        # vento passa.
+        #
+        # Usamos MEDIANA, não média: mediana é robusta a picos. Com média, uma
+        # única pessoa atravessando a cena elevaria o piso e o detector ficaria
+        # surdo logo depois — exatamente quando ela ainda está lá. Com mediana,
+        # é preciso que MAIS DA METADE da janela esteja agitada para o piso
+        # subir, que é a definição de "a cena está agitada", não "algo passou".
+        self._noise_window.append(motion_pixels)
+        piso = 0
+        if self._noise_floor_enabled and len(self._noise_window) >= self._noise_window.maxlen:
+            piso = int(np.median(self._noise_window) * self._noise_floor_factor)
+        limiar_efetivo = max(self.min_component_pixels, piso)
+
+        if motion_pixels < limiar_efetivo:
             self._consecutive_hits = 0
             self._motion_streak = 0
             return []
@@ -308,11 +403,20 @@ class MotionDetector(Detector):
 
         O maior continua sendo o primeiro — quem só lê [0] não percebe diferença.
         """
-        num_labels, _labels, stats, _centroids = cv2.connectedComponentsWithStats(fgmask, connectivity=8)
+        num_labels, _labels, stats, centroides = cv2.connectedComponentsWithStats(fgmask, connectivity=8)
         found = []
         for label in range(1, num_labels):  # 0 = fundo
             area = int(stats[label, cv2.CC_STAT_AREA])
-            if area < self.min_component_pixels:
+            # Limiar LOCAL: cada zona pode exigir mais (ou menos) área que o
+            # padrão. É a resposta ao "ou vigia a árvore, ou apaga a árvore":
+            # baixando a sensibilidade dela, folha ao vento para de gravar mas
+            # pessoa passando ali continua disparando. Ver _build_zone_mask.
+            exigido = self.min_component_pixels
+            if self._zone_factor_map is not None:
+                cx = min(self.frame_width - 1, max(0, int(centroides[label][0])))
+                cy = min(self.frame_height - 1, max(0, int(centroides[label][1])))
+                exigido = int(round(exigido * _FATOR_POR_NIVEL[int(self._zone_factor_map[cy, cx])]))
+            if area < exigido:
                 continue
             found.append(
                 (

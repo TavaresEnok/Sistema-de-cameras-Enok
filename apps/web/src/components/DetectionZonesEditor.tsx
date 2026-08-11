@@ -12,6 +12,13 @@ export type DetectionZone = {
   points: number[][];
   /** Só em `line`: sentido PROIBIDO da travessia. */
   sentido?: 'ambos' | 'ab' | 'ba';
+  /**
+   * Quanto a região precisa "se mexer" para valer um alarme. Ausente = média
+   * (o comportamento de sempre). Existe para resolver o dilema da árvore: com
+   * liga/desliga só havia gravar folha o dia inteiro ou criar um ponto CEGO —
+   * em `baixa`, a folha para de disparar e a pessoa continua sendo vista.
+   */
+  sensitivity?: 'alta' | 'media' | 'baixa';
   color?: string;
 };
 
@@ -401,9 +408,30 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
                   <option value="ba">Só do fim para o início ←</option>
                 </select>
               ) : (
-                <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                  {zone.kind === 'exclude' ? 'ignorada' : 'monitorada'} · {zone.points.length} pontos
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                    {zone.kind === 'exclude' ? 'ignorada' : 'monitorada'} · {zone.points.length} pontos
+                  </span>
+                  {/* Sensibilidade da região. Resolve o dilema da árvore: em
+                      "baixa", folha ao vento para de gravar mas quem passa ali
+                      continua sendo visto — antes só havia vigiar ou cegar. */}
+                  <select
+                    value={zone.sensitivity ?? 'media'}
+                    onChange={(e) => {
+                      const valor = e.target.value as 'alta' | 'media' | 'baixa';
+                      setZones((current) =>
+                        current.map((z) => (z.id === zone.id ? { ...z, sensitivity: valor } : z)),
+                      );
+                      setDirty(true);
+                    }}
+                    title="Quanto a região precisa se mexer para valer um alarme"
+                    className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px]"
+                  >
+                    <option value="alta">Sensibilidade alta</option>
+                    <option value="media">Sensibilidade média</option>
+                    <option value="baixa">Sensibilidade baixa</option>
+                  </select>
+                </div>
               )}
               <button
                 type="button"
