@@ -81,6 +81,16 @@ MOTION_PROFILE = {
     "motion_warmup_frames": _env_int("MOTION_WARMUP_FRAMES", 30),
     # Normalização de contraste pré-diff (padrão Frigate) — essencial à noite.
     "motion_improve_contrast": str(os.getenv("MOTION_IMPROVE_CONTRAST", "true")).strip().lower() != "false",
+    # Suavização ANTES do MOG2 (janela ímpar; 0 desliga). O Frigate faz o
+    # equivalente com gaussian_filter sigma=1; nós não fazíamos, e o MOG2 —
+    # que modela cada pixel isolado — comia ruído de sensor como movimento.
+    # Medido em tests/bench_motion_ruido.py, cena PARADA com ruído sigma 10
+    # (câmera à noite/ganho alto): 90 de 120 quadros disparavam gravação por
+    # ruído puro; com 3x3 caem para ZERO, e pessoa perto/média/longe e de baixo
+    # contraste continuam sendo detectadas. Só se perde alvo mais fraco que o
+    # próprio ruído (delta 5 sobre sigma 6), que nenhum detector distingue de
+    # ruído — era justamente ele que gerava os 90 falsos.
+    "motion_blur_ksize": _env_int("MOTION_BLUR_KSIZE", 3),
     # Congela o aprendizado do fundo nos primeiros N frames de movimento (padrão
     # Frigate): quem entra e FICA continua sendo detectado; mudança persistente
     # (carro estacionado) é absorvida gradualmente depois.

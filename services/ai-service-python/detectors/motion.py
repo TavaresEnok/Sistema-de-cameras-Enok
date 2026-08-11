@@ -74,6 +74,11 @@ class MotionDetector(Detector):
         # percentis 4–96, suavizado por média móvel — crucial à noite/baixa luz,
         # quando a imagem "achata" e o diff perde amplitude.
         self._improve_contrast = bool(MOTION_PROFILE.get("motion_improve_contrast", True))
+        # Janela da suavização anterior ao MOG2 (ímpar; 0 desliga). Ver o bloco
+        # grande em `infer` para o porquê e os números medidos.
+        self._blur_ksize = int(MOTION_PROFILE.get("motion_blur_ksize", 3))
+        if self._blur_ksize and self._blur_ksize % 2 == 0:
+            self._blur_ksize += 1  # GaussianBlur exige janela ímpar
         self._contrast_history = np.zeros((50, 2), dtype=np.float32)
         self._contrast_history[:, 1] = 255.0
         self._contrast_index = 0
@@ -202,6 +207,23 @@ class MotionDetector(Detector):
                 avg_lo, avg_hi = self._contrast_history.mean(axis=0)
                 if avg_hi > avg_lo + 1:
                     small_frame = stretch_lut(small_frame, float(avg_lo), float(avg_hi))
+
+        # SUAVIZAÇÃO ANTES DO MODELO (lacuna encontrada ao comparar com o
+        # Frigate, que aplica gaussian_filter sigma=1 no mesmo ponto).
+        #
+        # O MOG2 modela CADA PIXEL isoladamente, então ruído de sensor entra
+        # direto como "primeiro plano": pixels espalhados que a morfologia
+        # depois tenta limpar — tarde demais, porque já contaminaram a contagem
+        # e o modelo de fundo. Suavizar ANTES faz o ruído de pixel único ser
+        # absorvido pelos vizinhos, enquanto um objeto real (dezenas de pixels
+        # coesos) sobrevive praticamente intacto.
+        #
+        # Medido no banco tests/bench_motion_ruido.py (cena PARADA com ruído de
+        # sensor, 120 quadros; e objeto de baixo contraste atravessando):
+        #   sigma 10 (câmera à noite/ganho alto): 90 falsos → 0, objeto real OK.
+        # Ou seja: 75% dos quadros disparavam gravação por ruído puro.
+        if self._blur_ksize >= 3:
+            small_frame = cv2.GaussianBlur(small_frame, (self._blur_ksize, self._blur_ksize), 0)
 
         warmup_total = getattr(self, "_warmup_total_current", self._warmup_total)
         if self._warmup_frames < warmup_total:
