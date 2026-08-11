@@ -56,3 +56,16 @@ export function validarZonasDeDeteccao(zonas: unknown): void {
     }
   }
 }
+
+/**
+ * A lista contém zona de ÁREA (include/exclude)?
+ *
+ * Importa porque área exige o NOSSO detector: o gatilho nativo da câmera
+ * (`motionTrigger='CAMERA'`, evento ONVIF) dispara para movimento em qualquer
+ * ponto da cena e não carrega coordenadas — é incapaz de respeitar a máscara.
+ * Linha de perímetro tem tratamento próprio (tripwire via modo objeto).
+ */
+export function temZonaDeArea(zonas: unknown): boolean {
+  return Array.isArray(zonas)
+    && zonas.some((z) => z?.kind === 'include' || z?.kind === 'exclude');
+}

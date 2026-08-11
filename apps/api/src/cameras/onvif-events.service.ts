@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { temZonaDeArea } from './helpers/validar-zonas.helper';
 import { ModuleRef } from '@nestjs/core';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
@@ -307,16 +308,33 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`Falha na descoberta de porta ONVIF: ${error.message}`));
 
       const cameras = await this.prisma.camera.findMany({
-        select: { id: true, name: true, ip: true, onvifPort: true, username: true, passwordEncrypted: true, motionTrigger: true, recordingMode: true, enabled: true },
+        select: { id: true, name: true, ip: true, onvifPort: true, username: true, passwordEncrypted: true, motionTrigger: true, recordingMode: true, enabled: true, detectionZones: true },
       });
       for (const cam of cameras) {
         if (cam.enabled === false) continue;
         const supports = await this.probeMotionSupport(cam);
         if (supports === null) continue; // indeterminado → não mexe
-        const target = supports ? 'CAMERA' : 'SYSTEM';
+        // Zona de ÁREA desenhada prende a câmera em SYSTEM: o evento nativo
+        // dispara para movimento em qualquer ponto da cena (sem coordenadas) e
+        // não respeita a máscara. Sem esta trava, a sonda "promovia" a câmera
+        // de volta a CAMERA no ciclo seguinte e desfazia, em silêncio, a
+        // migração feita ao salvar a zona — o perímetro do operador virava
+        // enfeite minutos depois de configurado.
+        const target = supports && !temZonaDeArea(cam.detectionZones) ? 'CAMERA' : 'SYSTEM';
         if (cam.motionTrigger === target) continue;
 
-        await this.prisma.camera.update({ where: { id: cam.id }, data: { motionTrigger: target } });
+        await this.prisma.camera.update({
+          where: { id: cam.id },
+          data: {
+            motionTrigger: target,
+            // SYSTEM por causa de zona também precisa ARMAR a análise: com
+            // aiEnabled=false o startCamera devolve 'camera_disabled' e o
+            // startLocalDetector logo abaixo falha em silêncio — o flip ficava
+            // completo no banco e MORTO na prática (visto em produção: as 3
+            // câmeras com zona flipparam e nenhuma armou o detector).
+            ...(target === 'SYSTEM' && temZonaDeArea(cam.detectionZones) ? { aiEnabled: true } : {}),
+          },
+        });
         this.logger.log(`Auto-detecção de movimento: ${cam.name} → ${target} (ONVIF ${supports ? 'com' : 'sem'} movimento).`);
 
         const armed = cam.recordingMode === 'motion';

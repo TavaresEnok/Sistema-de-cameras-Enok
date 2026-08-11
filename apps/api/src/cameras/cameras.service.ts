@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ModuleRef } from '@nestjs/core';
-import { validarZonasDeDeteccao } from './helpers/validar-zonas.helper';
+import { temZonaDeArea, validarZonasDeDeteccao } from './helpers/validar-zonas.helper';
 import { CameraStatus, CameraPermissionLevel } from '@prisma/client';
 import { type AuthUser } from '../common/types/auth-user.type';
 import { createHash, randomBytes } from 'crypto';
@@ -416,6 +416,21 @@ export class CamerasService {
     // O DTO valida a lista com uma regra só; a exigência por TIPO (linha tem
     // 2 pontos, área tem 3+) precisa do `kind`, que só é conhecido aqui.
     validarZonasDeDeteccao(dto.detectionZones);
+    // ── ZONA DE ÁREA ⇒ GATILHO PRECISA SER O NOSSO DETECTOR ─────────────────
+    // Bug real (11/08/2026): o dono desenhou "Monitorar só aqui" na Cam-09 e
+    // continuou recebendo gravação de movimento FORA do perímetro. A zona
+    // estava salva certa e o MOG2 respeita a máscara — mas o gatilho da câmera
+    // era `motionTrigger='CAMERA'` (evento ONVIF do fabricante), que dispara
+    // para movimento em QUALQUER lugar da cena: ele não sabe que as zonas do
+    // DRAC existem, e é fisicamente incapaz de respeitá-las (o evento não traz
+    // coordenadas para filtrar). O mesmo pulo de detecção nativa que economiza
+    // CPU já tinha sido consertado para a LINHA (`rodaObjeto`); faltou a área.
+    // Desenhar uma zona é uma ordem inequívoca — o gatilho migra para o
+    // detector com máscara e a IA da câmera é armada para ele rodar.
+    const migrarGatilhoParaZonas =
+      temZonaDeArea(dto.detectionZones)
+      && (dto.recordingMode ?? existing.recordingMode) === 'motion'
+      && (existing as any).motionTrigger === 'CAMERA';
     const normalizedProfile = this.normalizeProfileToDetected(dto, existing);
     const camera = await this.prisma.camera.update({
       where: { id },
@@ -481,7 +496,11 @@ export class CamerasService {
           motionTrigger: dto.motionTrigger ?? existing.motionTrigger,
           aiEnabled: dto.aiEnabled,
         }),
-        motionTrigger: dto.motionTrigger ?? existing.motionTrigger,
+        motionTrigger: migrarGatilhoParaZonas ? 'SYSTEM' : (dto.motionTrigger ?? existing.motionTrigger),
+        // A migração de gatilho (comentário acima) também ARMA a análise: sem
+        // aiEnabled o startCamera devolve 'camera_disabled' e o detector com
+        // máscara nunca sobe — a zona ficaria salva e morta.
+        ...(migrarGatilhoParaZonas ? { aiEnabled: true } : {}),
         // Zonas: `undefined` preserva o que existe; array vazio LIMPA (volta a
         // monitorar a câmera inteira) — por isso a checagem explícita.
         ...(dto.detectionZones !== undefined ? { detectionZones: dto.detectionZones as any } : {}),

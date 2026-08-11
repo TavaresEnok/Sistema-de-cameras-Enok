@@ -56,7 +56,16 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [zones, setZones] = useState<DetectionZone[]>(initialZones ?? []);
   const [drawing, setDrawing] = useState<number[][] | null>(null);
-  const [drawKind, setDrawKind] = useState<'include' | 'exclude' | 'line'>('exclude');
+  // A ferramenta abre no MODO DAS ZONAS JÁ SALVAS. Antes ela nascia sempre em
+  // 'exclude': quem salvava "Monitorar só aqui", saía e voltava, via "Ignorar
+  // área" aceso e concluía — com razão — que o modo salvo tinha virado o
+  // oposto (a zona no banco estava certa; o susto era só da ferramenta).
+  const ferramentaInicial = (zs: DetectionZone[] | null | undefined): 'include' | 'exclude' | 'line' => {
+    if (zs?.some((z) => z.kind === 'include')) return 'include';
+    if (zs?.length && zs.every((z) => z.kind === 'line')) return 'line';
+    return 'exclude';
+  };
+  const [drawKind, setDrawKind] = useState<'include' | 'exclude' | 'line'>(() => ferramentaInicial(initialZones));
   const [saving, setSaving] = useState(false);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -65,6 +74,10 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
     setZones(initialZones ?? []);
     baseRef.current = initialZones ?? [];
     setDirty(false);
+    // Troca de câmera = editor renasce: a ferramenta acompanha o modo salvo
+    // da câmera nova (mesma razão do estado inicial acima).
+    setDrawKind(ferramentaInicial(initialZones));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialZones, cameraId]);
 
   // Snapshot da câmera como pano de fundo (mesmo poster usado no live).
@@ -150,10 +163,17 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
       // O que acabou de ser gravado passa a ser a base do desfazer.
       baseRef.current = zones;
       onSaved?.(zones);
+      const temArea = zones.some((z) => z.kind === 'include' || z.kind === 'exclude');
       toast({
         title: 'Zonas salvas',
         description: zones.length
-          ? `${zones.length} zona(s) ativas. A detecção já está usando as novas áreas.`
+          ? temArea
+            // Verdade importante: zona de área migra o gatilho de gravação da
+            // detecção da CÂMERA (que não conhece zonas) para o detector do
+            // DRAC, que respeita a máscara. Sem contar isso, o operador não
+            // entende por que o comportamento da gravação mudou.
+            ? `${zones.length} zona(s) ativas. A gravação por movimento passa a disparar pelo detector do DRAC, que respeita as áreas desenhadas.`
+            : `${zones.length} zona(s) ativas. A detecção já está usando as novas áreas.`
           : 'Sem zonas: a câmera inteira volta a ser monitorada.',
       });
     } catch (error) {
