@@ -69,7 +69,18 @@ if [ "$FORCAR_CPU" = "1" ]; then
   MODO="CPU (forçado por --sem-gpu)"
 elif gpu_utilizavel; then
   ARQUIVOS+=(-f docker-compose.gpu.yml)
-  MODO="GPU ($(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1))"
+  MODO="GPU transcode ($(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1))"
+  # IA acelerada: só entra se a imagem CUDA JÁ existir. Incluir o overlay sem a
+  # imagem pronta faria o compose tentar CONSTRUÍ-LA (8,7 GB) no meio de um
+  # boot — inaceitável num servidor de gravação voltando do chão. Quem quiser a
+  # primeira construção roda explicitamente:
+  #   docker compose -f docker-compose.yml -f docker-compose.gpu-ai.yml build ai-service
+  if docker image inspect drac-ai-service-gpu:local >/dev/null 2>&1; then
+    ARQUIVOS+=(-f docker-compose.gpu-ai.yml)
+    MODO="$MODO + IA CUDA"
+  else
+    MODO="$MODO + IA em CPU (imagem drac-ai-service-gpu:local ausente)"
+  fi
 fi
 
 echo "── DRAC: subindo em modo $MODO"

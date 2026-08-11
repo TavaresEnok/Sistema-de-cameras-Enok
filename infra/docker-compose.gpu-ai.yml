@@ -18,8 +18,17 @@ services:
       dockerfile: Dockerfile.gpu
     image: drac-ai-service-gpu:local
     # Sem reserva RÍGIDA de device (ver comentário no docker-compose.gpu.yml): a
-    # GPU vem pelo runtime nvidia default + NVIDIA_VISIBLE_DEVICES. Sem placa, o
-    # container sobe e o ObjectDetector cai para CPU (`_gpu_realmente_presente`).
+    # GPU vem pelo RUNTIME nvidia + NVIDIA_VISIBLE_DEVICES, e o ObjectDetector
+    # confere o device node em runtime (`_gpu_realmente_presente`) antes de pedir
+    # CUDA — sem placa ele cai para CPU em vez de estourar (SEGFAULT do
+    # onnxruntime pedindo CUDA sem device).
+    #
+    # `runtime: nvidia` EXPLÍCITO desde o incidente de 11/08/2026: o
+    # `default-runtime: nvidia` saiu do daemon (fazia TODO container morrer
+    # quando a placa sumia). Sem esta linha o container sobe, mas SEM enxergar a
+    # GPU — e a IA cai em CPU de forma silenciosa. Foi o que aconteceu logo após
+    # restaurar o serviço: providers viraram ['Azure','CPU'], sem CUDA.
+    runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
