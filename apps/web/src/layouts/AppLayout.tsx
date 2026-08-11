@@ -7,6 +7,7 @@ import { StatusStrip } from '../components/StatusStrip';
 import { CommandPalette } from '../components/CommandPalette';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Kbd } from '@/components/ui/kbd';
+import { AvisoDeRede } from '../components/AvisoDeRede';
 import { useThemeStore } from '../store/themeStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { useAuthStore } from '../store/authStore';
@@ -134,6 +135,11 @@ export function AppLayout({ children }: AppLayoutProps) {
             </button>
           </div>
         </header>
+
+        {/* Vem ANTES da faixa de "dados desatualizados": quando a internet do
+            operador oscila, ela é a CAUSA e a outra é só o sintoma. Ver a
+            primeira explica a segunda. */}
+        <AvisoDeRede />
 
         {stale && (
           <div

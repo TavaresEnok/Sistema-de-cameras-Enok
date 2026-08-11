@@ -6,6 +6,8 @@ import { useAuthStore } from '../store/authStore';
 import { useAiPreferencesStore } from '../store/aiPreferencesStore';
 import { streamUrlsCache } from '../lib/stream-urls-cache';
 import { liveDetectionsPoller } from '../lib/live-detections-poller';
+import { useRedeStore } from '../store/redeStore';
+import { classificarFalhaDePlayer } from '../lib/qualidade-de-rede';
 
 type LiveStreamPlayerProps = {
   cameraId: string;
@@ -419,6 +421,8 @@ export function LiveStreamPlayer({
   const [activeProtocol, setActiveProtocol] = useState<ActiveLiveProtocol | null>(null);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
   const [hasLiveFrame, setHasLiveFrame] = useState(false);
+  const relatarPlayer = useRedeStore((s) => s.relatarPlayer);
+  const esquecerPlayer = useRedeStore((s) => s.esquecerPlayer);
   const [detections, setDetections] = useState<LiveDetection[]>([]);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [protocolReason, setProtocolReason] = useState<string | null>(null);
@@ -659,6 +663,19 @@ export function LiveStreamPlayer({
       reason: error ?? protocolReason ?? retryMessage,
     });
   }, [activeProtocol, error, isLoading, onStatusChange, protocolReason, retryMessage]);
+
+  // ── RELATO PARA O DIAGNÓSTICO DE REDE ─────────────────────────────────────
+  // O aviso "sua conexão está instável" depende de distinguir DOIS fracassos
+  // que na tela parecem iguais (quadro preto):
+  //   • a sessão nem abriu  → o servidor recusou/não respondeu → problema DELE;
+  //   • a sessão abriu e a imagem não vem → caminho do vídeo → última milha.
+  // Sem esta distinção, o aviso viraria chute — e chutar "é a sua internet"
+  // durante uma falha nossa é pior que não avisar. Ver lib/qualidade-de-rede.ts.
+  useEffect(() => {
+    const chave = `${cameraId}:${liveViewMode}`;
+    relatarPlayer(chave, classificarFalhaDePlayer(error, hasLiveFrame, isLoading));
+    return () => esquecerPlayer(chave);
+  }, [cameraId, liveViewMode, error, hasLiveFrame, isLoading, relatarPlayer, esquecerPlayer]);
 
   const requestFreshLiveBoot = useCallback((
     message = 'Atualizando transmissão ao vivo...',
