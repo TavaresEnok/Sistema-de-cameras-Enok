@@ -109,7 +109,6 @@ export default function AiPage() {
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       <div className="page-hdr">
         <div>
-          <h1 className="page-title">Inteligência artificial</h1>
           <p className="page-sub">
             {objetoLiberado
               ? `Detecção de objeto liberada para ${classes.length} tipo(s) · ${rodando} de ${escopo.length} câmera(s) usando.`

@@ -211,7 +211,6 @@ export default function PerformancePage() {
       {/* ── Header ── */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight">Desempenho</h1>
           <p className="text-xs text-muted-foreground mt-0.5">
             Carga do servidor, saúde de streams e processadores de IA em tempo real.
           </p>

@@ -206,7 +206,6 @@ export default function ProfilePage() {
     <div className="flex flex-col h-full overflow-y-auto">
       <div className="page-hdr flex items-center justify-between">
         <div>
-          <h1 className="page-title">Minha conta</h1>
           <p className="page-sub">Seus dados, grupos e acessos</p>
         </div>
         <div className="flex items-center gap-2">

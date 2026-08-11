@@ -160,7 +160,6 @@ export default function ReviewPage() {
     <div className="flex h-full min-h-0 flex-col">
       <div className="page-hdr">
         <div>
-          <h1 className="page-title">Revisão</h1>
           <p className="page-sub">
             Eventos detectados com prévia — revise sem abrir o vídeo.
             {items.length > 0 ? ` ${items.length} carregado(s)${temMais ? '+' : ''}.` : ''}

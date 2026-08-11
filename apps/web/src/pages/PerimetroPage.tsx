@@ -109,7 +109,6 @@ export default function PerimetroPage() {
       {/* Cabeçalho */}
       <div className="page-hdr">
         <div>
-          <h1 className="page-title">Perímetro de segurança</h1>
           <p className="page-sub">
             Desenhe a linha de travessia e as zonas sobre a imagem da câmera ·{' '}
             {totalComPerimetro} de {lista.length} configurada(s)

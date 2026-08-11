@@ -146,7 +146,6 @@ export default function EventosPage() {
         <div className="flex min-h-0 flex-col rounded-lg border border-border bg-card overflow-hidden">
           <div className="px-4 pt-4 pb-3 border-b border-border space-y-3">
             <div className="space-y-1">
-              <h2 className="text-[14px] font-semibold tracking-tight">Eventos</h2>
               <p className="text-[11px] text-[hsl(var(--muted-foreground))]">Ocorrências recentes das câmeras.</p>
             </div>
 

@@ -41,7 +41,6 @@ export default function AuditLogsPage() {
               <ClipboardList className="h-4 w-4" />
             </span>
             <div>
-              <h1 className="text-lg font-semibold tracking-tight">Auditoria</h1>
               <p className="mt-0.5 text-xs text-muted-foreground">Ações administrativas e operacionais registradas pelo backend.</p>
             </div>
           </div>
