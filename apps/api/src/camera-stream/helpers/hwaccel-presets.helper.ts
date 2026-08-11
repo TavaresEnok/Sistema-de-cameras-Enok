@@ -547,6 +547,25 @@ export function resolveHwaccel(mode: HwaccelMode, report: HwaccelProbeReport): H
 
 // ── Montagem do transcode offline (playback compatível) ──────────────────────
 
+/**
+ * O container é DECLARADO, nunca adivinhado pela extensão do arquivo.
+ *
+ * Bug de produção (11/08/2026): o transcode escreve num arquivo temporário
+ * `<destino>.mp4.<pid>.<ts>.tmp` (para o rename final ser atômico). O FFmpeg
+ * deduz o formato de saída pela ÚLTIMA extensão — viu `.tmp`, não conheceu, e
+ * abortou antes de converter o primeiro quadro:
+ *
+ *   Unable to choose an output format for '...tmp'; use a standard extension
+ *   for the filename or specify the format manually.
+ *
+ * Como o preparo falhava na largada, o /playback ficava eternamente em "a
+ * versão compatível está sendo preparada", piscando a cada nova tentativa —
+ * nenhuma gravação H.265 abria no navegador. Declarar `-f mp4` conserta todos
+ * os chamadores de uma vez (playback, clipe e exportação por período) e torna
+ * o pipeline imune ao nome que o arquivo temporário venha a ter.
+ */
+const FORMATO_SAIDA = ['-f', 'mp4'];
+
 /** Argumentos do caminho CPU — CONGELADOS: é o que roda em produção hoje. */
 export function buildCpuTranscodeArgs(input: string, output: string): string[] {
   return [
@@ -577,6 +596,7 @@ export function buildCpuTranscodeArgs(input: string, output: string): string[] {
     '2',
     '-movflags',
     '+faststart',
+    ...FORMATO_SAIDA,
     output,
   ];
 }
@@ -618,6 +638,7 @@ export function buildCompatibleTranscodeArgs(options: {
     '2',
     '-movflags',
     '+faststart',
+    ...FORMATO_SAIDA,
     output,
   ];
 }

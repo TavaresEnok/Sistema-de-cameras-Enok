@@ -174,6 +174,14 @@ test('scale: argumentos exatos dos presets acelerados (sem hwdownload)', () => {
 
 // ── Transcode do playback compatível ────────────────────────────────────────
 
+// ATENÇÃO ao `-f mp4` nas duas listas abaixo: ele foi acrescentado em
+// 11/08/2026 porque a saída real é um temporário terminado em `.tmp`, e sem o
+// formato declarado o FFmpeg abortava antes do primeiro quadro ("Unable to
+// choose an output format"). O playback de gravações H.265 ficava preso em
+// "preparando", piscando. Curiosidade que vale registrar: estes testes JÁ
+// usavam `/out.mp4.tmp` como saída — congelaram o comando quebrado e trataram
+// o defeito como especificação. Lista congelada só protege contra regressão se
+// o que ela congela estiver certo.
 test('transcode CPU: os argumentos são exatamente os que produção já rodava', () => {
   assert.deepEqual(buildCpuTranscodeArgs('/in.mkv', '/out.mp4.tmp'), [
     '-y', '-i', '/in.mkv',
@@ -181,7 +189,7 @@ test('transcode CPU: os argumentos são exatamente os que produção já rodava'
     '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18',
     '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-ar', '44100', '-ac', '2',
-    '-movflags', '+faststart', '/out.mp4.tmp',
+    '-movflags', '+faststart', '-f', 'mp4', '/out.mp4.tmp',
   ]);
   assert.deepEqual(
     buildCompatibleTranscodeArgs({ input: '/in.mkv', output: '/out.mp4.tmp', preset: null }),
@@ -204,7 +212,7 @@ test('transcode acelerado: decode e encode na GPU, sem filtro e sem -pix_fmt', (
     '-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '21',
     '-profile:v', 'high', '-level', '4.1',
     '-c:a', 'aac', '-ar', '44100', '-ac', '2',
-    '-movflags', '+faststart', '/out.mp4.tmp',
+    '-movflags', '+faststart', '-f', 'mp4', '/out.mp4.tmp',
   ]);
   // -pix_fmt yuv420p forçaria o download do frame para a RAM: é o hwdownload
   // pela porta dos fundos.

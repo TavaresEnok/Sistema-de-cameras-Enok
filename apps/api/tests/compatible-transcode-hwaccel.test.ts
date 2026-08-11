@@ -7,6 +7,7 @@ import { RecordingsService } from '../src/recordings/recordings.service';
 import {
   __resetHwaccelDetectionCache,
   buildCpuTranscodeArgs,
+  buildCompatibleTranscodeArgs,
   type HwaccelDecision,
 } from '../src/camera-stream/helpers/hwaccel-presets.helper';
 
@@ -217,5 +218,42 @@ test('cache: um arquivo compatível já pronto não dispara ffmpeg nenhum', asyn
     assert.equal(h.attempts.length, 0);
   } finally {
     h.restore();
+  }
+});
+
+// ── O CONTAINER DE SAÍDA É DECLARADO, NUNCA ADIVINHADO ──────────────────────
+// Bug de produção (11/08/2026): o transcode escreve num temporário terminado em
+// `.tmp` (para o rename final ser atômico). O FFmpeg deduz o formato pela
+// última extensão, não conheceu `.tmp` e abortou ANTES do primeiro quadro:
+//   "Unable to choose an output format for '...tmp'"
+// O /playback ficava eternamente em "a versão compatível está sendo preparada",
+// piscando — nenhuma gravação H.265 abria no navegador.
+
+test('transcode em CPU declara -f mp4 antes da saída', () => {
+  const args = buildCpuTranscodeArgs('/in/a.mp4', '/out/b.mp4.123.456.tmp');
+  const iF = args.lastIndexOf('-f');
+  assert.ok(iF > 0, 'precisa declarar o formato de saída');
+  assert.equal(args[iF + 1], 'mp4');
+  assert.equal(args[args.length - 1], '/out/b.mp4.123.456.tmp');
+  assert.equal(iF, args.length - 3, 'o -f mp4 tem de vir imediatamente antes da saída');
+});
+
+test('transcode acelerado também declara o formato', () => {
+  const args = buildCompatibleTranscodeArgs({
+    input: '/in/a.mp4',
+    output: '/out/b.mp4.9.9.tmp',
+    preset: 'preset-nvidia',
+    device: '0',
+  });
+  const iF = args.lastIndexOf('-f');
+  assert.equal(args[iF + 1], 'mp4');
+  assert.equal(args[args.length - 1], '/out/b.mp4.9.9.tmp');
+});
+
+test('nome temporário sem extensão conhecida não quebra mais o comando', () => {
+  // A regressão exata: destino sem extensão utilizável no fim.
+  for (const saida of ['/x/y.tmp', '/x/y.mp4.1.2.tmp', '/x/y']) {
+    const args = buildCpuTranscodeArgs('/in/a.mp4', saida);
+    assert.equal(args[args.lastIndexOf('-f') + 1], 'mp4', `falhou para ${saida}`);
   }
 });
