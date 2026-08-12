@@ -883,6 +883,10 @@ export class CamerasController {
       tipo: dto.type,
       modoDeGravacao: camera?.recordingMode,
       rotulo: (metadata as any)?.label,
+      bbox: (metadata as any)?.bbox,
+      frameWidth: (metadata as any)?.frameWidth,
+      frameHeight: (metadata as any)?.frameHeight,
+      zonas: (camera as any)?.detectionZones,
     })) {
       await this.recordingManager.handleMotionDetected(id, metadata).catch(() => undefined);
     }

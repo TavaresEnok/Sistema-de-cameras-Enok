@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { eventoDeveGravar, modoArmado, CLASSES_QUE_GRAVAM } from '../src/cameras/helpers/gatilho-de-gravacao.helper';
+import { eventoDeveGravar, modoArmado, objetoDentroDaAreaMonitorada, CLASSES_QUE_GRAVAM } from '../src/cameras/helpers/gatilho-de-gravacao.helper';
 
 // ── GRAVAR POR OBJETO ────────────────────────────────────────────────────────
 // Até 11/08/2026 o controller tinha UMA linha decidindo tudo:
@@ -145,4 +145,63 @@ test('handleMotionDetected aceita câmera em modo object', () => {
   // É o portão final: sem ele o evento de objeto chega e a gravação é recusada.
   const src = readFileSync('src/recordings/recording-process-manager.service.ts', 'utf8');
   assert.match(src, /if \(!modoArmado\(camera\.recordingMode\)\) \{\s*\n\s*return \{ status: 'ignored', reason: 'motion_recording_not_enabled'/);
+});
+
+// ── ZONA VALE PARA O OBJETO TAMBÉM ──────────────────────────────────────────
+// Provado em 11/08/2026 que a zona de MOVIMENTO funciona (20 disparos em 1h,
+// todos dentro do polígono). Mas a queixa do dono revelou o próximo buraco: um
+// carro NA RUA (fora da zona) dispararia o modo objeto do mesmo jeito — a
+// mesma reclamação voltaria, só que com objeto no lugar de movimento.
+
+const ZONA_TESTE = [{
+  kind: 'include',
+  points: [[0.3326, 0.4171], [0.3311, 0.6388], [0.4664, 0.6509], [0.4769, 0.4224], [0.3983, 0.413]],
+}];
+
+test('objeto com o pé DENTRO da zona grava', () => {
+  // pé em (~0.40, ~0.55) — dentro do polígono real da Cam-09
+  assert.equal(eventoDeveGravar({
+    tipo: 'OBJECT_DETECTED', modoDeGravacao: 'object', rotulo: 'person',
+    bbox: [230, 120, 280, 200], frameWidth: 640, frameHeight: 360, zonas: ZONA_TESTE,
+  }), true);
+});
+
+test('objeto com o pé FORA da zona NÃO grava (carro na rua)', () => {
+  // pé em (~0.86, ~0.61) — a rua, bem longe do polígono
+  assert.equal(eventoDeveGravar({
+    tipo: 'OBJECT_DETECTED', modoDeGravacao: 'object', rotulo: 'car',
+    bbox: [500, 150, 600, 220], frameWidth: 640, frameHeight: 360, zonas: ZONA_TESTE,
+  }), false, 'carro fora da zona gravando = a reclamação de volta, com outro nome');
+});
+
+test('o PÉ decide, não o centro: corpo sobre a zona mas pisando fora não grava', () => {
+  // bbox alta cujo centro cai na zona, mas a base (y2) está bem abaixo dela
+  assert.equal(eventoDeveGravar({
+    tipo: 'OBJECT_DETECTED', modoDeGravacao: 'object', rotulo: 'person',
+    bbox: [240, 100, 280, 340], frameWidth: 640, frameHeight: 360, zonas: ZONA_TESTE,
+  }), false, 'quem anda na rua ATRÁS da zona aparece sobre ela, mas o pé diz onde está');
+});
+
+test('sem zona include, a câmera inteira conta (comportamento de sempre)', () => {
+  assert.equal(eventoDeveGravar({
+    tipo: 'OBJECT_DETECTED', modoDeGravacao: 'object', rotulo: 'person',
+    bbox: [500, 150, 600, 220], frameWidth: 640, frameHeight: 360, zonas: [],
+  }), true);
+});
+
+test('sem bbox ou sem escala: GRAVA (na dúvida, guarda a imagem)', () => {
+  assert.equal(eventoDeveGravar({
+    tipo: 'OBJECT_DETECTED', modoDeGravacao: 'object', rotulo: 'person', zonas: ZONA_TESTE,
+  }), true);
+  assert.equal(eventoDeveGravar({
+    tipo: 'OBJECT_DETECTED', modoDeGravacao: 'object', rotulo: 'person',
+    bbox: [1, 2, 3, 4], zonas: ZONA_TESTE, // sem frameWidth/Height
+  }), true);
+});
+
+test('o controller passa bbox, escala e zonas ao gatilho', () => {
+  const src = readFileSync('src/cameras/cameras.controller.ts', 'utf8');
+  for (const campo of ['bbox:', 'frameWidth:', 'frameHeight:', 'zonas:']) {
+    assert.match(src, new RegExp(campo), `o controller precisa repassar ${campo}`);
+  }
 });
