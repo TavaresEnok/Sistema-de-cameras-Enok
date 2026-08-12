@@ -92,7 +92,7 @@ const NAV_SECTIONS: NavSection[] = [
  * flag `aiFeatureEnabled` do servidor — visível onde a IA foi contratada
  * (a matriz), escondida onde não foi (um cliente sem IA). Ver mais abaixo.
  */
-const PAGINAS_OCULTAS = new Set<string>(['/investigation', '/audit-logs']);
+const PAGINAS_OCULTAS = new Set<string>(['/investigation', '/audit-logs', '/review']);
 
 /* Role accent — no red for admin; steel blue hierarchy */
 const ROLE_COLOR: Record<string, string> = {
