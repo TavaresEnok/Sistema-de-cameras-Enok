@@ -887,6 +887,7 @@ export class CamerasController {
       frameWidth: (metadata as any)?.frameWidth,
       frameHeight: (metadata as any)?.frameHeight,
       zonas: (camera as any)?.detectionZones,
+      classesDaCameraEscolhidas: (camera as any)?.recordingObjectClasses,
     })) {
       await this.recordingManager.handleMotionDetected(id, metadata).catch(() => undefined);
     }

@@ -233,4 +233,18 @@ export class UpdateCameraDto {
   @ValidateNested({ each: true })
   @Type(() => DetectionZoneDto)
   detectionZones?: DetectionZoneDto[];
+
+  /**
+   * Classes que iniciam gravação no modo `object`. Vazio = conjunto padrão
+   * (pessoa + veículos), preservando quem já usava o modo.
+   *
+   * Restrita ao que o modelo realmente detecta e ao que faz sentido para um
+   * VMS: aceitar classe livre deixaria o operador digitar "ladrao" e ficar com
+   * uma câmera que nunca grava — falha silenciosa, a pior de todas.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(8)
+  @IsIn(['person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck'], { each: true })
+  recordingObjectClasses?: string[];
 }

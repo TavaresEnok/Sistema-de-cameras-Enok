@@ -508,6 +508,12 @@ export class CamerasService {
         // sonda passa a respeitar); `null` devolve o controle ao automático,
         // zerando também a data para a próxima varredura pegar a câmera.
         ...(dto.objectMode !== undefined ? { objectMode: dto.objectMode } : {}),
+        // Classes que iniciam gravação no modo objeto. `undefined` preserva;
+        // array vazio VOLTA ao conjunto padrão (pessoa + veículos) — nunca
+        // significa "não gravar nada", que seria uma câmera muda por engano.
+        ...(dto.recordingObjectClasses !== undefined
+          ? { recordingObjectClasses: dto.recordingObjectClasses }
+          : {}),
         ...(dto.ptzCapable !== undefined
           ? dto.ptzCapable === null
             ? { ptzCapable: null, ptzCapableSource: null, ptzProbedAt: null }

@@ -97,6 +97,8 @@ type CameraConfig = {
   analyticsSubtype: string;
   recordingEnabled: boolean;
   recordingMode: RecordingMode;
+  /** Classes que iniciam gravação no modo objeto. Vazio = padrão (pessoa + veículos). */
+  recordingObjectClasses: string[];
   retentionDays: string;
   retentionFollowsGroup: boolean;
   preferredRtspTransport: 'tcp' | 'udp';
@@ -206,6 +208,7 @@ const emptyConfig: CameraConfig = {
   analyticsSubtype: '',
   recordingEnabled: true,
   recordingMode: 'continuous',
+  recordingObjectClasses: [],
   retentionDays: '3',
   retentionFollowsGroup: true,
   preferredRtspTransport: 'tcp',
@@ -653,6 +656,7 @@ export default function CameraDetailPage() {
           analyticsSubtype: data.analyticsSubtype == null ? '' : String(data.analyticsSubtype),
           recordingEnabled: Boolean(data.recordingEnabled),
           recordingMode: data.recordingMode ?? (data.recordingEnabled ? 'continuous' : 'manual'),
+          recordingObjectClasses: Array.isArray((data as any).recordingObjectClasses) ? (data as any).recordingObjectClasses : [],
           retentionDays: String(data.retentionDays ?? 3),
           retentionFollowsGroup: data.retentionFollowsGroup !== false,
           preferredRtspTransport: data.preferredRtspTransport ?? 'tcp',
@@ -974,6 +978,7 @@ export default function CameraDetailPage() {
           analyticsSubtype: form.analyticsSubtype.trim() ? Number(form.analyticsSubtype) : null,
           recordingEnabled: form.recordingEnabled,
           recordingMode: form.recordingMode,
+          recordingObjectClasses: form.recordingObjectClasses,
           retentionDays: Number(form.retentionDays),
           retentionFollowsGroup: form.retentionFollowsGroup,
           preferredRtspTransport: form.preferredRtspTransport,
@@ -1916,6 +1921,52 @@ export default function CameraDetailPage() {
                           <option value="manual">Manual</option>
                         </SettingsSelect>
                       </SettingsField>
+                      {/* O QUE conta como evento nesta câmera. Só aparece no modo
+                          objeto — noutro modo seria uma pergunta sem efeito.
+                          Nada marcado = pessoa + veículos (o padrão), NUNCA
+                          "não gravar nada": câmera muda por engano é o pior
+                          desfecho possível num sistema de segurança. */}
+                      {form.recordingMode === 'object' ? (
+                        <div className="md:col-span-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+                          <div className="text-[11px] font-medium text-foreground">O que inicia a gravação</div>
+                          <div className="mt-0.5 text-[10.5px] text-muted-foreground">
+                            {form.recordingObjectClasses.length === 0
+                              ? 'Nada marcado = pessoa e veículos (padrão).'
+                              : `Só ${form.recordingObjectClasses.length === 1 ? 'esta classe inicia' : 'estas classes iniciam'} a gravação.`}
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {([
+                              ['person', 'Pessoa'],
+                              ['car', 'Carro'],
+                              ['motorcycle', 'Moto'],
+                              ['bus', 'Ônibus'],
+                              ['truck', 'Caminhão'],
+                              ['bicycle', 'Bicicleta'],
+                            ] as const).map(([valor, rotulo]) => {
+                              const marcada = form.recordingObjectClasses.includes(valor);
+                              return (
+                                <button
+                                  key={valor}
+                                  type="button"
+                                  onClick={() => updateField(
+                                    'recordingObjectClasses',
+                                    marcada
+                                      ? form.recordingObjectClasses.filter((c) => c !== valor)
+                                      : [...form.recordingObjectClasses, valor],
+                                  )}
+                                  className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                                    marcada
+                                      ? 'border-[hsl(var(--primary)_/_0.5)] bg-[hsl(var(--primary)_/_0.15)] text-[hsl(var(--primary))]'
+                                      : 'border-border text-muted-foreground hover:bg-accent'
+                                  }`}
+                                >
+                                  {rotulo}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
                       {form.recordingMode === 'schedule' ? (
                         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-600 dark:text-amber-400 md:col-span-2">
                           Esta configuração antiga não possui executor de horários. Escolha um modo disponível antes de salvar.

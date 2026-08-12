@@ -1,0 +1,12 @@
+-- QUAIS CLASSES INICIAM GRAVAÇÃO — por câmera, não pela frota.
+--
+-- O modo de gravação por objeto nasceu com uma lista fixa (pessoa + veículos).
+-- O dono perguntou na primeira hora de uso: "e se eu quiser só pessoa e não
+-- carro?". São pedidos diferentes na MESMA instalação — numa portaria de
+-- pedestres, carro na rua é ruído; num pátio de carga, é o evento. Sem escolha
+-- por câmera, uma das duas sempre grava errado.
+--
+-- Vazio = conjunto padrão (pessoa + veículos), preservando o comportamento de
+-- quem já usava o modo objeto. Aditivo e com default: nenhuma linha existente
+-- muda de significado.
+ALTER TABLE "Camera" ADD COLUMN "recordingObjectClasses" TEXT[] NOT NULL DEFAULT '{}';

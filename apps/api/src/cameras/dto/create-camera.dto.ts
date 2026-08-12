@@ -1,4 +1,4 @@
-import { IsBoolean, IsIP, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
 
 const SOURCE_MODES = ['rtsp_pull', 'rtmp_push'] as const;
 // Agenda não é aceita enquanto não houver persistência de janelas, fuso e
@@ -219,4 +219,18 @@ export class CreateCameraDto {
   @IsString()
   @IsIn(['SYSTEM', 'CAMERA'])
   motionTrigger?: string;
+
+  /**
+   * Classes que iniciam gravação no modo `object`. Vazio = conjunto padrão
+   * (pessoa + veículos), preservando quem já usava o modo.
+   *
+   * Restrita ao que o modelo realmente detecta e ao que faz sentido para um
+   * VMS: aceitar classe livre deixaria o operador digitar "ladrao" e ficar com
+   * uma câmera que nunca grava — falha silenciosa, a pior de todas.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(8)
+  @IsIn(['person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck'], { each: true })
+  recordingObjectClasses?: string[];
 }

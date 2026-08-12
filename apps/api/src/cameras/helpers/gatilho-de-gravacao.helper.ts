@@ -26,7 +26,7 @@
  * qualquer coisa importa, `motion`.
  */
 
-/** Classes que iniciam gravação no modo `object`. */
+/** Conjunto PADRÃO de classes que iniciam gravação no modo `object`. */
 export const CLASSES_QUE_GRAVAM = new Set([
   'person',
   'bicycle',
@@ -35,6 +35,25 @@ export const CLASSES_QUE_GRAVAM = new Set([
   'bus',
   'truck',
 ]);
+
+/**
+ * As classes que ESTA câmera aceita como gatilho.
+ *
+ * Lista vazia/ausente = o conjunto padrão. É o que preserva o comportamento de
+ * quem já usava o modo objeto antes de a escolha existir — e o que evita o
+ * pior desfecho de uma migração: câmera que passa a não gravar NADA porque a
+ * coluna nova nasceu vazia.
+ *
+ * Escolher classes é decisão de contexto, não de gosto: numa portaria de
+ * pedestres, carro na rua é ruído; num pátio de carga, é o evento.
+ */
+export function classesDaCamera(escolhidas: unknown): Set<string> {
+  if (!Array.isArray(escolhidas)) return CLASSES_QUE_GRAVAM;
+  const limpas = escolhidas
+    .map((c) => String(c ?? '').trim().toLowerCase())
+    .filter(Boolean);
+  return limpas.length ? new Set(limpas) : CLASSES_QUE_GRAVAM;
+}
 
 export type EntradaDeGatilho = {
   /** Tipo do evento recebido (MOTION_DETECTED, OBJECT_DETECTED, ...). */
@@ -50,6 +69,8 @@ export type EntradaDeGatilho = {
   frameHeight?: unknown;
   /** `detectionZones` da câmera (para o modo objeto respeitar a área). */
   zonas?: unknown;
+  /** `recordingObjectClasses` da câmera. Vazio = conjunto padrão. */
+  classesDaCameraEscolhidas?: unknown;
 };
 
 /**
@@ -122,7 +143,7 @@ export function eventoDeveGravar(entrada: EntradaDeGatilho): boolean {
     // na dúvida, um sistema de segurança guarda a imagem. O contrário —
     // descartar em silêncio — é o defeito que ninguém percebe até precisar.
     if (!rotulo) return true;
-    return CLASSES_QUE_GRAVAM.has(rotulo);
+    return classesDaCamera(entrada.classesDaCameraEscolhidas).has(rotulo);
   }
 
   // Demais modos seguem a regra histórica, intocada.

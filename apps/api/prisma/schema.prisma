@@ -104,6 +104,17 @@ model Camera {
   /// nenhuma câmera roda.
   objectMode String @default("auto")
 
+  /// CLASSES que iniciam gravação no modo `object` (recordingMode='object').
+  ///
+  /// Vazio = o conjunto padrão (pessoa + veículos). Existe porque "só grave
+  /// quando for gente" e "grave qualquer coisa que se mova ali" são pedidos
+  /// diferentes na MESMA instalação: numa portaria de pedestres, carro passando
+  /// na rua é ruído; num pátio, é o evento. Sem escolha por câmera, uma das
+  /// duas sempre grava errado.
+  ///
+  /// Vazio (padrão) preserva o comportamento de quem já usava o modo objeto.
+  recordingObjectClasses String[] @default([])
+
   channel                Int          @default(1)
   subtype                Int          @default(0)
   liveChannel            Int?

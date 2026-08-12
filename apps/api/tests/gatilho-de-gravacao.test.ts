@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { eventoDeveGravar, modoArmado, objetoDentroDaAreaMonitorada, CLASSES_QUE_GRAVAM } from '../src/cameras/helpers/gatilho-de-gravacao.helper';
+import { eventoDeveGravar, modoArmado, objetoDentroDaAreaMonitorada, classesDaCamera, CLASSES_QUE_GRAVAM } from '../src/cameras/helpers/gatilho-de-gravacao.helper';
 
 // ── GRAVAR POR OBJETO ────────────────────────────────────────────────────────
 // Até 11/08/2026 o controller tinha UMA linha decidindo tudo:
@@ -204,4 +204,64 @@ test('o controller passa bbox, escala e zonas ao gatilho', () => {
   for (const campo of ['bbox:', 'frameWidth:', 'frameHeight:', 'zonas:']) {
     assert.match(src, new RegExp(campo), `o controller precisa repassar ${campo}`);
   }
+});
+
+// ── CLASSES POR CÂMERA: "e se eu quiser só pessoa e não carro?" ─────────────
+// Pergunta do dono na primeira hora de uso do modo objeto. São pedidos
+// diferentes na MESMA instalação: numa portaria de pedestres, carro na rua é
+// ruído; num pátio de carga, é o evento.
+
+test('câmera que escolheu SÓ pessoa ignora veículos', () => {
+  const soPessoa = ['person'];
+  assert.equal(eventoDeveGravar({
+    tipo: 'OBJECT_DETECTED', modoDeGravacao: 'object', rotulo: 'person',
+    classesDaCameraEscolhidas: soPessoa,
+  }), true);
+  for (const veiculo of ['car', 'motorcycle', 'bus', 'truck', 'bicycle']) {
+    assert.equal(eventoDeveGravar({
+      tipo: 'OBJECT_DETECTED', modoDeGravacao: 'object', rotulo: veiculo,
+      classesDaCameraEscolhidas: soPessoa,
+    }), false, `${veiculo} não deveria gravar numa câmera configurada só para pessoa`);
+  }
+});
+
+test('lista VAZIA cai no padrão — jamais em "não gravar nada"', () => {
+  // O pior desfecho de uma coluna nova: câmera que emudece porque nasceu vazia.
+  for (const vazio of [[], undefined, null, 'nada disso']) {
+    assert.equal(classesDaCamera(vazio as any).has('person'), true, `${JSON.stringify(vazio)} deve cair no padrão`);
+    assert.equal(classesDaCamera(vazio as any).has('car'), true);
+  }
+});
+
+test('classes da câmera são normalizadas (caixa e espaços)', () => {
+  const c = classesDaCamera([' Person ', 'CAR']);
+  assert.equal(c.has('person'), true);
+  assert.equal(c.has('car'), true);
+  assert.equal(c.has('bus'), false, 'quem escolheu 2 classes não deve herdar as outras');
+});
+
+test('a escolha por câmera convive com a zona', () => {
+  const soPessoa = ['person'];
+  // pessoa DENTRO da zona e na lista → grava
+  assert.equal(eventoDeveGravar({
+    tipo: 'OBJECT_DETECTED', modoDeGravacao: 'object', rotulo: 'person',
+    bbox: [230, 120, 280, 200], frameWidth: 640, frameHeight: 360,
+    zonas: ZONA_TESTE, classesDaCameraEscolhidas: soPessoa,
+  }), true);
+  // carro DENTRO da zona mas fora da lista → não grava
+  assert.equal(eventoDeveGravar({
+    tipo: 'OBJECT_DETECTED', modoDeGravacao: 'object', rotulo: 'car',
+    bbox: [230, 120, 280, 200], frameWidth: 640, frameHeight: 360,
+    zonas: ZONA_TESTE, classesDaCameraEscolhidas: soPessoa,
+  }), false);
+});
+
+test('o controller repassa as classes da câmera', () => {
+  const src = readFileSync('src/cameras/cameras.controller.ts', 'utf8');
+  assert.match(src, /classesDaCameraEscolhidas: \(camera as any\)\?\.recordingObjectClasses/);
+});
+
+test('o serviço PERSISTE a escolha (senão a tela salva e nada muda)', () => {
+  const src = readFileSync('src/cameras/cameras.service.ts', 'utf8');
+  assert.match(src, /recordingObjectClasses: dto\.recordingObjectClasses/);
 });
