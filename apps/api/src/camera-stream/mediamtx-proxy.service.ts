@@ -2355,8 +2355,30 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const configuredHlsBase = (this.configService.get<string>('mediaMtxPublicHlsUrl') ?? '').replace(/\/+$/, '');
     const webrtcPort = this.configService.get<number>('mediaMtxWebrtcPort') ?? 8889;
     const hlsPort = this.configService.get<number>('mediaMtxHlsPort') ?? 8888;
-    const webrtcBase = configuredWebrtcBase || `${scheme}://${host}:${webrtcPort}`;
-    const hlsBase = configuredHlsBase || `${scheme}://${host}:${hlsPort}`;
+
+    // ── PÁGINA HTTPS NÃO PODE RECEBER URL http://IP:8889 ────────────────────────
+    //
+    // Diagnosticado no D-GUARDIAN (12/08/2026), tile eterno em "Conectando":
+    // a página abre em https://<domínio>, mas a entrega era anunciada como
+    // http://<IP>:8889 — e o navegador BLOQUEIA "http dentro de https" (conteúdo
+    // misto). A requisição WHEP nem saía do navegador, então o servidor não via
+    // nada: parecia a câmera não conectar, quando o stream estava perfeito.
+    //
+    // Trocar o esquema para https://<IP>:8889 não resolve: a 8889 fala HTTP puro,
+    // não tem TLS, e o certificado é do domínio, não do IP. A ÚNICA URL que um
+    // navegador em página HTTPS aceita é a MESMA ORIGEM, atrás do nginx — que já
+    // repassa /webrtc/→8889 e /hls/→8888. Por isso, sob HTTPS, entregamos por
+    // caminho na origem (sem porta), não por http://IP:porta.
+    //
+    // Config explícita (MEDIAMTX_PUBLIC_WEBRTC_URL/HLS_URL) continua vencendo,
+    // para quem quer apontar para outro host de mídia.
+    const entregaMesmaOrigemHttps = reqProto === 'https';
+    const webrtcBase =
+      configuredWebrtcBase ||
+      (entregaMesmaOrigemHttps ? `https://${requestHost}/webrtc` : `${scheme}://${host}:${webrtcPort}`);
+    const hlsBase =
+      configuredHlsBase ||
+      (entregaMesmaOrigemHttps ? `https://${requestHost}/hls` : `${scheme}://${host}:${hlsPort}`);
 
     return {
       enabled: true,
