@@ -70,17 +70,45 @@ if grep -qi 'sudo: a password is required\|sudo: a senha' <<<"$ESTADO"; then
 fi
 sed 's/^/     /' <<<"$ESTADO"
 
-TEM_PPP=$(ssh_vm "ip -o addr show 2>/dev/null | grep -c ppp" || echo 0)
-if [[ "${TEM_PPP:-0}" -gt 0 ]]; then
-  ok "interface ppp presente — túnel JÁ está de pé"
+# TÚNEL VIVO É TÚNEL QUE PASSA TRÁFEGO, não interface que existe.
+# Medido em 12/08/2026: `ppp0` continuou presente COM a rota 192.168.100.0/24
+# enquanto nem o peer respondia — nada passava. Minutos depois a interface
+# sumiu sozinha. Quem monitora "existe ppp0?" chama isso de saudável e o
+# operador só descobre quando precisa da câmera. A prova é o PEER responder.
+tunel_vivo() {
+  ssh_vm "ip -o addr show 2>/dev/null | grep -q ppp0" 2>/dev/null || return 1
+  local peer
+  peer=$(ssh_vm "ip -o addr show ppp0 2>/dev/null | grep -oP 'peer \K[0-9.]+' | head -1" 2>/dev/null)
+  [[ -z "$peer" ]] && return 1
+  ssh_vm "ping -c 2 -W 3 $peer" >/dev/null 2>&1
+}
+
+if tunel_vivo; then
+  TEM_PPP=1
+  ok "túnel de pé E passando tráfego (o peer responde)"
+elif ssh_vm "ip -o addr show 2>/dev/null | grep -q ppp0" 2>/dev/null; then
+  TEM_PPP=0
+  falha "TÚNEL ZUMBI: ppp0 existe, rota existe, mas o peer NÃO responde"
+  nota "pior que estar fora: tudo parece montado e nada passa"
 elif [[ $SO_VER -eq 1 ]]; then
+  TEM_PPP=0
   falha "túnel abaixo (modo --so-ver: não vou discar)"
 else
   nota "túnel abaixo — discando..."
   ssh_vm 'sudo -n /usr/local/sbin/vpn-dguardian up' 2>&1 | sed 's/^/     /'
   sleep 12
-  TEM_PPP=$(ssh_vm "ip -o addr show 2>/dev/null | grep -c ppp" || echo 0)
-  [[ "${TEM_PPP:-0}" -gt 0 ]] && ok "túnel SUBIU" || falha "o túnel não subiu"
+  if tunel_vivo; then TEM_PPP=1; ok "túnel SUBIU e passa tráfego"
+  else TEM_PPP=0; falha "o túnel não subiu (ou subiu zumbi)"; fi
+fi
+
+# ESTABILIDADE: subir não basta — em 12/08 o túnel morreu em poucos minutos.
+# Uma foto do instante teria dito "resolvido" e a câmera sumiria depois.
+if [[ "${TEM_PPP:-0}" -eq 1 && $SO_VER -eq 0 ]]; then
+  titulo "3b. O túnel PARA DE PÉ? (3 amostras em 60s)"
+  for n in 1 2 3; do
+    if tunel_vivo; then ok "amostra $n/3: vivo"; else falha "amostra $n/3: CAIU — túnel instável"; TEM_PPP=0; break; fi
+    [[ $n -lt 3 ]] && sleep 30
+  done
 fi
 
 # ── 4. POR QUE NÃO SUBIU (a causa, não o sintoma) ───────────────────────────
