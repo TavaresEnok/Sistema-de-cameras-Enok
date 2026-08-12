@@ -757,39 +757,9 @@ function WizardModal({
                 <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Nome da câmera</label>
                 <input value={form.name} onChange={(e) => updateField('name', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Ex.: Legacy Camera - Canal 1" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Unidade</label>
-                  <Select
-                    value={form.siteId || '__none__'}
-                    onValueChange={(value) => {
-                      const nextSiteId = value === '__none__' ? '' : value;
-                      setForm((current) => ({ ...current, siteId: nextSiteId, areaId: '' }));
-                    }}
-                  >
-                    <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Selecionar unidade..." /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__" className="text-xs">Sem unidade</SelectItem>
-                      {sites.map((site) => <SelectItem key={site.id} value={site.id} className="text-xs">{site.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Área</label>
-                  <Select
-                    value={form.areaId || '__none__'}
-                    onValueChange={(value) => updateField('areaId', value === '__none__' ? '' : value)}
-                  >
-                    <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Selecionar área..." /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__" className="text-xs">Sem área</SelectItem>
-                      {areas
-                        .filter((area) => !form.siteId || area.siteId === form.siteId)
-                        .map((area) => <SelectItem key={area.id} value={area.id} className="text-xs">{area.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+              {/* Unidade/Área saíram do cadastro: o conceito de sites/áreas foi
+                  removido do produto. Um campo que só oferece "Sem unidade" é
+                  ruído — pergunta sem resposta possível. */}
             </div>
           )}
           {step === 2 && (
@@ -906,8 +876,6 @@ function WizardModal({
               <div className="rounded-lg border border-border bg-background p-4 space-y-2 text-xs">
                 <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Endereço IP</span><span className="font-mono">{form.ip || '-'}</span></div>
                 <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Nome</span><span>{form.name || '-'}</span></div>
-                <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Unidade</span><span>{sites.find((s) => s.id === form.siteId)?.name ?? '-'}</span></div>
-                <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Área</span><span>{areas.find((a) => a.id === form.areaId)?.name ?? '-'}</span></div>
                 <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Live</span><span>Grid até 720p / 20 FPS · individual original</span></div>
                 <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Gravação</span><span>{formatRecordingMode(form.recordingMode)}</span></div>
                 <div className="flex justify-between"><span className="text-[hsl(var(--muted-foreground))]">Retenção</span><span className="font-mono">{form.retentionDays || '-'} dias</span></div>
@@ -1102,20 +1070,6 @@ export default function CamerasPage() {
       setRecordingHealthByCamera(map);
     }).catch(() => setRecordingHealthByCamera({}));
   }, [API_URL, accessToken]);
-
-  // Carrega unidades (sites) e áreas para o assistente de nova câmera, sob demanda.
-  useEffect(() => {
-    if (!showWizard || !accessToken || locationOptionsLoaded) return;
-    const headers = { Authorization: `Bearer ${accessToken}` };
-    void Promise.all([
-      axios.get(`${API_URL}/sites`, { headers }).then(({ data }) => (Array.isArray(data) ? data : [])).catch(() => []),
-      axios.get(`${API_URL}/areas`, { headers }).then(({ data }) => (Array.isArray(data) ? data : [])).catch(() => []),
-    ]).then(([sites, areas]) => {
-      setWizardSites(sites.map((s: any) => ({ id: s.id, name: s.name })));
-      setWizardAreas(areas.map((a: any) => ({ id: a.id, name: a.name, siteId: a.siteId ?? null })));
-      setLocationOptionsLoaded(true);
-    });
-  }, [API_URL, accessToken, showWizard, locationOptionsLoaded]);
 
   // Reconcilia o override otimista de gravação com o estado real do servidor: quando
   // camera.status passa a refletir o valor esperado, o override é descartado (senão
