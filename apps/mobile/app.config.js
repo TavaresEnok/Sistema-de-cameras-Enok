@@ -61,6 +61,39 @@ const REDESIGN_FONTS = [
   },
 ];
 
+// ── REGRAS DO R8 ────────────────────────────────────────────────────────────
+// O React Native resolve módulos nativos, ViewManagers e TurboModules por
+// REFLEXÃO em execução. O R8 não enxerga essas referências, apaga as classes
+// por "não usadas", e o app COMPILA NORMALMENTE — quebrando só quando o
+// usuário abre a tela. Cada linha abaixo impede um desses casos.
+const PROGUARD_EXTRA = [
+  '-keep,includedescriptorclasses class com.facebook.react.bridge.** { *; }',
+  '-keep,includedescriptorclasses class com.facebook.react.turbomodule.** { *; }',
+  '-keep class com.facebook.react.uimanager.** { *; }',
+  '-keep class com.facebook.react.views.** { *; }',
+  '-keep @com.facebook.proguard.annotations.DoNotStrip class *',
+  '-keep @com.facebook.common.internal.DoNotStrip class *',
+  '-keepclassmembers class * { @com.facebook.proguard.annotations.DoNotStrip *; }',
+  '-keepclassmembers class * { @com.facebook.common.internal.DoNotStrip *; }',
+  '-keepclasseswithmembernames,includedescriptorclasses class * { native <methods>; }',
+  '-keepclassmembers class * { @com.facebook.react.bridge.ReactMethod <methods>; }',
+  '-keepclassmembers class * { @com.facebook.react.uimanager.annotations.ReactProp <methods>; }',
+  '-keepclassmembers class * { @com.facebook.react.uimanager.annotations.ReactPropGroup <methods>; }',
+  '-keep class com.facebook.hermes.** { *; }',
+  '-keep class com.facebook.jni.** { *; }',
+  '-keep class expo.modules.** { *; }',
+  '-keep class expo.core.** { *; }',
+  '-keep class com.swmansion.** { *; }',
+  '-keep class com.oney.WebRTCModule.** { *; }',
+  '-keep class org.webrtc.** { *; }',
+  '-dontwarn okhttp3.**',
+  '-dontwarn okio.**',
+  '-dontwarn javax.annotation.**',
+  '-keepclassmembers enum * { public static **[] values(); public static ** valueOf(java.lang.String); }',
+  '-keepattributes SourceFile,LineNumberTable',
+  '-renamesourcefileattribute SourceFile',
+].join('\n');
+
 const c = readClientConfig();
 const allowCleartextTraffic = c.allowCleartext === true || process.env.ALLOW_CLEARTEXT_TRAFFIC === 'true';
 const plugins = (base.plugins || []).map((plugin) => {
@@ -72,6 +105,12 @@ const plugins = (base.plugins || []).map((plugin) => {
       android: {
         ...((plugin[1] && plugin[1].android) || {}),
         usesCleartextTraffic: allowCleartextTraffic,
+        // MINIFICAÇÃO R8. Precisa estar AQUI, e não em android/gradle.properties:
+        // o build roda `expo prebuild --clean`, que regenera android/ do zero e
+        // apaga qualquer edição feita dentro daquela pasta.
+        enableProguardInReleaseBuilds: true,
+        enableShrinkResourcesInReleaseBuilds: true,
+        extraProguardRules: PROGUARD_EXTRA,
       },
     },
   ];
