@@ -16,6 +16,7 @@ import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
 import { getApiBaseUrl } from '../lib/api-base';
 import { normalizeVideoCodec, normalizePreferredLiveProtocol } from '../lib/camera-format';
+import { SeletorDeClassesDeGravacao } from './SeletorDeClassesDeGravacao';
 
 interface CameraEditSheetProps {
   camera: Camera | null;
@@ -35,7 +36,8 @@ type Form = {
   preferredLiveProtocol: string;
   streamVideoCodec: string;
   recordingVideoCodec: string;
-  recordingMode: 'continuous' | 'motion' | 'schedule' | 'manual';
+  recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
+  recordingObjectClasses: string[];
   retentionDays: string;
   audioEnabled: boolean;
   aiEnabled: boolean;
@@ -46,6 +48,10 @@ type Form = {
 const RECORDING_MODES = [
   { value: 'continuous', label: 'Contínua', desc: '24 h ininterrupto' },
   { value: 'motion', label: 'Por movimento', desc: 'Ativa ao detectar movimento' },
+  // Movimento é um sinal burro: sombra, folha e chuva geram arquivo. Objeto só
+  // grava com pessoa/veículo confirmado pela IA — é o que se quer quando o
+  // disco enche de nada. Custa YOLO ligado nesta câmera.
+  { value: 'object', label: 'Pessoa ou veículo', desc: 'Só grava com objeto confirmado pela IA' },
   { value: 'manual', label: 'Manual', desc: 'Operador inicia / para' },
 ] as const;
 
@@ -138,6 +144,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           streamVideoCodec: normalizeVideoCodec(data.streamVideoCodec),
           recordingVideoCodec: normalizeVideoCodec(data.recordingVideoCodec),
           recordingMode: (data.recordingMode ?? (data.recordingEnabled ? 'continuous' : 'manual')) as Form['recordingMode'],
+          recordingObjectClasses: Array.isArray(data.recordingObjectClasses) ? data.recordingObjectClasses : [],
           retentionDays: String(data.retentionDays ?? 7),
           audioEnabled: Boolean(data.audioEnabled),
           aiEnabled: data.aiEnabled !== false,
@@ -270,6 +277,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           streamVideoCodec: 'h264',
           recordingVideoCodec: normalizeVideoCodec(form.recordingVideoCodec),
           recordingMode: form.recordingMode,
+          recordingObjectClasses: form.recordingObjectClasses,
           retentionDays: Number(form.retentionDays),
           audioEnabled: form.audioEnabled,
           aiEnabled: form.aiEnabled,
@@ -597,6 +605,12 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                       </button>
                     ))}
                   </div>
+                  {form.recordingMode === 'object' && (
+                    <SeletorDeClassesDeGravacao
+                      classes={form.recordingObjectClasses}
+                      onChange={(classes) => upd('recordingObjectClasses', classes)}
+                    />
+                  )}
                   <Separator />
                   <div className="grid grid-cols-2 gap-3">
                     <FormField label="Retenção (dias)">

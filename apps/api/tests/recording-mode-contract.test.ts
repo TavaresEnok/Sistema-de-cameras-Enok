@@ -22,8 +22,10 @@ test('API recusa agenda enquanto não existe executor de janelas', () => {
   assert.equal(recordingModeErrors(update).length, 1);
 });
 
-test('API continua aceitando os três modos que possuem execução real', () => {
-  for (const recordingMode of ['continuous', 'motion', 'manual']) {
+test('API continua aceitando os modos que possuem execução real', () => {
+  // `object` entrou em 11/08/2026 com execução completa: arma o YOLO na
+  // câmera, respeita a zona e aceita escolha de classes.
+  for (const recordingMode of ['continuous', 'motion', 'object', 'manual']) {
     const update = plainToInstance(UpdateCameraDto, { recordingMode });
     assert.equal(recordingModeErrors(update).length, 0, recordingMode);
   }

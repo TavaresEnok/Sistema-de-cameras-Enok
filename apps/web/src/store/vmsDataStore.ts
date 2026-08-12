@@ -32,7 +32,7 @@ export interface Camera {
   enabled: boolean;
   isOnline: boolean;
   signalStrength: number;
-  recordingMode: 'continuous' | 'motion' | 'schedule' | 'manual';
+  recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
   retentionDays: number;
   /** Segue a política do grupo? Ausente em API antiga = segue (o padrão). */
   retentionFollowsGroup?: boolean;
@@ -448,7 +448,9 @@ function mapCameraStatus(
     // Em modo motion, recordingEnabled indica processo FFmpeg ativo, não se a
     // regra está armada. Exibir "Movimento" evita chamar uma câmera ociosa mas
     // armada de "gravação desabilitada".
-    return recordingMode === 'motion' ? 'motion' : 'online';
+    // `object` é armada igual a `motion` — cair no 'online' faria a lista
+    // mostrar como ociosa uma câmera que está de guarda esperando pessoa.
+    return recordingMode === 'motion' || recordingMode === 'object' ? 'motion' : 'online';
   }
   if (status === 'ERROR') return 'alarm';
   if (status === 'OFFLINE') return 'offline';

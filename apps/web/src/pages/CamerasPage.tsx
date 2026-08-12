@@ -10,6 +10,7 @@ import {
 import { format } from 'date-fns';
 import { Camera, useVmsDataStore } from '../store/vmsDataStore';
 import { CameraEditSheet } from '../components/CameraEditSheet';
+import { SeletorDeClassesDeGravacao } from '../components/SeletorDeClassesDeGravacao';
 import { AddPushCameraDialog } from '../components/AddPushCameraDialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -193,7 +194,9 @@ function WizardModal({
     analyticsChannel?: number;
     analyticsSubtype?: number;
     recordingEnabled: boolean;
-    recordingMode: 'continuous' | 'motion' | 'schedule' | 'manual';
+    recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
+    /** Vazio = pessoa + veículos (o padrão). Só vale no modo objeto. */
+    recordingObjectClasses?: string[];
     retentionDays: number;
     retentionFollowsGroup?: boolean;
     preferredRtspTransport: 'tcp' | 'udp';
@@ -328,6 +331,7 @@ function WizardModal({
     siteId: '',
     areaId: '',
     recordingMode: 'continuous',
+    recordingObjectClasses: [] as string[],
     retentionDays: '3',
     retentionFollowsGroup: true,
     preferredRtspTransport: 'tcp',
@@ -447,7 +451,8 @@ function WizardModal({
         analyticsChannel: Number(form.channel || DEFAULT_CAMERA_CHANNEL),
         analyticsSubtype: ANALYTICS_STREAM_SUBTYPE,
         recordingEnabled: form.recordingMode !== 'manual',
-        recordingMode: form.recordingMode as 'continuous' | 'motion' | 'schedule' | 'manual',
+        recordingMode: form.recordingMode as 'continuous' | 'motion' | 'object' | 'schedule' | 'manual',
+        recordingObjectClasses: form.recordingObjectClasses,
         retentionDays: Number(form.retentionDays),
         retentionFollowsGroup: form.retentionFollowsGroup,
         preferredRtspTransport: form.preferredRtspTransport as 'tcp' | 'udp',
@@ -799,10 +804,19 @@ function WizardModal({
                       <SelectContent>
                         <SelectItem value="continuous" className="text-xs">Contínua</SelectItem>
                         <SelectItem value="motion" className="text-xs">Por movimento</SelectItem>
+                        <SelectItem value="object" className="text-xs">Pessoa ou veículo (IA)</SelectItem>
                         <SelectItem value="manual" className="text-xs">Manual</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
+                  {form.recordingMode === 'object' && (
+                    <div className="col-span-2">
+                      <SeletorDeClassesDeGravacao
+                        classes={form.recordingObjectClasses}
+                        onChange={(classes) => updateField('recordingObjectClasses', classes)}
+                      />
+                    </div>
+                  )}
                   <div className="space-y-1">
                     <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Retenção</label>
                     <input value={form.retentionDays} onChange={(e) => updateField('retentionDays', e.target.value)} disabled={form.retentionFollowsGroup} className="w-full h-9 px-3 disabled:opacity-45 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" />
@@ -1050,7 +1064,14 @@ export default function CamerasPage() {
     if (typeof override === 'boolean') return override;
     return camera.status === 'recording';
   }, [recordingOverrides]);
-  const isMotionRecordingMode = useCallback((camera: Camera | null | undefined) => camera?.recordingMode === 'motion', []);
+  // ARMADA = movimento OU objeto. Os dois modos compartilham toda a mecânica
+  // (pré-evento, post-roll, parada por inatividade); só muda QUEM dispara.
+  // Comparar com 'motion' literal fazia o botão tratar uma câmera em modo
+  // objeto como desarmada — e o clique seguinte reescrevia o modo dela.
+  const isMotionRecordingMode = useCallback(
+    (camera: Camera | null | undefined) => camera?.recordingMode === 'motion' || camera?.recordingMode === 'object',
+    [],
+  );
   const isMotionRecordingActive = useCallback((camera: Camera | null | undefined) => Boolean(camera && isMotionRecordingMode(camera) && isCameraRecording(camera)), [isCameraRecording, isMotionRecordingMode]);
   const selectedCamLive = useMemo(
     () => (selectedCam ? cameras.find((camera) => camera.id === selectedCam.id) ?? selectedCam : null),
@@ -1158,7 +1179,9 @@ export default function CamerasPage() {
     analyticsChannel?: number;
     analyticsSubtype?: number;
     recordingEnabled: boolean;
-    recordingMode: 'continuous' | 'motion' | 'schedule' | 'manual';
+    recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
+    /** Vazio = pessoa + veículos (o padrão). Só vale no modo objeto. */
+    recordingObjectClasses?: string[];
     retentionDays: number;
     preferredRtspTransport: 'tcp' | 'udp';
     preferredLiveProtocol: PreferredLiveProtocol;
@@ -1355,7 +1378,12 @@ export default function CamerasPage() {
         });
         toast({ title: 'Gravação por movimento ativada', description: `${camera.name} — grava ao detectar movimento e para após 60s sem novo movimento.` });
       } else {
-        toast({ title: 'Gravação por movimento já armada', description: `${camera.name} — o botão fica vermelho quando estiver gravando um movimento.` });
+        // A câmera já está armada — inclusive em modo objeto. Anunciar
+        // "movimento" aqui contradiria a configuração que o operador vê.
+        toast({
+          title: `${getRecordingModeCopy(camera.recordingMode).label}: já armada`,
+          description: `${camera.name} — o botão fica vermelho quando estiver gravando.`,
+        });
       }
       await loadData();
     } catch (error) {

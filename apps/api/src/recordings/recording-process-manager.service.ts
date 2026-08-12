@@ -963,20 +963,29 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   }
 
   async setMotionRecording(cameraId: string, enabled: boolean) {
-    await this.camerasService.getCameraOrThrow(cameraId).catch(() => {
+    const camera = await this.camerasService.getCameraOrThrow(cameraId).catch(() => {
       throw new NotFoundException('Camera não encontrada.');
     });
 
     if (enabled) {
       this.clearMotionStopTimer(cameraId);
       await this.stop(cameraId).catch(() => undefined);
+      // ARMAR NÃO É "VOLTAR PARA MOVIMENTO". Este endpoint atende ao botão de
+      // armar da lista de câmeras, e ele escrevia 'motion' sem olhar o modo
+      // atual. Numa câmera configurada em `object` (só pessoa, p.ex.) o clique
+      // apagava a configuração EM SILÊNCIO — a tela some com a escolha e o
+      // operador conclui que "a opção não salva". Câmera já armada só é
+      // rearmada; o modo é decisão de quem configurou, não deste atalho.
+      const modoDestino = modoArmado(camera.recordingMode) ? camera.recordingMode : 'motion';
       await this.prisma.camera.update({
         where: { id: cameraId },
-        data: { recordingMode: 'motion', recordingEnabled: false },
+        data: { recordingMode: modoDestino, recordingEnabled: false },
       });
       // Câmera armada → liga o ring de pré-evento (se habilitado por flag).
       void this.startPreBuffer(cameraId).catch(() => undefined);
-      return { status: 'motion_recording_armed', cameraId };
+      // Devolve o modo para o cliente não anunciar "gravação por movimento
+      // ativada" numa câmera que continua em modo objeto.
+      return { status: 'motion_recording_armed', cameraId, recordingMode: modoDestino };
     }
 
     this.clearMotionStopTimer(cameraId);
