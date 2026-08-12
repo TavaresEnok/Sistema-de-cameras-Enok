@@ -37,6 +37,28 @@ async function medirRtt(): Promise<number | null> {
   }
 }
 
+// Classes com a cor LITERAL — o Tailwind (JIT) só gera o que enxerga como texto
+// no fonte; `hsl(var(--${cor}))` interpolado em runtime não seria gerado e a
+// faixa sairia sem cor. Por isso cada variante é escrita por extenso.
+const ESTILO = {
+  // Rede local instável = âmbar. É o caso que o CLIENTE precisa enxergar (a
+  // culpa não é do DRAC), então é o mais forte: fundo presente, texto na cor,
+  // e o ícone pulsa para puxar o olho.
+  'status-warning': {
+    faixa: 'border-[hsl(var(--status-warning)_/_0.6)] bg-[hsl(var(--status-warning)_/_0.18)]',
+    bolha: 'bg-[hsl(var(--status-warning)_/_0.22)]',
+    ping: 'bg-[hsl(var(--status-warning)_/_0.5)]',
+    titulo: 'text-[hsl(var(--status-warning))]',
+  },
+  // Problema do servidor = vermelho (é conosco).
+  destructive: {
+    faixa: 'border-[hsl(var(--destructive)_/_0.6)] bg-[hsl(var(--destructive)_/_0.18)]',
+    bolha: 'bg-[hsl(var(--destructive)_/_0.22)]',
+    ping: 'bg-[hsl(var(--destructive)_/_0.5)]',
+    titulo: 'text-[hsl(var(--destructive))]',
+  },
+} as const;
+
 export function AvisoDeRede() {
   // Cada seletor devolve um valor PRIMITIVO (ou uma referência estável, no caso
   // de `players`). Selecionar um objeto calculado aqui faria o zustand ver
@@ -95,10 +117,11 @@ export function AvisoDeRede() {
       ? ServerCrash
       : Wifi;
 
-  // Culpa da rede local = âmbar (o operador PODE agir). Problema do servidor =
-  // vermelho (é conosco). Cores diferentes evitam que os dois casos, que pedem
-  // ações opostas, virem a mesma faixa amarela genérica.
-  const cor = diagnostico.culpaDaRedeLocal ? 'status-warning' : 'destructive';
+  // Culpa da rede local = âmbar (o cliente PODE/PRECISA agir). Problema do
+  // servidor = vermelho (é conosco). Cores diferentes evitam que os dois casos,
+  // que pedem ações opostas, virem a mesma faixa genérica.
+  const atencao = diagnostico.culpaDaRedeLocal;
+  const estilo = ESTILO[atencao ? 'status-warning' : 'destructive'];
 
   return (
     <div
@@ -106,20 +129,27 @@ export function AvisoDeRede() {
       aria-live="polite"
       data-testid="banner-qualidade-rede"
       data-nivel={diagnostico.nivel}
-      className={`flex min-h-9 shrink-0 items-center gap-2 border-b border-[hsl(var(--${cor})_/_0.35)] bg-[hsl(var(--${cor})_/_0.10)] px-3 text-[11px] text-foreground sm:px-5`}
+      className={`flex shrink-0 items-center gap-2.5 border-y-2 px-3 py-2 sm:px-5 ${estilo.faixa}`}
     >
-      <Icone className={`h-3.5 w-3.5 shrink-0 text-[hsl(var(--${cor}))]`} aria-hidden="true" />
-      <span className="min-w-0 flex-1 truncate">
-        <strong className="font-semibold">{diagnostico.titulo}</strong>
-        <span className="text-[hsl(var(--muted-foreground))]"> · {diagnostico.detalhe}</span>
+      {/* Bolha + pulso: um alerta que o cliente não perde de vista, em vez da
+          faixa quase invisível de antes (fundo 10%, texto 11px, detalhe cinza). */}
+      <span className={`relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${estilo.bolha}`}>
+        {atencao && (
+          <span className={`absolute inline-flex h-full w-full animate-ping rounded-full motion-reduce:hidden ${estilo.ping}`} aria-hidden="true" />
+        )}
+        <Icone className={`relative h-4 w-4 ${estilo.titulo}`} aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <strong className={`text-[13px] font-bold ${estilo.titulo}`}>{diagnostico.titulo}</strong>
+        <span className="text-[12px] text-foreground/90"> · {diagnostico.detalhe}</span>
       </span>
       <button
         type="button"
         onClick={() => dispensarAviso(diagnostico.nivel)}
         aria-label="Dispensar aviso de conexão"
-        className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-card hover:bg-accent"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-card hover:bg-accent"
       >
-        <X className="h-3 w-3" aria-hidden="true" />
+        <X className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
     </div>
   );
