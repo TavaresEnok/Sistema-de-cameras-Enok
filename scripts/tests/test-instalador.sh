@@ -97,6 +97,45 @@ printf '\n\033[1mAjuda\033[0m\n'
 espera_conter '--help explica o modo recomendado' \
   '--config cliente.env' "$(executar --help)"
 
+printf '\n\033[1mO .env do cliente não carrega config de Central\033[0m\n'
+
+# A instalação do D-GUARDIAN (12/08/2026) revelou o vazamento: o `cp` do
+# .env.example trazia o bloco DRAC_CENTRAL_*/CENTRAL_* para a VM do cliente.
+# Inerte (o cliente não roda --profile central), mas expõe a arquitetura e
+# seria segredo de verdade no dia em que um TOKEN/HASH fosse preenchido.
+saida="$(
+  set +e
+  # shellcheck disable=SC1090
+  source "$INSTALADOR" >/dev/null 2>&1
+  trap - ERR
+  run_sudo() { "$@"; }                       # sem sudo dentro do teste
+  cp "$RAIZ/infra/.env.example" "$TMP/cliente.env"
+  strip_central_only_keys "$TMP/cliente.env"
+  grep -cE '^(CENTRAL_|DRAC_CENTRAL_)' "$TMP/cliente.env" 2>/dev/null || echo 0
+)"
+if [ "${saida##*$'\n'}" = "0" ]; then
+  ok 'nenhuma chave de Central sobra no .env do cliente'
+else
+  nok 'nenhuma chave de Central sobra no .env do cliente' "ainda restam ${saida##*$'\n'} linha(s) de central"
+fi
+
+# E o oposto: não pode levar junto o que o cliente PRECISA (o canal CLOUD_*).
+saida="$(
+  set +e
+  # shellcheck disable=SC1090
+  source "$INSTALADOR" >/dev/null 2>&1
+  trap - ERR
+  run_sudo() { "$@"; }
+  printf 'CLOUD_LICENSE_KEY=drac-abc\nCLOUD_API_URL=https://x\nDRAC_CENTRAL_ADMIN_TOKEN=segredo\n' > "$TMP/mix.env"
+  strip_central_only_keys "$TMP/mix.env"
+  grep -c '^CLOUD_' "$TMP/mix.env"
+)"
+if [ "${saida##*$'\n'}" = "2" ]; then
+  ok 'preserva o CLOUD_* (canal do cliente reportando à Central)'
+else
+  nok 'preserva o CLOUD_*' "esperava 2 linhas CLOUD_, veio: ${saida##*$'\n'}"
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os testes do instalador passaram.\033[0m\n\n'

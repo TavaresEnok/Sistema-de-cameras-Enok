@@ -522,6 +522,20 @@ env_set() {
   fi
 }
 
+# As chaves que configuram uma máquina a SER um painel Central. Um cliente
+# nunca é central; estas linhas não têm o que fazer no .env dele. `CLOUD_*`
+# NÃO entra aqui — é o canal do cliente REPORTANDO à central, e é legítimo.
+CENTRAL_ONLY_ENV_KEYS="CENTRAL_DATA_DIR CENTRAL_BACKUP_INTERVAL_SECONDS CENTRAL_BACKUP_RETENTION_DAYS DRAC_CENTRAL_STORE_MODE DRAC_CENTRAL_ADMIN_EMAIL DRAC_CENTRAL_ADMIN_PASSWORD_HASH DRAC_CENTRAL_ADMIN_TOKEN DRAC_CENTRAL_ALLOWED_ORIGINS DRAC_CENTRAL_TRUSTED_PROXIES DRAC_CENTRAL_COOKIE_SECURE DRAC_CENTRAL_PUBLIC_URL DRAC_CENTRAL_INSTALLER_COMMIT DRAC_CENTRAL_INSTALLER_SHA256 DRAC_CENTRAL_INSTALLER_URL_TEMPLATE DRAC_CENTRAL_REPOSITORY_URL DRAC_CENTRAL_INSTALLER_TOKEN_TTL_SECONDS DRAC_CENTRAL_INSTALLER_TOKEN_MAX_DOWNLOADS"
+
+# Remove do arquivo dado as linhas `CHAVE=...` das chaves de central. Idempotente:
+# rodar de novo num arquivo já limpo não muda nada.
+strip_central_only_keys() {
+  local file="$1" key
+  for key in $CENTRAL_ONLY_ENV_KEYS; do
+    run_sudo sed -i "/^${key}=/d" "$file"
+  done
+}
+
 prepare_env() {
   local env_file="$DRAC_INSTALL_DIR/infra/.env"
   local example_file="$DRAC_INSTALL_DIR/infra/.env.example"
@@ -552,6 +566,20 @@ prepare_env() {
     warn "infra/.env ja existe; atualizando somente chaves controladas pelo instalador."
     run_sudo cp "$env_file" "$env_file.bak.$(date -u +%Y%m%dT%H%M%SZ)"
   fi
+
+  # ── O .env DO CLIENTE NÃO CARREGA A CONFIG DA CENTRAL ─────────────────────
+  #
+  # `.env.example` é a referência COMPLETA — serve também ao host mestre, que
+  # roda o painel Central (`--profile central`). O cliente nunca roda esse
+  # perfil, então essas chaves ficam inertes na máquina dele. "Inerte" não é
+  # "inofensivo": expõe a arquitetura do fornecedor a quem abrir o arquivo e
+  # seria um vazamento de verdade no dia em que um TOKEN/HASH fosse preenchido
+  # por engano numa cópia do mestre. Um .env de cliente descreve só o cliente.
+  #
+  # Auditado na instalação do D-GUARDIAN (12/08/2026): o `cp` do exemplo trazia
+  # o bloco inteiro para a VM do cliente. Nenhuma dessas chaves é obrigatória no
+  # compose (verificado: sem `:?`), então removê-las não quebra nada.
+  strip_central_only_keys "$env_file"
 
   env_set "$env_file" POSTGRES_PASSWORD "$(random_hex 24)"
   env_set "$env_file" JWT_SECRET "$(random_hex 32)"
