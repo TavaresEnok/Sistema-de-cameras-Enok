@@ -15,6 +15,7 @@ import {
   type LinhaDeInteligencia,
   type TomDoEstado,
 } from '../lib/estado-da-ia';
+import { custoTipico, custoTotal, formatarCusto, descreverCusto } from '../lib/custo-da-ia';
 
 // ── CÂMERAS: onde a IA roda, e se está mesmo rodando ────────────────────────
 //
@@ -42,6 +43,7 @@ export type EscopoDaCamera = {
 
 type LinhaComCamera = LinhaDeInteligencia & {
   camera?: { id?: string; name?: string | null; online?: boolean };
+  performance?: { inferAvgMs?: number | null; processFpsReal?: number | null };
 };
 
 type Inteligencia = {
@@ -162,6 +164,17 @@ export function PainelDeCamerasDaIa({
     esperadas: inteligencia?.summary?.expectedProcessors,
   });
 
+  // Custo MEDIDO da instalação e o custo TÍPICO por câmera — este último é o que
+  // permite responder "ligar mais uma vai custar quanto?" antes do clique.
+  const medidas = useMemo(
+    () => (inteligencia?.cameras ?? [])
+      .filter((l) => l.runtime?.running)
+      .map((l) => l.performance ?? null),
+    [inteligencia],
+  );
+  const tipico = custoTipico(medidas);
+  const total = formatarCusto(custoTotal(medidas));
+
   // ── Desenhando a cena de uma câmera ───────────────────────────────────────
   if (desenhando) {
     const camera = cameras.find((c) => c.id === desenhando);
@@ -207,6 +220,11 @@ export function PainelDeCamerasDaIa({
         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${CLASSE_DO_TOM[resumo.tom]}`}>
           {resumo.titulo}
         </span>
+        {total && (
+          <span className="text-[11px] text-[hsl(var(--muted-foreground))]" title="Soma medida do tempo de CPU gasto em inferência">
+            Custo agora: <strong className="font-medium text-foreground">{total}</strong>
+          </span>
+        )}
         {erro && <span className="text-[11px] text-[hsl(var(--destructive))]">{erro}</span>}
         <button
           type="button"
@@ -248,6 +266,25 @@ export function PainelDeCamerasDaIa({
                         {estado.detalhe}
                         {atraso && estado.chave === 'analisando' ? ` · ${atraso}` : ''}
                       </p>
+                      {/* O custo em número, antes do clique. A tela dizia "é caro"
+                          e não dizia quanto — sem número, "Sempre ligado" é aposta.
+                          Medido vem de latência × frequência reais; estimado vem da
+                          mediana da instalação, e os dois são ditos com palavras
+                          diferentes de propósito. */}
+                      {(() => {
+                        const custo = descreverCusto({
+                          medida: linha?.performance ?? null,
+                          tipicoDaInstalacao: tipico,
+                          rodando: linha?.runtime?.running === true,
+                        });
+                        if (!custo) return null;
+                        return (
+                          <p className="mt-0.5 text-[10px] text-[hsl(var(--muted-foreground))]">
+                            {custo.texto}
+                            {!custo.medido && <span className="opacity-70"> · estimativa</span>}
+                          </p>
+                        );
+                      })()}
                       {/* O vínculo com gravação em TEXTO: o gatilho continua na
                           aba Gravação da câmera (é decisão de gravar), mas quem
                           está aqui precisa entender que as duas conversam. */}

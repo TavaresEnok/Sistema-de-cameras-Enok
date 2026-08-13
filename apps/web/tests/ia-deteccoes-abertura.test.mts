@@ -127,3 +127,29 @@ test('o vínculo com gravação é mostrado, e o controle continua na aba Grava�
   assert.match(painel, /Grava quando a IA confirma/, 'não explica o vínculo');
   assert.doesNotMatch(painel, /recordingMode:\s*'object'/, 'a aba de IA não pode ESCREVER o gatilho');
 });
+
+// ── FASE 3: transparência ───────────────────────────────────────────────────
+
+test('o custo aparece em número, e separa medido de estimado', () => {
+  // "A detecção de objeto é cara" sem número transforma "Sempre ligado" em
+  // aposta. O número sai de medida (latência × frequência), não de chute.
+  const painel = ler('src/components/PainelDeCamerasDaIa.tsx');
+  assert.match(painel, /descreverCusto\(/, 'a linha da câmera não mostra custo');
+  assert.match(painel, /estimativa/, 'não distingue o número medido do estimado');
+  assert.match(painel, /custoTotal|Custo agora/, 'não mostra o custo somado da instalação');
+});
+
+test('o estado da placa é dito em linguagem de IA, não de servidor', () => {
+  const ai = ler('src/pages/AiPage.tsx');
+  assert.match(ai, /Placa de vídeo/, 'a aba Ajustes não fala da placa');
+  assert.match(ai, /mais câmeras/, 'não explica o que a placa muda para quem usa IA');
+  assert.doesNotMatch(ai, /NVENC|CUDA|nvidia-smi/i, 'jargão de infraestrutura vazou para a tela');
+});
+
+test('a placa é informativa: 403 nela não pode derrubar a tela', () => {
+  // A rota /gpu/status exige ADMIN; um operador não pode perder a página
+  // inteira por causa de um cartão secundário.
+  const ai = semComentarios(ler('src/pages/AiPage.tsx'));
+  assert.match(ai, /gpu\/status'\)\s*\n?\s*\.then/s, 'a chamada da GPU está dentro do Promise.all crítico');
+  assert.match(ai, /catch\(\(\) => setGpu\(null\)\)/, 'falha da GPU precisa ser engolida');
+});

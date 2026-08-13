@@ -18,6 +18,15 @@ type AiSettings = {
   showObjectBox?: boolean;
 };
 
+/** O pedaço de /gpu/status que interessa a quem opera a IA, não a quem opera o servidor. */
+type EstadoDaGpu = {
+  vendor?: string;
+  enabled?: boolean;
+  ready?: boolean;
+  device?: { name?: string | null } | null;
+  checks?: { aiAccel?: boolean };
+};
+
 type EscopoDaCamera = {
   cameraId: string;
   nome: string;
@@ -53,6 +62,7 @@ export default function AiPage() {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
+  const [gpu, setGpu] = useState<EstadoDaGpu | null>(null);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -61,6 +71,12 @@ export default function AiPage() {
         client.get<AiSettings>('/ai/settings'),
         client.get<{ classes: string[]; cameras: EscopoDaCamera[] }>('/ai/escopo-objeto'),
       ]);
+      // A GPU é INFORMATIVA aqui e vem separada de propósito: a rota exige
+      // ADMIN, e um operador sem esse papel não pode perder o resto da tela por
+      // causa de um 403 num cartão secundário.
+      void client.get<EstadoDaGpu>('/gpu/status')
+        .then((r) => setGpu(r.data))
+        .catch(() => setGpu(null));
       setSettings(cfg.data);
       setClasses(Array.isArray(esc.data?.classes) ? esc.data.classes : []);
       setEscopo(Array.isArray(esc.data?.cameras) ? esc.data.cameras : []);
@@ -219,6 +235,33 @@ export default function AiPage() {
                   configurar nada — já está ativo em todas as câmeras.
                 </p>
               </div>
+
+              {/* PLACA DE VÍDEO. Estava só na tela de servidor, escrita para quem
+                  opera infraestrutura. Quem cuida da IA precisa saber se a
+                  aceleração está valendo — em CPU o mesmo servidor atende menos
+                  câmeras, e essa é uma informação de IA, não de máquina. */}
+              {gpu && (
+                <div className="mt-3 rounded-md border border-border px-2.5 py-2">
+                  <p className="text-[10px] font-medium">Placa de vídeo</p>
+                  {gpu.checks?.aiAccel && gpu.enabled ? (
+                    <p className="mt-1 text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
+                      A IA usa a placa <strong className="font-medium text-foreground">{gpu.device?.name ?? 'instalada'}</strong>.
+                      O mesmo servidor atende mais câmeras assim.
+                    </p>
+                  ) : gpu.ready ? (
+                    <p className="mt-1 text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
+                      Há uma placa disponível ({gpu.device?.name ?? 'detectada'}) e a IA ainda está
+                      rodando no processador. Ligar a aceleração em Ajustes do servidor aumenta
+                      quantas câmeras cabem.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
+                      A IA está rodando no processador. É o modo normal — placa de vídeo é
+                      opcional e serve para caber mais câmeras no mesmo servidor.
+                    </p>
+                  )}
+                </div>
+              )}
               {/* Explicar POR QUE isto não é editável aqui evita a frustração de
                   procurar o botão que não existe. */}
               <div className="mt-3 flex gap-2 rounded-md bg-[hsl(var(--muted)_/_0.4)] px-2.5 py-2">
