@@ -153,3 +153,29 @@ test('a placa é informativa: 403 nela não pode derrubar a tela', () => {
   assert.match(ai, /gpu\/status'\)\s*\n?\s*\.then/s, 'a chamada da GPU está dentro do Promise.all crítico');
   assert.match(ai, /catch\(\(\) => setGpu\(null\)\)/, 'falha da GPU precisa ser engolida');
 });
+
+// ── FASE 4: procurar por objeto na Reprodução ───────────────────────────────
+
+test('a régua filtra por objeto — e o rótulo deixou de ser jogado fora', () => {
+  // O feed sempre mandou `metadata`; a Reprodução mapeava só id/hora/gravidade.
+  // Sem o rótulo não há como responder "onde apareceu gente".
+  const p = ler('src/pages/PlaybackPage.tsx');
+  assert.match(p, /label: rotuloDoEvento\(event\.metadata\)/, 'o rótulo continua sendo descartado');
+  assert.match(p, /filtrarPorObjeto\(playbackEvents, filtroDeObjeto\)/, 'a régua não aplica o filtro');
+  assert.match(p, /OBJETOS_BUSCAVEIS\.map/, 'não há controle para escolher o objeto');
+});
+
+test('as DUAS montagens de evento guardam o rótulo', () => {
+  // A Reprodução carrega eventos por dois caminhos (dia inteiro e por janela).
+  // Se só um guardasse o rótulo, o filtro funcionaria de forma intermitente
+  // conforme o operador movesse a régua — o pior tipo de defeito.
+  const p = ler('src/pages/PlaybackPage.tsx');
+  const ocorrencias = (p.match(/label: rotuloDoEvento/g) ?? []).length;
+  assert.equal(ocorrencias, 2, `esperado 2 montagens com rótulo, achei ${ocorrencias}`);
+});
+
+test('o filtro vazio explica se o DIA estava vazio ou só o filtro', () => {
+  const p = ler('src/pages/PlaybackPage.tsx');
+  assert.match(p, /avisoDoFiltro/, 'não mostra o resultado do filtro ao operador');
+  assert.match(p, /explicarResultado\(/, 'não usa a explicação testada');
+});

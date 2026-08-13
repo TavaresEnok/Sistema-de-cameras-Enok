@@ -38,6 +38,13 @@ import {
   type VodPlaylistSegment,
 } from '../lib/vod-continuous';
 import { janelaDaGravacao, selecionarGravacaoNoInstante } from '../lib/playback-selection';
+import {
+  OBJETOS_BUSCAVEIS,
+  filtrarPorObjeto,
+  explicarResultado,
+  rotuloDoEvento,
+  type FiltroDeObjeto,
+} from '../lib/filtro-de-objeto';
 import { agregarMinimapa, escolherGranularidade, gerarTicks } from '../lib/timeline-ruler';
 import {
   TIMELINE_MAX_ZOOM,
@@ -156,6 +163,10 @@ type PlaybackEvent = {
   id: string;
   timestamp: string;
   severity: string;
+  /** Classe reconhecida pela IA (`metadata.semanticLabel`). Null em movimento
+   *  puro, que é a maioria. O feed sempre mandou o metadata; a régua é que
+   *  jogava fora — e sem isto não há como procurar "onde apareceu gente". */
+  label: string | null;
 };
 
 type PaginatedResponse<T> = {
@@ -468,6 +479,10 @@ export default function PlaybackPage() {
   const [loadingPlayback, setLoadingPlayback] = useState(false);
   const [loadingRecordings, setLoadingRecordings] = useState(false);
   const [downloadingRecordingId, setDownloadingRecordingId] = useState<string | null>(null);
+  // Procurar por objeto na régua — "mostre onde apareceu gente entre 22h e 6h".
+  // A fila de Detecções já filtrava; a Reprodução, onde o operador de fato
+  // procura, não tinha como.
+  const [filtroDeObjeto, setFiltroDeObjeto] = useState<FiltroDeObjeto>(null);
   const [selectedForZip, setSelectedForZip] = useState<Set<string>>(new Set());
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [apagandoSelecionadas, setApagandoSelecionadas] = useState(false);
@@ -827,7 +842,7 @@ export default function PlaybackPage() {
     reservedEventRangesRef.current = mergeRanges([...reservedEventRangesRef.current, ...ranges]);
     try {
       for (const range of ranges) {
-        const items = await fetchRangeItems<{ id: string; occurredAt: string; severity?: string }>(
+        const items = await fetchRangeItems<{ id: string; occurredAt: string; severity?: string; metadata?: unknown }>(
           '/cameras/events-feed',
           { cameraId },
           range,
@@ -843,6 +858,7 @@ export default function PlaybackPage() {
             id: String(event.id),
             timestamp: event.occurredAt,
             severity: String(event.severity ?? 'info').toLowerCase(),
+            label: rotuloDoEvento(event.metadata),
           })),
           (event) => event.id,
           (event) => event.timestamp,
@@ -1085,6 +1101,7 @@ export default function PlaybackPage() {
           id: String(event.id ?? event.occurredAt),
           timestamp: event.occurredAt,
           severity: String(event.severity ?? 'info').toLowerCase(),
+          label: rotuloDoEvento(event.metadata),
         }));
         setPlaybackEvents(playbackEventsRef.current);
         loadedEventRangesRef.current = [{ start: 0, end: TOTAL_MINS }];
@@ -1366,7 +1383,19 @@ export default function PlaybackPage() {
     return () => observer.disconnect();
   }, []);
 
-  const timelineSegments = useMemo(() => buildTimelineSegments(recordings, playbackEvents, dayStart.getTime()), [recordings, playbackEvents, dayStart]);
+  const eventosVisiveis = useMemo(
+    () => filtrarPorObjeto(playbackEvents, filtroDeObjeto),
+    [playbackEvents, filtroDeObjeto],
+  );
+  const avisoDoFiltro = useMemo(
+    () => explicarResultado({
+      filtro: filtroDeObjeto,
+      totalNoDia: playbackEvents.length,
+      totalFiltrado: eventosVisiveis.length,
+    }),
+    [filtroDeObjeto, playbackEvents.length, eventosVisiveis.length],
+  );
+  const timelineSegments = useMemo(() => buildTimelineSegments(recordings, eventosVisiveis, dayStart.getTime()), [recordings, eventosVisiveis, dayStart]);
   const compareCameraItems = useMemo(() => (
     Array.from(new Set([selectedCamId, ...compareCameraIds].filter(Boolean)))
       .slice(0, 4)
@@ -1417,7 +1446,7 @@ export default function PlaybackPage() {
 
   const compareRows = useMemo(() => compareCameraItems.map((camera) => {
     const items = compareRecordingsByCamera[camera.id] ?? (camera.id === selectedCamId ? recordings : []);
-    const eventsForCamera = camera.id === selectedCamId ? playbackEvents : [];
+    const eventsForCamera = camera.id === selectedCamId ? eventosVisiveis : [];
     const segments = buildTimelineSegments(items, eventsForCamera, dayStart.getTime());
     // Janela ABSOLUTA da lib testada — este trecho ainda usava a aritmética
     // antiga (hora de relógio + fim = startedAt quando não há endedAt), as
@@ -1430,7 +1459,7 @@ export default function PlaybackPage() {
       return instanteMs >= janela.startMs && instanteMs < janela.endMs;
     });
     return { camera, items, segments, current };
-  }), [compareCameraItems, compareRecordingsByCamera, playbackEvents, playhead, recordings, selectedCamId]);
+  }), [compareCameraItems, compareRecordingsByCamera, eventosVisiveis, playhead, recordings, selectedCamId]);
   useEffect(() => {
     if (!recordings.length) {
       setSelectedRecordingId(null);
@@ -3107,6 +3136,39 @@ export default function PlaybackPage() {
           className="input"
           style={{ width: 170, height: 34, fontSize: 12 }}
         />
+
+        {/* PROCURAR POR OBJETO. É o motivo pelo qual alguém compra IA em vez de
+            só gravar: achar o acontecimento sem assistir a oito horas de vídeo.
+            O dado já vinha no feed (`metadata.semanticLabel`) e a régua jogava
+            fora. "Tudo" não esconde nada — inclusive o movimento sem rótulo,
+            que é a maioria. */}
+        <div className="segment" role="group" aria-label="Procurar por objeto na linha do tempo">
+          <button
+            type="button"
+            onClick={() => setFiltroDeObjeto(null)}
+            className={`seg-btn ${filtroDeObjeto === null ? 'active' : ''}`}
+            aria-pressed={filtroDeObjeto === null}
+          >
+            Tudo
+          </button>
+          {OBJETOS_BUSCAVEIS.map(({ valor, rotulo }) => (
+            <button
+              key={valor}
+              type="button"
+              onClick={() => setFiltroDeObjeto(filtroDeObjeto === valor ? null : valor)}
+              className={`seg-btn ${filtroDeObjeto === valor ? 'active' : ''}`}
+              aria-pressed={filtroDeObjeto === valor}
+            >
+              {rotulo}
+            </button>
+          ))}
+        </div>
+
+        {avisoDoFiltro && (
+          <span className="text-[11px] text-[hsl(var(--muted-foreground))]" role="status">
+            {avisoDoFiltro}
+          </span>
+        )}
 
         <div style={{ flex: 1 }} />
 
