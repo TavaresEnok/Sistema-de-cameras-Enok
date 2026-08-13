@@ -73,6 +73,12 @@ const SETTING_SPECS: Record<string, SettingSpec> = {
   // Aceleração por GPU da IA (onnxruntime CUDA). Só tem efeito quando aiFeatureEnabled
   // estiver true E a infraestrutura de GPU para IA estiver provisionada. Default OFF.
   gpuAiAccelerationEnabled: { type: 'boolean', default: false },
+  // Páginas escondidas do menu NESTA instalação (lista de caminhos separada por
+  // vírgula, ex.: "/alarms,/review"). A ROTA continua de pé; só o item do menu
+  // some. É POR-INSTALAÇÃO de propósito: uma matriz mostra tudo, um cliente pode
+  // esconder o que não contratou/não quer — sem tocar no código nem afetar os
+  // outros. Vazio = nada escondido (o padrão). Reversível: limpar a chave.
+  hiddenNavPaths: { type: 'string', default: '' },
   // ── Marca (branding) do app web — aplicado em runtime na interface ──────────
   // Logo em data URL (base64). Vazio = usa o logo padrão DRAC.
   brandLogoDataUrl: { type: 'image', default: '' },
@@ -176,6 +182,9 @@ export class SettingsService {
     // requisição extra. Cada instalação tem o seu valor: ligada na matriz,
     // desligada num cliente que não contratou IA.
     branding.aiFeatureEnabled = all.aiFeatureEnabled;
+    // Também aqui, pelo mesmo motivo: o menu é montado logo após o login e o web
+    // já busca /settings/branding no arranque. Cada instalação tem a sua lista.
+    branding.hiddenNavPaths = all.hiddenNavPaths;
     return branding;
   }
 

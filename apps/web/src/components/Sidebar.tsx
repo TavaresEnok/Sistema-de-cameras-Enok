@@ -131,12 +131,16 @@ export function Sidebar({
   const facilityName = useBrandingStore((state) => state.facilityName);
   const logoDataUrl = useBrandingStore((state) => state.logoDataUrl);
   const aiFeatureEnabled = useBrandingStore((state) => state.aiFeatureEnabled);
+  const hiddenNavPaths = useBrandingStore((state) => state.hiddenNavPaths);
 
   const roleColor = ROLE_COLOR[user?.role ?? 'operator'] ?? ROLE_COLOR.operator;
   // A página de IA só aparece onde a feature está ligada. Enquanto o servidor
   // não respondeu, `aiFeatureEnabled` é false — a IA não pisca no menu.
+  // Escondida = fixa no código (todas as instalações), OU a IA sem feature, OU
+  // na lista POR-INSTALAÇÃO que o servidor entrega (hiddenNavPaths). A rota
+  // segue de pé nos três casos — some só do menu.
   const escondida = (path: string) =>
-    PAGINAS_OCULTAS.has(path) || (path === '/ia' && !aiFeatureEnabled);
+    PAGINAS_OCULTAS.has(path) || (path === '/ia' && !aiFeatureEnabled) || hiddenNavPaths.includes(path);
 
   // Só busca o contador se a IA estiver contratada — numa instalação sem IA a
   // chamada seria puro custo, a cada minuto, para um item que nem aparece.

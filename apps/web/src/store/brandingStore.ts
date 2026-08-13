@@ -28,12 +28,15 @@ type PublicBranding = {
   brandLightBorderColor?: string;
   // Feature flag (não é marca): a página de IA aparece no menu? Por instalação.
   aiFeatureEnabled?: boolean;
+  // Caminhos escondidos do menu NESTA instalação (separados por vírgula).
+  hiddenNavPaths?: string;
 };
 
 type BrandingState = {
   facilityName: string;
   logoDataUrl: string;
   aiFeatureEnabled: boolean;
+  hiddenNavPaths: string[];
   loaded: boolean;
   load: () => Promise<void>;
 };
@@ -84,6 +87,7 @@ export const useBrandingStore = create<BrandingState>((set) => ({
   // Default FALSE: enquanto o servidor não responde, a página de IA fica
   // escondida. Uma instalação sem IA nunca deve piscar o item no menu.
   aiFeatureEnabled: false,
+  hiddenNavPaths: [],
   loaded: false,
   load: async () => {
     try {
@@ -92,6 +96,8 @@ export const useBrandingStore = create<BrandingState>((set) => ({
         facilityName: normalizeFacilityName(data.facilityName),
         logoDataUrl: data.brandLogoDataUrl?.trim() || '',
         aiFeatureEnabled: data.aiFeatureEnabled === true,
+        // "/alarms,/review" → ['/alarms','/review']. Vazio = nada escondido.
+        hiddenNavPaths: String(data.hiddenNavPaths ?? '').split(',').map((p) => p.trim()).filter(Boolean),
         loaded: true,
       });
       applyBrandColors(data);
