@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type WheelEvent } from 'react';
 import axios from 'axios';
 import { useLocation } from 'wouter';
-import { Camera as CameraIcon, ChevronLeft, ChevronRight, Download, FastForward, FolderArchive, LoaderCircle, Maximize2, Minimize2, Pause, Play, Scissors, SkipBack, SkipForward, StepBack, StepForward, VideoOff, Volume2, VolumeX } from 'lucide-react';
+import { Camera as CameraIcon, ChevronLeft, ChevronRight, Download, FastForward, FolderArchive, LoaderCircle, Maximize2, Minimize2, Pause, Play, Scissors, SkipBack, SkipForward, StepBack, StepForward, Trash2, VideoOff, Volume2, VolumeX } from 'lucide-react';
 import { addMinutes, format, startOfDay } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SeletorDeCamera } from '../components/SeletorDeCamera';
@@ -441,6 +441,10 @@ async function downloadClip(downloadUrl: string, clipId: string, reason: string,
 export default function PlaybackPage() {
   const [location] = useLocation();
   const accessToken = useAuthStore((state) => state.accessToken);
+  // Apagar gravação é privilégio de ADMIN. O portão de verdade é o do servidor
+  // (ADMIN + serverConfig); isto aqui é só não oferecer o que seria negado —
+  // mesma regra da comparação de câmeras mais abaixo.
+  const podeApagarGravacoes = useAuthStore((state) => state.user?.role === 'admin');
   const cameras = useVmsDataStore((state) => state.cameras);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const client = useMemo(() => axios.create({ baseURL: API_URL, headers: authHeaders(accessToken), timeout: API_TIMEOUT_MS }), [accessToken]);
@@ -466,6 +470,13 @@ export default function PlaybackPage() {
   const [downloadingRecordingId, setDownloadingRecordingId] = useState<string | null>(null);
   const [selectedForZip, setSelectedForZip] = useState<Set<string>>(new Set());
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [apagandoSelecionadas, setApagandoSelecionadas] = useState(false);
+  const [confirmarExclusao, setConfirmarExclusao] = useState(false);
+  // Contador só para forçar a recarga da lista depois de apagar. A lista é
+  // carregada por um efeito com chave câmera|data; sem um sinal explícito ele
+  // não reexecuta (a chave não mudou) e as gravações apagadas continuariam na
+  // tela até o operador trocar de dia e voltar.
+  const [recarregarLista, setRecarregarLista] = useState(0);
   const [pendingSeekSeconds, setPendingSeekSeconds] = useState<number | null>(null);
   const [windowRetryNonce, setWindowRetryNonce] = useState(0);
   const [windowRetryAttempts, setWindowRetryAttempts] = useState(0);
@@ -1046,7 +1057,7 @@ export default function PlaybackPage() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, client, loadRecordingRanges, requestedAt, selectedCamId, selectedDate]);
+  }, [accessToken, client, loadRecordingRanges, requestedAt, selectedCamId, selectedDate, recarregarLista]);
 
   useEffect(() => {
     if (!accessToken || !selectedCamId || !selectedDate) {
@@ -2488,6 +2499,47 @@ export default function PlaybackPage() {
     }
   }, [accessToken, client, selectedForZip]);
 
+  const apagarSelecionadas = useCallback(async () => {
+    if (!accessToken || !selectedForZip.size) return;
+    setApagandoSelecionadas(true);
+    try {
+      const recordingIds = [...selectedForZip];
+      const { data } = await client.post<{
+        solicitadas: number; excluidas: number; protegidas: number;
+        emAndamento: number; naoEncontradas: number; bytesLiberados: string;
+      }>('/recordings/delete-batch', { recordingIds });
+
+      // As recusas NÃO são erro, e escondê-las seria pior que o silêncio: o
+      // operador veria "8 apagadas" tendo pedido 10 e concluiria que o botão
+      // falhou. Cada motivo tem consequência diferente para ele.
+      const notas: string[] = [];
+      if (data.protegidas) notas.push(`${data.protegidas} preservada(s) por retenção legal/investigação`);
+      if (data.emAndamento) notas.push(`${data.emAndamento} ainda gravando`);
+      if (data.naoEncontradas) notas.push(`${data.naoEncontradas} já não existia(m)`);
+
+      toast({
+        title: data.excluidas ? `${data.excluidas} gravação(ões) apagada(s)` : 'Nada foi apagado',
+        description: notas.length ? notas.join(' · ') : 'Espaço liberado no armazenamento.',
+        variant: data.excluidas ? undefined : 'destructive',
+      });
+
+      setSelectedForZip(new Set());
+      setSelectedRecordingId(null);
+      setRecarregarLista((n) => n + 1);
+    } catch (error) {
+      const negado = axios.isAxiosError(error) && error.response?.status === 403;
+      toast({
+        title: 'Falha ao apagar',
+        description: negado
+          ? 'Seu usuário não tem permissão para apagar gravações.'
+          : error instanceof Error ? error.message : 'Não foi possível apagar as gravações selecionadas.',
+        variant: 'destructive',
+      });
+    } finally {
+      setApagandoSelecionadas(false);
+    }
+  }, [accessToken, client, selectedForZip]);
+
   const handleDownload = async (recording = selectedRecording) => {
     if (!recording || !selectedCam || !accessToken) return;
     setDownloadingRecordingId(recording.id);
@@ -3816,6 +3868,17 @@ export default function PlaybackPage() {
                 Baixar {selectedForZip.size} em ZIP
               </button>
             )}
+            {selectedForZip.size > 0 && podeApagarGravacoes && (
+              <button
+                type="button"
+                onClick={() => setConfirmarExclusao(true)}
+                disabled={apagandoSelecionadas}
+                className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded border border-[hsl(var(--destructive)_/_0.35)] bg-[hsl(var(--destructive)_/_0.06)] px-3 py-1.5 text-xs text-[hsl(var(--destructive))] transition-colors hover:bg-[hsl(var(--destructive)_/_0.12)] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {apagandoSelecionadas ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Apagar {selectedForZip.size} gravação(ões)
+              </button>
+            )}
           </div>
           <div
             ref={recordingListRef}
@@ -3939,6 +4002,40 @@ export default function PlaybackPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* Exclusão de gravação: irreversível e sobre PROVA. O diálogo diz o que
+          some, quantas são e de qual câmera — confirmar "N itens" sem dizer de
+          onde é como confirmar às cegas. Mesmo padrão da exclusão permanente
+          de usuário. */}
+      {confirmarExclusao && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div role="alertdialog" aria-modal="true" className="w-full max-w-md rounded-xl border border-[hsl(var(--destructive)_/_0.4)] bg-card p-5 shadow-xl">
+            <h2 className="text-sm font-semibold text-[hsl(var(--destructive))]">
+              Apagar {selectedForZip.size} gravação(ões)?
+            </h2>
+            <p className="mt-2 text-xs text-muted-foreground">
+              De <b className="text-foreground">{selectedCam?.name ?? 'câmera selecionada'}</b>, em{' '}
+              <b className="text-foreground">{selectedDate.split('-').reverse().join('/')}</b>. O vídeo é
+              removido do disco e da nuvem. <b>Não pode ser desfeito.</b>
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Gravações sob retenção legal ou anexadas a uma investigação são preservadas
+              automaticamente, assim como a que estiver gravando neste momento.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setConfirmarExclusao(false)} className="btn btn-primary btn-sm">
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => { setConfirmarExclusao(false); void apagarSelecionadas(); }}
+                className="btn btn-sm border-[hsl(var(--destructive)_/_0.45)] text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)_/_0.1)]"
+              >
+                Apagar definitivamente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

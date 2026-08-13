@@ -847,6 +847,76 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Exclusão MANUAL de gravações escolhidas na tela de Reprodução.
+   *
+   * Mora aqui, e não em RecordingsService, porque `deleteRecording` acima já
+   * resolve o problema inteiro — clipes derivados, miniatura, prévia da linha do
+   * tempo, cópia de compatibilidade, marcador de inválida, objeto na nuvem, tudo
+   * numa transação com trava de instalação. Reescrever isso do lado do botão
+   * seria clonar seis anos de armadilhas já pagas (o P2010 do advisory lock, a
+   * ordem "banco antes da nuvem", o journal de rollback).
+   *
+   * Duas recusas que NÃO são erro e por isso voltam separadas na contagem:
+   *
+   *   protegidas   — a gravação está sob retenção legal ou anexada a uma
+   *                  investigação. O guardião automático já se recusa a apagar
+   *                  essas; um botão manual que passasse por cima destruiria
+   *                  prova exatamente no caso em que ela mais importa.
+   *   emAndamento  — a gravação ainda não fechou (`endedAt` nulo): há um FFmpeg
+   *                  escrevendo no arquivo neste instante. Apagar debaixo dele
+   *                  deixaria o processo gravando num inode órfão — disco
+   *                  consumido sem nada aparecer na lista.
+   *
+   * O controlador é quem checa acesso por câmera; aqui já chegam ids liberados.
+   */
+  async excluirGravacoesEscolhidas(ids: string[]): Promise<{
+    solicitadas: number;
+    excluidas: number;
+    protegidas: number;
+    emAndamento: number;
+    naoEncontradas: number;
+    bytesLiberados: string;
+  }> {
+    const unicos = [...new Set(ids)];
+    const protection = await this.getProtectionSets();
+    const linhas = await this.prisma.recording.findMany({
+      where: { id: { in: unicos } },
+      select: {
+        id: true, cameraId: true, filePath: true, sizeBytes: true,
+        endedAt: true, cloudKey: true, cloudStorageId: true,
+      },
+    });
+
+    let excluidas = 0;
+    let protegidas = 0;
+    let emAndamento = 0;
+    let bytes = BigInt(0);
+
+    for (const linha of linhas) {
+      if (!linha.endedAt) { emAndamento += 1; continue; }
+      if (protection.recordingIds.has(linha.id)) { protegidas += 1; continue; }
+      const apagou = await this.deleteRecording(linha, protection);
+      if (apagou) {
+        excluidas += 1;
+        bytes += linha.sizeBytes ?? BigInt(0);
+      } else {
+        // `deleteRecording` também recusa quando um CLIPE derivado está sob
+        // proteção — o motivo é o mesmo, então entra na mesma conta.
+        protegidas += 1;
+      }
+    }
+
+    return {
+      solicitadas: unicos.length,
+      excluidas,
+      protegidas,
+      emAndamento,
+      naoEncontradas: unicos.length - linhas.length,
+      bytesLiberados: bytes.toString(),
+    };
+  }
+
   async handleRetention(source = 'manual'): Promise<CleanupResult> {
     const result: CleanupResult = {
       skipped: false,

@@ -13,6 +13,7 @@ import { RequirePermission } from '../role-permissions/require-permission.decora
 import { ListRecordingsQueryDto } from './dto/list-recordings-query.dto';
 import { BulkThumbnailTokensDto } from './dto/bulk-thumbnail-tokens.dto';
 import { BulkRecordingDiagnosticsDto } from './dto/bulk-recording-diagnostics.dto';
+import { DeleteBatchDto } from './dto/delete-batch.dto';
 import { DownloadBatchDto } from './dto/download-batch.dto';
 import { RegisterRecordingDto } from './dto/register-recording.dto';
 import { StartRecordingDto } from './dto/start-recording.dto';
@@ -21,6 +22,7 @@ import { ServiceTokenGuard } from '../auth/guards/service-token.guard';
 import { UseGuards } from '@nestjs/common';
 import { RecordingProcessManagerService } from './recording-process-manager.service';
 import { RecordingsService } from './recordings.service';
+import { RetentionService } from './retention.service';
 import { ExportClipDto } from './dto/export-clip.dto';
 import { ExportRangeDto } from './dto/export-range.dto';
 import { InvestigationsService } from '../investigations/investigations.service';
@@ -43,6 +45,13 @@ export class RecordingsController {
     // ModuleRef resolve AiManagerService/AiService em runtime, evitando o ciclo
     // de módulos Recordings→Ai→Cameras→Recordings (que o Nest não instancia).
     private readonly moduleRef: ModuleRef,
+    // DEPENDÊNCIA NOVA ENTRA NO FIM, sempre. Os testes deste controlador o
+    // constroem posicionalmente com só os primeiros parâmetros que exercitam
+    // (`new RecordingsController({} as any, recordings as any, ...)`), então
+    // inserir no meio desloca tudo e quebra 9 testes que nada têm a ver com a
+    // mudança — foi o que aconteceu ao adicionar este campo entre
+    // `recordingsService` e `investigationsService`.
+    private readonly retentionService: RetentionService,
   ) {}
 
   private extractBearerToken(req: Request): string | null {
@@ -230,6 +239,43 @@ export class RecordingsController {
     await this.recordingManager.stopAll();
     const result = await this.recordingsService.deleteAllRecordings();
     await this.auditService.log(user.id, 'recording.delete_all', 'Recording', null, result, req);
+    return result;
+  }
+
+  // Exclusão das gravações SELECIONADAS na tela de Reprodução.
+  //
+  // Mesmo portão do "apagar todas" (ADMIN + serverConfig), e não o do ZIP
+  // (OPERATOR + exportEvidence): exportar evidência é tirar cópia, apagar é
+  // destruir o original. Quem opera a tela no dia a dia não deve poder sumir
+  // com a gravação de um incidente.
+  //
+  // O acesso por câmera é checado gravação a gravação, como no ZIP: ter o papel
+  // ADMIN não implica enxergar todas as câmeras (grupos, câmera privada de
+  // cliente). Sem isso, um admin de um grupo apagaria a gravação de outro.
+  @Roles(UserRole.ADMIN)
+  @RequirePermission('serverConfig')
+  @Post('recordings/delete-batch')
+  async deleteRecordingsBatch(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: DeleteBatchDto,
+    @Req() req: Request,
+  ) {
+    const ids = [...new Set(dto.recordingIds)];
+    for (const id of ids) {
+      const recording = await this.recordingsService.ensureRecordingExists(id);
+      await this.accessControlService.assertCanPlaybackCamera(user, recording.cameraId);
+    }
+    const result = await this.retentionService.excluirGravacoesEscolhidas(ids);
+    // Auditoria com os ids: exclusão de prova precisa deixar rastro de QUAL
+    // prova, não só de quantas.
+    await this.auditService.log(
+      user.id,
+      'recording.delete_batch',
+      'Recording',
+      null,
+      { ...result, recordingIds: ids },
+      req,
+    );
     return result;
   }
 
