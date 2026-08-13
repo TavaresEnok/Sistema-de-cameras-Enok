@@ -55,10 +55,24 @@ gpu_utilizavel() {
 # Imagem já presente no host (não baixa nada durante um boot possivelmente
 # offline). Uma imagem-base é preferida à de serviço: menos entrypoint no
 # caminho, menos chance do teste medir a coisa errada.
+#
+# ALPINE ESTÁ FORA DE PROPÓSITO, e isto custou caro para descobrir. O toolkit
+# injeta o `nvidia-smi` do host dentro do container, e esse binário é ligado a
+# GLIBC. Em alpine (musl) ele existe no caminho mas NÃO EXECUTA — o erro é
+# "exec /usr/bin/nvidia-smi: no such file or directory", que parece arquivo
+# ausente e na verdade é carregador dinâmico incompatível.
+#
+# Efeito medido na instalação D-GUARDIAN (13/08): a placa estava perfeita
+# (RTX 5060 Ti, driver 610 carregado, /dev/nvidia0 presente, toolkit 1.20 ok),
+# mas o único candidato no host era `alpine:3` — então a prova 3 falhava
+# SEMPRE e o sistema subia em CPU sem nenhum aviso de que a GPU fora
+# descartada por um detalhe de libc.
 IMAGEM_TESTE="$(docker images --format '{{.Repository}}:{{.Tag}}' \
-  | grep -E '^(ubuntu|debian|alpine):' | head -n1 || true)"
+  | grep -E '^(ubuntu|debian):' | head -n1 || true)"
 [ -n "$IMAGEM_TESTE" ] || IMAGEM_TESTE="$(docker images --format '{{.Repository}}:{{.Tag}}' \
   | grep -E '^drac-mediamtx-nvenc:' | head -n1 || true)"
+# Último recurso: baixar uma glibc mínima. Só acontece em host sem NENHUMA
+# imagem glibc — e é preferível a desistir da GPU em silêncio.
 [ -n "$IMAGEM_TESTE" ] || IMAGEM_TESTE="ubuntu:24.04"
 
 ARQUIVOS=(-f docker-compose.yml)
