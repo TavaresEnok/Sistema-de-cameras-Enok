@@ -99,6 +99,16 @@ MOTION_PROFILE = {
     "motion_noise_floor": str(os.getenv("MOTION_NOISE_FLOOR", "true")).strip().lower() != "false",
     "motion_noise_window": _env_int("MOTION_NOISE_WINDOW", 60),   # ~30 s a 2 fps
     "motion_noise_floor_factor": _env_float("MOTION_NOISE_FLOOR_FACTOR", 1.6),
+    # SUPRESSÃO DE ATIVIDADE CRÔNICA (luz piscando, bandeira, água, folha ao
+    # vento). Aprende POR PIXEL a fração de tempo em movimento e zera o que fica
+    # ativo perto de metade do tempo — algo que o piso de ruído GLOBAL não pega
+    # (uma luz num canto não move a mediana da tela). Auto-aprende e auto-esquece.
+    # É a diferença medida contra o Frigate: lá a luz piscando exige máscara
+    # manual; aqui some sozinha. Ver detectors/chronic_activity.py.
+    "motion_chronic_suppression": str(os.getenv("MOTION_CHRONIC_SUPPRESSION", "true")).strip().lower() != "false",
+    "motion_chronic_alpha": _env_float("MOTION_CHRONIC_ALPHA", 0.02),   # aprende luz piscando em ~20 s a 2 fps
+    "motion_chronic_threshold": _env_float("MOTION_CHRONIC_THRESHOLD", 0.45),  # ativa ~metade do tempo = crônico
+    "motion_chronic_warmup": _env_int("MOTION_CHRONIC_WARMUP", 60),     # não suprime nada antes disto
     # Congela o aprendizado do fundo nos primeiros N frames de movimento (padrão
     # Frigate): quem entra e FICA continua sendo detectado; mudança persistente
     # (carro estacionado) é absorvida gradualmente depois.

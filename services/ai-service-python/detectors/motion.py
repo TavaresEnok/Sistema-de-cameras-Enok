@@ -124,6 +124,14 @@ class MotionDetector(Detector):
         self._noise_floor_enabled = bool(MOTION_PROFILE.get("motion_noise_floor", True))
         self._noise_window = deque(maxlen=max(10, int(MOTION_PROFILE.get("motion_noise_window", 60))))
         self._noise_floor_factor = float(MOTION_PROFILE.get("motion_noise_floor_factor", 1.6))
+        # Supressão de atividade crônica (luz piscando/bandeira/água). Construída
+        # preguiçosamente no 1º quadro, quando a resolução de análise é conhecida.
+        # Ver detectors/chronic_activity.py.
+        self._chronic_enabled = bool(MOTION_PROFILE.get("motion_chronic_suppression", True))
+        self._chronic_alpha = float(MOTION_PROFILE.get("motion_chronic_alpha", 0.02))
+        self._chronic_threshold = float(MOTION_PROFILE.get("motion_chronic_threshold", 0.45))
+        self._chronic_warmup = int(MOTION_PROFILE.get("motion_chronic_warmup", 60))
+        self._chronic = None
 
     def _build_zone_factor_map(self, zones: list | None):
         """Mapa de NÍVEL DE SENSIBILIDADE por pixel (0..len(_FATOR_POR_NIVEL)-1).
@@ -330,6 +338,26 @@ class MotionDetector(Detector):
 
         if self._warmup_frames < warmup_total:
             return []  # aprendendo o fundo — não reporta
+
+        # ── SUPRESSÃO DE ATIVIDADE CRÔNICA ──────────────────────────────────
+        # Zera o que fica ativo perto de metade do tempo no MESMO ponto — luz
+        # piscando, bandeira, água, folha ao vento. Aplicada AQUI, depois da
+        # morfologia e ANTES de contar pixels/formar componentes, para o crônico
+        # não inflar a contagem nem virar caixa. Movimento real cruza cada célula
+        # por pouco tempo e passa intacto. Ver detectors/chronic_activity.py.
+        #
+        # Fica ANTES da checagem de mudança global (abaixo, via motion_pixels):
+        # uma luz piscando não deve simular "cena mudou". Já uma mudança global
+        # de verdade (luz da sala acende) atinge pixels que estavam ESTÁVEIS —
+        # não crônicos — então não é suprimida.
+        if self._chronic_enabled:
+            if self._chronic is None:
+                from .chronic_activity import SupressorDeAtividadeCronica
+                self._chronic = SupressorDeAtividadeCronica(
+                    fgmask.shape, alpha=self._chronic_alpha,
+                    limiar=self._chronic_threshold, warmup=self._chronic_warmup,
+                )
+            fgmask = self._chronic.atualizar_e_suprimir(fgmask)
 
         motion_pixels = int(np.count_nonzero(fgmask))
 
