@@ -14,9 +14,14 @@ const semComentarios = (texto: string) => texto
 // refatoração futura, que foi exatamente como o problema nasceu.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// A fila de detecções saiu de `pages/ReviewPage.tsx` e virou
+// `components/PainelDeDeteccoes.tsx` — a mesma tela, agora montada em dois
+// lugares (aba da Inteligência e rota /review, que o app usa por link direto).
+// O teste segue o conteúdo, não o caminho do arquivo: a regra que ele protege é
+// "a tela que escolhe câmera usa o seletor compartilhado".
 const TELAS_COM_SELETOR = [
   'src/pages/PlaybackPage.tsx',
-  'src/pages/ReviewPage.tsx',
+  'src/components/PainelDeDeteccoes.tsx',
   'src/pages/PTZPage.tsx',
 ];
 

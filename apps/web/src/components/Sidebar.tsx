@@ -15,6 +15,7 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useIsMobile } from '../hooks/use-mobile';
 import { useBrandingStore } from '../store/brandingStore';
+import { useDeteccoesNaoVistas, formatarContador } from '../hooks/use-deteccoes-nao-vistas';
 import { PRODUCT_TAGLINE } from '../lib/product-brand';
 
 type NavItem = {
@@ -126,6 +127,11 @@ export function Sidebar({
   const escondida = (path: string) =>
     PAGINAS_OCULTAS.has(path) || (path === '/ia' && !aiFeatureEnabled);
 
+  // Só busca o contador se a IA estiver contratada — numa instalação sem IA a
+  // chamada seria puro custo, a cada minuto, para um item que nem aparece.
+  const naoVistas = useDeteccoesNaoVistas(aiFeatureEnabled);
+  const contador = formatarContador(naoVistas);
+
   const visibleSections = NAV_SECTIONS
     .map((section) => ({
       ...section,
@@ -196,6 +202,14 @@ export function Sidebar({
                     >
                       <Icon className="w-4 h-4 shrink-0" />
                       <span className="text-[12.5px] font-medium flex-1 truncate">{label}</span>
+                      {path === '/ia' && contador && (
+                        <span
+                          className="shrink-0 rounded-full bg-[hsl(var(--primary))] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-[hsl(var(--primary-foreground))] tabular-nums"
+                          aria-label={`${naoVistas} detecção(ões) não vista(s)`}
+                        >
+                          {contador}
+                        </span>
+                      )}
                     </div>
                   </Link>
                 ) : (
@@ -210,10 +224,17 @@ export function Sidebar({
                             }`}
                         >
                           <Icon className="w-4 h-4 shrink-0" />
+                          {/* Menu recolhido não tem espaço para o número: vira um
+                              ponto. A contagem exata fica no tooltip, que já existe. */}
+                          {path === '/ia' && contador && (
+                            <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[hsl(var(--primary))]" aria-hidden />
+                          )}
                         </div>
                       </Link>
                     </TooltipTrigger>
-                    <TooltipContent side="right" className="text-xs">{label}</TooltipContent>
+                    <TooltipContent side="right" className="text-xs">
+                      {label}{path === '/ia' && contador ? ` · ${contador} não vista(s)` : ''}
+                    </TooltipContent>
                   </Tooltip>
                 );
               })}

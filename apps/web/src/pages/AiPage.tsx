@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Brain, Check, Info, Loader2, RefreshCw, Square, SquareDashed } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PainelDeDeteccoes } from '../components/PainelDeDeteccoes';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
@@ -106,35 +108,65 @@ export default function AiPage() {
   const mostrarCaixa = settings?.showObjectBox !== false;
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="page-hdr">
         <div>
           <p className="page-sub">
             {objetoLiberado
-              ? `Detecção de objeto liberada para ${classes.length} tipo(s) · ${rodando} de ${escopo.length} câmera(s) usando.`
-              : 'Detecção de objeto não liberada para esta instalação.'}
+              ? `Reconhece ${classes.length} tipo(s) de objeto · ${rodando} de ${escopo.length} câmera(s) usando.`
+              : 'Reconhecimento de objeto não liberado para esta instalação.'}
           </p>
         </div>
-        <button type="button" onClick={() => void carregar()} className="btn btn-secondary btn-sm" disabled={carregando}>
-          {carregando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Atualizar
-        </button>
       </div>
 
-      {erro && (
-        <div className="mx-4 mt-3 rounded-lg border border-[hsl(var(--destructive)_/_0.3)] bg-[hsl(var(--destructive)_/_0.08)] px-3 py-2 text-xs text-[hsl(var(--destructive))]">
-          {erro}
-        </div>
-      )}
+      {/* A ORDEM DAS ABAS É A ORDEM DAS PERGUNTAS, da mais frequente para a mais
+          rara. O operador abre a IA para ver O QUE ELA ACHOU — isso é todo dia.
+          Configurar é uma vez por câmera, no dia da instalação. Até 13/08/2026
+          estava invertido: a página abria num formulário, e a fila de detecções
+          (a única tela em que a IA devolve valor visível) estava fora do menu. */}
+      <Tabs defaultValue="deteccoes" className="flex min-h-0 flex-1 flex-col">
+        <TabsList className="mx-4 mt-3 h-8 w-fit shrink-0 border border-border bg-card">
+          {[
+            ['deteccoes', 'Detecções'],
+            ['cameras', 'Câmeras'],
+            ['ajustes', 'Ajustes'],
+          ].map(([valor, rotulo]) => (
+            <TabsTrigger key={valor} value={valor} className="h-6 px-3 text-xs">
+              {rotulo}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <section className="rounded-lg border border-border bg-card">
-          <div className="border-b border-border px-4 py-3">
-            <h2 className="text-sm font-medium">Onde a detecção de objeto roda</h2>
-            <p className="mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">
-              A detecção de objeto é cara. Por padrão ela liga sozinha nas câmeras que têm{' '}
-              <strong className="font-medium">linha de perímetro desenhada</strong> — desenhar a linha já é o pedido.
-            </p>
+        <TabsContent value="deteccoes" className="mt-2 min-h-0 flex-1 focus-visible:outline-none">
+          <PainelDeDeteccoes comCabecalho={false} />
+        </TabsContent>
+
+        <TabsContent value="cameras" className="mt-0 min-h-0 flex-1 overflow-y-auto focus-visible:outline-none">
+          {erro && (
+            <div className="mx-4 mt-3 rounded-lg border border-[hsl(var(--destructive)_/_0.3)] bg-[hsl(var(--destructive)_/_0.08)] px-3 py-2 text-xs text-[hsl(var(--destructive))]">
+              {erro}
+            </div>
+          )}
+          <div className="p-4">
+            <section className="rounded-lg border border-border bg-card">
+          <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
+            <div>
+              <h2 className="text-sm font-medium">Onde procurar objetos</h2>
+              <p className="mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">
+                Reconhecer objeto custa processamento. Por padrão liga sozinho nas câmeras que
+                têm <strong className="font-medium">linha desenhada</strong> — desenhar a linha já é o pedido.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void carregar()}
+              className="btn btn-secondary btn-sm shrink-0"
+              disabled={carregando}
+              aria-label="Atualizar lista de câmeras"
+            >
+              {carregando ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
+              Atualizar
+            </button>
           </div>
 
           {!escopo.length ? (
@@ -168,9 +200,12 @@ export default function AiPage() {
               ))}
             </div>
           )}
-        </section>
+            </section>
+          </div>
+        </TabsContent>
 
-        <div className="space-y-4">
+        <TabsContent value="ajustes" className="mt-0 min-h-0 flex-1 overflow-y-auto focus-visible:outline-none">
+          <div className="grid gap-4 p-4 sm:grid-cols-2 xl:max-w-3xl">
           <section className="rounded-lg border border-border bg-card">
             <div className="border-b border-border px-4 py-3">
               <h2 className="text-sm font-medium">Exibição no Ao Vivo</h2>
@@ -204,7 +239,7 @@ export default function AiPage() {
             <div className="border-b border-border px-4 py-3">
               <h2 className="flex items-center gap-2 text-sm font-medium">
                 <Brain className="h-3.5 w-3.5" aria-hidden />
-                O que pode ser detectado
+                O que procurar
               </h2>
             </div>
             <div className="px-4 py-3">
@@ -221,6 +256,22 @@ export default function AiPage() {
                   Nenhum tipo de objeto liberado. Só a detecção de movimento está ativa.
                 </p>
               )}
+              {/* O trabalho invisível: a supressão de luz piscando e de movimento
+                  crônico é o que separa este sistema dos concorrentes, e até
+                  13/08/2026 nenhuma tela dizia que existia. O cliente não sabia
+                  o que tinha comprado. */}
+              <div className="mt-3 rounded-md border border-border px-2.5 py-2">
+                <p className="text-[10px] font-medium">O que a IA descarta sozinha</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-3.5 text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
+                  <li>Luz que pisca com ritmo de máquina — letreiro, LED, sinaleira.</li>
+                  <li>Região que se mexe o tempo todo — bandeira, água, folha ao vento.</li>
+                  <li>Objeto que apareceu num quadro só, sem se confirmar nos seguintes.</li>
+                </ul>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
+                  É o que evita gravar a noite inteira por causa de uma lâmpada. Não precisa
+                  configurar nada — já está ativo em todas as câmeras.
+                </p>
+              </div>
               {/* Explicar POR QUE isto não é editável aqui evita a frustração de
                   procurar o botão que não existe. */}
               <div className="mt-3 flex gap-2 rounded-md bg-[hsl(var(--muted)_/_0.4)] px-2.5 py-2">
@@ -232,8 +283,9 @@ export default function AiPage() {
               </div>
             </div>
           </section>
-        </div>
-      </div>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
