@@ -28,8 +28,12 @@ test('buildBrandColorCss: cores padrão ou vazias NÃO sobrescrevem nada (DRAC i
 test('buildBrandColorCss: gera regras :root (claro) e .dark (escuro) do accent', () => {
   const css = buildBrandColorCss({ useDefaultColors: false, primaryColor: '#000000', lightPrimaryColor: '#ffffff' });
   assert.ok(css);
-  assert.match(css!, /:root:not\(\.dark\)\{--primary:0 0% 100%;--ring:0 0% 100%;--primary-foreground:0 0% 0%;\}/);
-  assert.match(css!, /\.dark\{--primary:0 0% 0%;--ring:0 0% 0%;--primary-foreground:0 0% 100%;\}/);
+  // Cada tema no seu bloco, com o accent do tema. Casamos o PREFIXO do bloco, não
+  // a regra fechada: o mesmo bloco também carrega a família --acc* (ver o teste
+  // "a marca alcança a família --acc"), e travar a chave `}` aqui fazia esta
+  // asserção quebrar a cada token novo sem nada ter regredido de fato.
+  assert.match(css!, /:root:not\(\.dark\)\{--primary:0 0% 100%;--ring:0 0% 100%;--primary-foreground:0 0% 0%;/);
+  assert.match(css!, /\.dark\{--primary:0 0% 0%;--ring:0 0% 0%;--primary-foreground:0 0% 100%;/);
 });
 
 test('buildBrandColorCss: mapeia a PALETA completa (fundo/texto/borda/card/secondary/muted/accent) no tema claro', () => {
@@ -148,4 +152,52 @@ test('buildBrandColorCss: paleta clara CHEIA + escura PELA METADE não embranque
   // E o que o cliente REALMENTE escolheu continua valendo no escuro.
   assert.match(escuro, new RegExp(`--primary:${hexToHslChannels('#ffb407')!};`));
   assert.match(escuro, new RegExp(`--background:${hexToHslChannels('#0e0c08')!};`));
+});
+
+// ── A FAMÍLIA --acc* (camada de design) também segue a marca ────────────────
+// Regressão do relato "sumiu a personalização do D-GUARDIAN" (13/08/2026): a
+// marca só alcançava --primary; --acc continuava #0B6BD6, e a borda superior do
+// login e o degradê do cartão ficavam AZUIS num cliente de identidade amarela.
+
+test('a marca alcança a família --acc, não só --primary', () => {
+  const css = buildBrandColorCss({ primaryColor: '#ffb407', lightPrimaryColor: '#ffb407' }) ?? '';
+  assert.match(css, /--acc:#ffb407/, 'o acento da camada de design tem de virar a cor do cliente');
+  assert.doesNotMatch(css, /0B6BD6/i, 'não pode sobrar o azul padrão do DRAC');
+  for (const v of ['--acc-dim', '--acc-bdr', '--acc-text', '--acc-on']) {
+    assert.ok(css.includes(v), `faltou ${v} — o tom fica pela metade`);
+  }
+});
+
+test('--acc-dim e --acc-bdr saem do acento do cliente, com a opacidade de cada tema', () => {
+  const css = buildBrandColorCss({ primaryColor: '#ffb407', lightPrimaryColor: '#ffb407' }) ?? '';
+  const claro = css.split('.dark{')[0];
+  const escuro = css.split('.dark{')[1] ?? '';
+  assert.match(claro, /--acc-dim:rgba\(255,180,7,0\.09\)/, 'tema claro: mesma opacidade do token padrão');
+  assert.match(escuro, /--acc-dim:rgba\(255,180,7,0\.14\)/, 'tema escuro: mesma opacidade do token padrão');
+  assert.match(claro, /--acc-bdr:rgba\(255,180,7,0\.28\)/);
+  assert.match(escuro, /--acc-bdr:rgba\(255,180,7,0\.34\)/);
+});
+
+test('--acc-text corrige a luminosidade para continuar legível em cada tema', () => {
+  // Amarelo puro (L=51%) como TEXTO sobre fundo branco é ilegível: tem de escurecer.
+  const css = buildBrandColorCss({ primaryColor: '#ffb407', lightPrimaryColor: '#ffb407' }) ?? '';
+  const claro = css.split('.dark{')[0];
+  const escuro = css.split('.dark{')[1] ?? '';
+  const lum = (bloco: string) => Number(/--acc-text:hsl\(\d+ \d+% (\d+)%\)/.exec(bloco)?.[1]);
+  assert.ok(lum(claro) <= 42, `tema claro precisa escurecer o acento (veio ${lum(claro)}%)`);
+  assert.ok(lum(escuro) >= 75, `tema escuro precisa clarear o acento (veio ${lum(escuro)}%)`);
+});
+
+test('--acc-on é o texto legível SOBRE o acento (preto no amarelo, branco no azul)', () => {
+  const amarelo = buildBrandColorCss({ primaryColor: '#ffb407' }) ?? '';
+  assert.match(amarelo, /--acc-on:hsl\(0 0% 0%\)/, 'sobre amarelo, texto preto');
+  const azul = buildBrandColorCss({ primaryColor: '#0B6BD6' }) ?? '';
+  assert.match(azul, /--acc-on:hsl\(0 0% 100%\)/, 'sobre azul escuro, texto branco');
+});
+
+test('sem cor de marca válida, nenhum --acc é emitido (o padrão DRAC fica intocado)', () => {
+  assert.equal(buildBrandColorCss({ primaryColor: 'nao-hex' }), null);
+  assert.equal(buildBrandColorCss({ useDefaultColors: true, primaryColor: '#ffb407' }), null);
+  const soFundo = buildBrandColorCss({ backgroundColor: '#0e0c08' }) ?? '';
+  assert.doesNotMatch(soFundo, /--acc/, 'cliente que só trocou o fundo não pode ganhar acento novo');
 });

@@ -1,7 +1,9 @@
 // Conversão de cor de marca (hex) para os canais HSL que as CSS vars do tema usam
 // (ex.: '--primary: 212 90% 44%'). Puro, AUTOCONTIDO (sem import relativo, para
-// rodar sob o type-stripping nativo do Node nos testes) e testável. Aplicamos só o
-// ACCENT (primary/ring): worst case é um accent trocado, nunca um painel quebrado.
+// rodar sob o type-stripping nativo do Node nos testes) e testável. Cobre AS DUAS
+// famílias de acento do app — os tokens shadcn (--primary/--ring) e os tokens da
+// camada de design (--acc*) —, porque cobrir só a primeira deixava metade da
+// interface no azul do DRAC (ver comentário em buildThemeVars).
 
 function parseHex(hex: string | null | undefined): { r: number; g: number; b: number } | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? '').trim());
@@ -40,6 +42,24 @@ export function readableForegroundChannels(bgHex: string | null | undefined): st
   return lum > 0.4 ? '0 0% 0%' : '0 0% 100%';
 }
 
+/** Canais HSL com a luminosidade forçada para dentro de [min, max]. */
+function comLuminosidadeEntre(hex: string, min: number, max: number): string | null {
+  const canais = hexToHslChannels(hex);
+  if (!canais) return null;
+  const m = /^(\d+) (\d+)% (\d+)%$/.exec(canais);
+  if (!m) return null;
+  const l = Math.min(max, Math.max(min, Number(m[3])));
+  return `${m[1]} ${m[2]}% ${l}%`;
+}
+
+/** '#0B6BD6' + 0.09 → 'rgba(11,107,214,0.09)'. null se o hex for inválido. */
+function comTransparencia(hex: string, alfa: number): string | null {
+  const rgb = parseHex(hex);
+  if (!rgb) return null;
+  const c = (v: number) => Math.round(v * 255);
+  return `rgba(${c(rgb.r)},${c(rgb.g)},${c(rgb.b)},${alfa})`;
+}
+
 // Cores de UM tema (claro OU escuro). Cada campo é o hex do cliente para aquele
 // papel semântico; ausente/inválido → mantém o token DRAC daquele papel.
 type ThemeColors = {
@@ -56,7 +76,7 @@ type ThemeColors = {
 // Declarações `--var:canais` de UM tema. Só emite a var quando a cor do cliente é
 // válida; nunca recolore um texto sem também recolorir a superfície dele (assim o
 // contraste — texto legível — é sempre garantido, do cliente ou calculado por WCAG).
-function buildThemeVars(c: ThemeColors): string[] {
+function buildThemeVars(c: ThemeColors, escuro: boolean): string[] {
   const decls: string[] = [];
 
   // Acento (primary/ring) + texto legível sobre ele.
@@ -64,6 +84,30 @@ function buildThemeVars(c: ThemeColors): string[] {
   if (primary) {
     const primaryFg = hexToHslChannels(c.buttonText) ?? readableForegroundChannels(c.primary);
     decls.push(`--primary:${primary}`, `--ring:${primary}`, `--primary-foreground:${primaryFg}`);
+
+    // A FAMÍLIA --acc* TAMBÉM É ACENTO, e ficava de fora. O app tem duas famílias
+    // de cor em paralelo: os tokens shadcn (--primary, em canais HSL) e os tokens
+    // da camada de design (--acc/--acc-dim/--acc-bdr/--acc-text/--acc-on, em cor
+    // literal), herdados do mock. A marca só reescrevia a primeira — então em 102
+    // pontos de 20 telas o azul #0B6BD6 do DRAC continuava aparecendo por baixo da
+    // identidade do cliente. O cliente D-GUARDIAN (amarelo #ffb407) via a borda
+    // superior do login e o degradê do cartão AZUIS, e relatou como "sumiu a
+    // personalização". Não sumiu: nunca tinha chegado ali.
+    //
+    // Os valores derivados imitam a relação que os tokens padrão já tinham entre
+    // si, em vez de inventar números: transparências para preenchimento/borda, e
+    // uma versão do acento com luminosidade corrigida para servir de TEXTO sobre
+    // a superfície do tema (num tema claro o acento precisa escurecer; num escuro,
+    // clarear). Sem isso, um acento amarelo viraria texto ilegível no tema claro.
+    const acento = String(c.primary);
+    const dim = comTransparencia(acento, escuro ? 0.14 : 0.09);
+    const bdr = comTransparencia(acento, escuro ? 0.34 : 0.28);
+    const texto = escuro ? comLuminosidadeEntre(acento, 75, 100) : comLuminosidadeEntre(acento, 0, 42);
+    decls.push(`--acc:${acento}`);
+    if (dim) decls.push(`--acc-dim:${dim}`);
+    if (bdr) decls.push(`--acc-bdr:${bdr}`);
+    if (texto) decls.push(`--acc-text:hsl(${texto})`);
+    decls.push(`--acc-on:hsl(${primaryFg})`);
   }
 
   // Fundo da tela + texto legível sobre o fundo.
@@ -140,7 +184,7 @@ export function buildBrandColorCss(input: BrandColorInput): string | null {
     text: input.lightTextColor,
     textSub: input.lightTextSubColor,
     border: input.lightBorderColor,
-  });
+  }, false);
   const dark = buildThemeVars({
     primary: input.primaryColor,
     buttonText: input.buttonTextColor,
@@ -150,7 +194,7 @@ export function buildBrandColorCss(input: BrandColorInput): string | null {
     text: input.textColor,
     textSub: input.textSubColor,
     border: input.borderColor,
-  });
+  }, true);
   if (light.length === 0 && dark.length === 0) return null;
   const rules: string[] = [];
   // `:not(.dark)` NÃO é firula de especificidade — é o que impede o tema claro de
