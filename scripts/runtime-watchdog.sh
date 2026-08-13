@@ -155,6 +155,46 @@ if [ -n "$site_rows" ]; then
   done <<< "$site_rows"
 fi
 
+# ── 8) GPU SUMIU E DEIXOU CONTÊINER PRESO NO RUNTIME NVIDIA ───────────────────
+# Reincidência MEDIDA duas vezes (14h e 5h fora): a GPU some do host (nvidia-smi
+# para de responder, /dev/nvidia0 evapora) e um container marcado com o runtime
+# nvidia não sobe mais — "failed to initialize NVML: Driver Not Loaded",
+# Exited 128. O resto fica de pé, então nada reexecuta o drac-up.sh e a matriz
+# fica fora até alguém perceber.
+#
+# O drac-up.sh SEMPRE soube escolher CPU/GPU — mas só QUANDO executado. Faltava
+# quem o reexecutasse quando a placa cai EM VOO. É esta seção.
+#
+# A decisão é função PURA (testável sem derrubar a GPU de verdade): só cura
+# quando as DUAS coisas são verdade ao mesmo tempo —
+#   1. existe container vms-* PARADO (exited/restarting) com runtime nvidia;
+#   2. a GPU está inutilizável (nvidia-smi falha E /dev/nvidia0 ausente).
+# Nunca dispara com sistema são nem com GPU sã. Quando dispara, a produção JÁ
+# está quebrada nesse ponto exato — então relançar em CPU só recupera.
+gpu_recovery_decision() { # $1=ha_container_preso_nvidia(0/1) $2=gpu_morta(0/1) -> recover|ok
+  if [ "$1" = "1" ] && [ "$2" = "1" ]; then echo "recover"; else echo "ok"; fi
+}
+
+# Sinal 1: algum container vms-* parado herdou o runtime nvidia?
+preso_nvidia=0
+for cid in $(docker ps -a --filter "name=vms-" --filter "status=exited" --filter "status=restarting" -q 2>/dev/null); do
+  [ "$(docker inspect "$cid" --format '{{.HostConfig.Runtime}}' 2>/dev/null || true)" = "nvidia" ] \
+    && { preso_nvidia=1; break; }
+done
+# Sinal 2: a GPU está morta? (driver não comunica E device sumiu)
+gpu_morta=0
+if ! command -v nvidia-smi >/dev/null 2>&1 || ! nvidia-smi >/dev/null 2>&1; then
+  [ -e /dev/nvidia0 ] || gpu_morta=1
+fi
+if [ "$(gpu_recovery_decision "$preso_nvidia" "$gpu_morta")" = "recover" ]; then
+  # AUTO-CURA: relança em CPU pelo caminho documentado (idempotente).
+  if [ -x "$INFRA_DIR/drac-up.sh" ] && (cd "$INFRA_DIR" && ./drac-up.sh --sem-gpu >/dev/null 2>&1); then
+    actions+=("gpu-sumiu:relancado-em-cpu")
+  else
+    issues+=("gpu-sumiu:relanco-cpu-falhou")
+  fi
+fi
+
 # ── STATUS JSON (consumível pela Central / painel) ───────────────────────────
 # Montado em shell PURO, de propósito. Isto rodava em `node`, que não existe no
 # host de um servidor de cliente — o Node mora nos containers, é essa a
