@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import { SettingsService } from '../settings/settings.service';
 import {
   applyQuarantine,
@@ -16,6 +16,19 @@ import {
 } from '../camera-stream/helpers/hwaccel-presets.helper';
 
 const run = promisify(execFile);
+
+// Parsers PUROS do /proc/driver/nvidia — separados para teste. O formato vem do
+// módulo do kernel, não da nossa infra, então os fixtures dos testes são cópias
+// literais do que o D-GUARDIAN devolveu em 13/08/2026.
+/** "Model: \t NVIDIA GeForce RTX 5060 Ti" → o nome, ou null. */
+export function parseNvidiaProcModel(information: string): string | null {
+  return /^Model:\s*(.+)$/m.exec(information)?.[1]?.trim() ?? null;
+}
+
+/** "NVRM version: ... for x86_64  610.43.02  Release Build ..." → "610.43.02", ou null. */
+export function parseNvidiaProcDriver(version: string): string | null {
+  return /\s(\d+\.\d+(?:\.\d+)?)\s/.exec(version)?.[1] ?? null;
+}
 
 export type GpuVendor = 'nvidia' | 'intel' | 'none';
 
@@ -132,13 +145,55 @@ export class GpuService {
       '--query-gpu=name,driver_version,memory.total',
       '--format=csv,noheader,nounits',
     ]);
-    if (!r.ok || !r.stdout.trim()) return null;
-    const [name, driver, memTotal] = r.stdout.trim().split('\n')[0].split(',').map((s) => s.trim());
-    return {
-      name: name || null,
-      driver: driver || null,
-      memoryTotalMb: Number.isFinite(Number(memTotal)) ? Math.round(Number(memTotal)) : null,
-    };
+    if (r.ok && r.stdout.trim()) {
+      const [name, driver, memTotal] = r.stdout.trim().split('\n')[0].split(',').map((s) => s.trim());
+      return {
+        name: name || null,
+        driver: driver || null,
+        memoryTotalMb: Number.isFinite(Number(memTotal)) ? Math.round(Number(memTotal)) : null,
+      };
+    }
+    // `nvidia-smi` NÃO EXISTE no container da API — só o do MediaMTX (imagem
+    // nvenc) o carrega. Aqui a placa chega como runtime + device nodes, sem os
+    // utilitários. O efeito de depender só do binário foi medido no D-GUARDIAN
+    // (13/08/2026): RTX 5060 Ti presente e transcodando, e a tela de Aceleração
+    // anunciando "vendor: intel" porque a detecção falhou e caiu no ramo da
+    // iGPU (/dev/dri). Informação errada para o admin decidir em cima.
+    //
+    // O kernel, porém, expõe a placa em /proc/driver/nvidia independentemente
+    // de container — é o MÓDULO do driver falando, o mesmo /proc do host. Se o
+    // device node está aqui, esses arquivos também estão. `nvidia-smi` continua
+    // preferido (traz memória total, que o /proc não dá); isto é o degrau
+    // abaixo, não o substituto.
+    return this.detectNvidiaViaProc();
+  }
+
+  // `protected`, não `private`: os testes constroem o serviço via Object.create
+  // e trocam este método para simular container com/sem device node.
+  protected async detectNvidiaViaProc(): Promise<GpuStatus['device'] | null> {
+    try {
+      await access('/dev/nvidia0');
+    } catch {
+      return null;
+    }
+    let name: string | null = null;
+    let driver: string | null = null;
+    try {
+      const gpus = await readdir('/proc/driver/nvidia/gpus');
+      if (gpus.length > 0) {
+        const info = await readFile(`/proc/driver/nvidia/gpus/${gpus[0]}/information`, 'utf8');
+        name = parseNvidiaProcModel(info);
+      }
+    } catch {
+      // Sem /proc/driver/nvidia mas COM /dev/nvidia0: placa entregue de forma
+      // parcial. Ainda é nvidia — segue com nome nulo em vez de mentir "intel".
+    }
+    try {
+      driver = parseNvidiaProcDriver(await readFile('/proc/driver/nvidia/version', 'utf8'));
+    } catch {
+      // idem: versão desconhecida não muda o vendedor.
+    }
+    return { name, driver, memoryTotalMb: null };
   }
 
   private async hasIntelRenderNode(): Promise<boolean> {
