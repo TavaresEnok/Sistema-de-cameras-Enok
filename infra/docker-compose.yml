@@ -661,6 +661,15 @@ services:
       - AI_LATEST_FRAME_ONLY=${AI_LATEST_FRAME_ONLY:-true}
       - AI_CPU_RESERVE_PERCENT=${AI_CPU_RESERVE_PERCENT:-25}
       - AI_INFERENCE_WORKER_COUNT=${AI_INFERENCE_WORKER_COUNT:-}
+      # DEIXE VAZIO. O serviço mede os núcleos REAIS da máquina e calcula o
+      # orçamento (descontando AI_CPU_RESERVE_PERCENT) — que é o que uma frota
+      # de servidores diferentes precisa. Cravar um número quebra em toda
+      # máquina menor que aquela onde ele foi escolhido.
+      # MEDIDO em 13/08/2026 (6 núcleos, yolo26n INT8 640 OpenVINO, mediana de
+      # 12 inferências): 2→24,7ms · 3→17,5 · 4→14,1 · 5→11,8 · 6→11,7 · 8→11,9 ·
+      # 10→12,9. A curva satura em 5-6 e PIORA acima disso. A instalação vinha
+      # com 10 cravado: +9% de latência e CPU roubada da gravação, com o próprio
+      # serviço reportando `within_budget: false` no /health sem ninguém ler.
       - AI_INFERENCE_THREADS_OVERRIDE=${AI_INFERENCE_THREADS_OVERRIDE:-}
       - AI_SELECTED_DETECTION_FPS=${AI_SELECTED_DETECTION_FPS:-3.0}
       - AI_SELECTED_ANALYSIS_WIDTH=${AI_SELECTED_ANALYSIS_WIDTH:-960}
