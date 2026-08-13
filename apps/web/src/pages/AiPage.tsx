@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Brain, Check, Info, Loader2, RefreshCw, Square, SquareDashed } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PainelDeDeteccoes } from '../components/PainelDeDeteccoes';
+import { PainelDeCamerasDaIa } from '../components/PainelDeCamerasDaIa';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
@@ -141,67 +142,13 @@ export default function AiPage() {
           <PainelDeDeteccoes comCabecalho={false} />
         </TabsContent>
 
-        <TabsContent value="cameras" className="mt-0 min-h-0 flex-1 overflow-y-auto focus-visible:outline-none">
-          {erro && (
-            <div className="mx-4 mt-3 rounded-lg border border-[hsl(var(--destructive)_/_0.3)] bg-[hsl(var(--destructive)_/_0.08)] px-3 py-2 text-xs text-[hsl(var(--destructive))]">
-              {erro}
-            </div>
-          )}
-          <div className="p-4">
-            <section className="rounded-lg border border-border bg-card">
-          <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
-            <div>
-              <h2 className="text-sm font-medium">Onde procurar objetos</h2>
-              <p className="mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">
-                Reconhecer objeto custa processamento. Por padrão liga sozinho nas câmeras que
-                têm <strong className="font-medium">linha desenhada</strong> — desenhar a linha já é o pedido.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => void carregar()}
-              className="btn btn-secondary btn-sm shrink-0"
-              disabled={carregando}
-              aria-label="Atualizar lista de câmeras"
-            >
-              {carregando ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
-              Atualizar
-            </button>
-          </div>
-
-          {!escopo.length ? (
-            <div className="px-4 py-8 text-center text-xs text-[hsl(var(--muted-foreground))]">
-              {carregando ? 'Carregando…' : 'Nenhuma câmera cadastrada.'}
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {escopo.map((cam) => (
-                <div key={cam.cameraId} className="flex flex-wrap items-center gap-2 px-4 py-2.5">
-                  <span
-                    className={`h-2 w-2 shrink-0 rounded-full ${cam.roda ? 'bg-[hsl(var(--status-online))]' : 'bg-[hsl(var(--muted-foreground)_/_0.4)]'}`}
-                    aria-hidden
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-medium">{cam.nome}</div>
-                    <div className="text-[10px] text-[hsl(var(--muted-foreground))]">{cam.explicacao}</div>
-                  </div>
-                  <select
-                    value={cam.objectMode}
-                    onChange={(e) => void mudarModo(cam.cameraId, e.target.value as EscopoDaCamera['objectMode'])}
-                    disabled={!objetoLiberado}
-                    className="h-7 rounded border border-border bg-background px-2 text-[11px] disabled:opacity-45"
-                    aria-label={`Modo de detecção de objeto da câmera ${cam.nome}`}
-                  >
-                    <option value="auto">Automático (com linha)</option>
-                    <option value="sempre">Sempre ligado</option>
-                    <option value="nunca">Nunca</option>
-                  </select>
-                </div>
-              ))}
-            </div>
-          )}
-            </section>
-          </div>
+        <TabsContent value="cameras" className="mt-2 min-h-0 flex-1 focus-visible:outline-none">
+          <PainelDeCamerasDaIa
+            escopo={escopo}
+            objetoLiberado={objetoLiberado}
+            onMudarModo={mudarModo}
+            onRecarregarEscopo={carregar}
+          />
         </TabsContent>
 
         <TabsContent value="ajustes" className="mt-0 min-h-0 flex-1 overflow-y-auto focus-visible:outline-none">

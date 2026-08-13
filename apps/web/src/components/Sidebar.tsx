@@ -93,7 +93,18 @@ const NAV_SECTIONS: NavSection[] = [
  * flag `aiFeatureEnabled` do servidor — visível onde a IA foi contratada
  * (a matriz), escondida onde não foi (um cliente sem IA). Ver mais abaixo.
  */
-const PAGINAS_OCULTAS = new Set<string>(['/investigation', '/audit-logs', '/review']);
+const PAGINAS_OCULTAS = new Set<string>([
+  '/investigation',
+  '/audit-logs',
+  // A fila de detecções e o desenho de linha/áreas deixaram de ser itens de
+  // menu porque viraram ABAS da Inteligência (13/08/2026) — não porque foram
+  // desativadas. "Perímetro" era uma tela inteira para um trabalho que pertence
+  // à câmera, e desenhar acontecia em dois lugares diferentes gravando no mesmo
+  // campo. As rotas seguem de pé: /review é o destino do link direto da
+  // notificação do aplicativo, e /perimetro?cameraId= ainda é linkável.
+  '/review',
+  '/perimetro',
+]);
 
 /* Role accent — no red for admin; steel blue hierarchy */
 const ROLE_COLOR: Record<string, string> = {

@@ -82,3 +82,48 @@ test('a tela conta o que a IA descarta sozinha', () => {
   assert.match(ai, /descarta sozinha/i, 'a explicação do que é filtrado sumiu da tela');
   assert.match(ai, /pisca/i, 'não menciona a supressão de luz piscando');
 });
+
+// ── FASE 2: a aba Câmeras ───────────────────────────────────────────────────
+
+test('a aba Câmeras mostra o ESTADO real, não só a configuração', () => {
+  // A diferença que a auditoria apontou: "esta câmera está marcada para
+  // detectar" versus "esta câmera está detectando agora". O backend já media
+  // tudo isto e não havia tela.
+  const painel = ler('src/components/PainelDeCamerasDaIa.tsx');
+  assert.match(painel, /\/ai\/intelligence/, 'não consulta o estado real da IA');
+  assert.match(painel, /inferenceFps|estadoDaIa/, 'não mostra se está mesmo analisando');
+  assert.match(painel, /restart/, 'não oferece reiniciar a análise da câmera');
+});
+
+test('o estado é traduzido pelo helper, nunca montado na tela', () => {
+  // Espalhar a decisão pelo JSX faria a regra divergir da versão testada.
+  const painel = semComentarios(ler('src/components/PainelDeCamerasDaIa.tsx'));
+  assert.match(painel, /import \{[^}]*estadoDaIa/s, 'a tela não usa o tradutor testado');
+  assert.doesNotMatch(painel, /camera_ai_disabled|filtered_by_ai_env/,
+    'chave de sistema vazou para a tela — §11 dos padrões');
+});
+
+test('atualiza sozinha: estado que muda em silêncio não pode ficar velho na tela', () => {
+  const painel = semComentarios(ler('src/components/PainelDeCamerasDaIa.tsx'));
+  assert.match(painel, /setInterval/, 'sem atualização periódica a tela mente até alguém apertar Atualizar');
+});
+
+test('desenhar linha e áreas acontece em UM lugar só', () => {
+  // Eram duas telas com o mesmo componente gravando no mesmo campo, e nada
+  // dizia que eram a mesma coisa.
+  const painel = ler('src/components/PainelDeCamerasDaIa.tsx');
+  assert.match(painel, /DetectionZonesEditor/, 'a aba Câmeras não embute o editor');
+  const menu = semComentarios(ler('src/components/Sidebar.tsx'));
+  assert.match(menu, /'\/perimetro'/, 'Perímetro deveria sair do MENU');
+  const app = semComentarios(ler('src/App.tsx'));
+  assert.match(app, /path="\/perimetro"/, 'a ROTA /perimetro não pode morrer — ainda é linkável');
+});
+
+test('o vínculo com gravação é mostrado, e o controle continua na aba Gravação', () => {
+  // Mover o gatilho de lugar quebraria a memória de quem já usa; não mostrar o
+  // vínculo deixaria o usuário sem entender que as duas coisas conversam.
+  const painel = ler('src/components/PainelDeCamerasDaIa.tsx');
+  assert.match(painel, /recordingMode === 'object'/, 'não detecta a câmera que grava por IA');
+  assert.match(painel, /Grava quando a IA confirma/, 'não explica o vínculo');
+  assert.doesNotMatch(painel, /recordingMode:\s*'object'/, 'a aba de IA não pode ESCREVER o gatilho');
+});

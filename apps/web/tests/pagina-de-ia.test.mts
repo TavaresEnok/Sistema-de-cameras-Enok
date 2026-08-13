@@ -15,6 +15,11 @@ const semComentarios = (t: string) => t
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PAGINA = 'src/pages/AiPage.tsx';
+// A lista de câmeras saiu da página e virou a aba "Câmeras"
+// (`components/PainelDeCamerasDaIa.tsx`), que junta o que era só configuração
+// com o ESTADO REAL de cada processador. As regras abaixo continuam valendo —
+// mudou o arquivo onde moram, não o que protegem.
+const PAINEL_CAMERAS = 'src/components/PainelDeCamerasDaIa.tsx';
 
 test('a instalação NÃO pode escolher as classes de objeto', () => {
   // Se a tela oferecesse a escolha, o operador ampliaria sozinho o escopo do
@@ -39,13 +44,16 @@ test('o "mostrar quadrado no objeto" existe e diz que não afeta a detecção', 
 test('cada câmera mostra POR QUE roda ou não', () => {
   // "Sem linha desenhada", "desligado pelo operador" e "não liberado para esta
   // instalação" pedem ações DIFERENTES; um interruptor apagado não diria qual.
-  const fonte = read(PAGINA);
-  assert.match(fonte, /cam\.explicacao/);
-  assert.match(fonte, /escopo-objeto/, 'a tela precisa consultar a decisão do backend');
+  assert.match(read(PAGINA), /escopo-objeto/, 'a tela precisa consultar a decisão do backend');
+  // Agora a explicação vem de DUAS fontes que se completam: o escopo diz por que
+  // a busca por objeto roda ou não, e o estado diz se o processador está de pé.
+  const painel = read(PAINEL_CAMERAS);
+  assert.match(painel, /estadoDaIa\(/, 'o painel não traduz o estado do processador');
+  assert.match(painel, /estado\.detalhe/, 'o painel não mostra a explicação ao operador');
 });
 
 test('os três modos por câmera estão disponíveis', () => {
-  const fonte = read(PAGINA);
+  const fonte = read(PAINEL_CAMERAS);
   for (const modo of ['auto', 'sempre', 'nunca']) {
     assert.match(fonte, new RegExp(`value="${modo}"`), `falta o modo ${modo}`);
   }
@@ -55,9 +63,8 @@ test('os três modos por câmera estão disponíveis', () => {
 test('sem objeto liberado, os controles ficam desabilitados — não escondidos', () => {
   // Esconder faria parecer defeito; desabilitar com explicação mostra que a
   // função existe e depende de outra coisa.
-  const fonte = read(PAGINA);
-  assert.match(fonte, /disabled=\{!objetoLiberado\}/);
-  assert.match(fonte, /Nenhum tipo de objeto liberado/);
+  assert.match(read(PAINEL_CAMERAS), /disabled=\{!objetoLiberado\}/);
+  assert.match(read(PAGINA), /Nenhum tipo de objeto liberado/);
 });
 
 test('falha de rede não zera a tela', () => {
