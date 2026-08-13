@@ -6,6 +6,7 @@ import {
   formatarAtrasoDoQuadro,
   resumirErro,
   resumoDaFrota,
+  podeDesligarIa,
 } from '../src/lib/estado-da-ia.ts';
 
 // A decisão de estado da IA erra em SILÊNCIO: uma câmera parada anunciada como
@@ -128,4 +129,28 @@ test('resumo da frota responde em um olhar', () => {
   assert.equal(resumoDaFrota({ servicoOnline: true, rodando: 0, esperadas: 0 }).tom, 'neutro', 'ninguém ligou IA ainda: não é falha');
   assert.equal(resumoDaFrota({ servicoOnline: false }).tom, 'erro');
   assert.match(resumoDaFrota({ servicoOnline: false }).titulo, /fora do ar/);
+});
+
+// ── Desligar a IA: quando é permitido ───────────────────────────────────────
+
+test('câmera que grava por movimento do SISTEMA não pode ter a IA desligada', () => {
+  // Gêmea da regra do backend. Custou 7 câmeras ONLINE e mudas por 10 horas:
+  // o gerenciador tentava subir a análise, achava o detector desligado, e
+  // desistia a cada 5 minutos — sem nada na tela indicando problema.
+  const r = podeDesligarIa({ recordingMode: 'motion', motionTrigger: 'SYSTEM' });
+  assert.equal(r.pode, false);
+  assert.match(r.motivo!, /aba Gravação/, 'não diz ONDE resolver');
+});
+
+test('modo objeto também depende do detector do sistema', () => {
+  assert.equal(podeDesligarIa({ recordingMode: 'object', motionTrigger: 'SYSTEM' }).pode, false);
+});
+
+test('gravação contínua ou gatilho da CÂMERA: pode desligar', () => {
+  // Contínua não depende de detector; CAMERA usa o da própria câmera. Forçar o
+  // MOG2 nesses casos gastaria CPU sem nada em troca.
+  assert.equal(podeDesligarIa({ recordingMode: 'continuous', motionTrigger: 'SYSTEM' }).pode, true);
+  assert.equal(podeDesligarIa({ recordingMode: 'motion', motionTrigger: 'CAMERA' }).pode, true);
+  assert.equal(podeDesligarIa({ recordingMode: 'manual', motionTrigger: 'SYSTEM' }).pode, true);
+  assert.equal(podeDesligarIa({}).pode, true);
 });

@@ -184,6 +184,35 @@ export function estadoDaIa(linha: LinhaDeInteligencia | null | undefined): Estad
 }
 
 /**
+ * A IA desta câmera pode ser desligada, ou é OBRIGATÓRIA?
+ *
+ * Gêmea de `detectorObrigatorio` no backend (cameras/helpers/motion-detector).
+ * Quando a câmera grava por movimento E quem detecta é o sistema, desligar a IA
+ * é contraditório: o gerenciador tenta subir a análise, encontra o detector
+ * desligado e desiste — a cada 5 minutos, para sempre. Custou 7 câmeras nesse
+ * estado, 5 delas ONLINE e mudas por 10 horas, sem nada na tela indicando
+ * problema. O backend força `true` nesse caso.
+ *
+ * A tela precisa saber disto ANTES do clique: oferecer um botão que o servidor
+ * vai ignorar é pior que não oferecer botão nenhum — o operador desliga, vê
+ * ligado de novo e conclui que o sistema está quebrado.
+ */
+export function podeDesligarIa(camera: {
+  recordingMode?: string | null;
+  motionTrigger?: string | null;
+}): { pode: boolean; motivo: string | null } {
+  const armada = camera.recordingMode === 'motion' || camera.recordingMode === 'object';
+  if (armada && camera.motionTrigger === 'SYSTEM') {
+    return {
+      pode: false,
+      motivo: 'Esta câmera grava quando há movimento, e é a IA que detecta o movimento. '
+        + 'Para desligá-la, mude o modo de gravação na aba Gravação da câmera.',
+    };
+  }
+  return { pode: true, motivo: null };
+}
+
+/**
  * Resumo do topo da aba: uma frase sobre a frota inteira.
  *
  * Existe porque contar caixinha na tela é trabalho do sistema, não do operador.

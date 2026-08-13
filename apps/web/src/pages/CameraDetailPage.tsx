@@ -1655,7 +1655,7 @@ export default function CameraDetailPage() {
             {[
               ['playback', 'Reprodução'],
               ['events', 'Eventos'],
-              ['zones', 'Zonas'],
+              ['zones', 'Onde olhar'],
               ['settings', 'Configurações'],
             ].map(([tab, label]) => (
               <TabsTrigger key={tab} value={tab} className="h-6 px-3 text-xs capitalize">
@@ -1722,10 +1722,19 @@ export default function CameraDetailPage() {
           <TabsContent value="zones" className="mt-4">
             <div className="rounded-lg border border-border bg-card/60 p-5">
               <div className="mb-3">
-                <h3 className="text-sm font-semibold">Zonas de detecção</h3>
+                <h3 className="text-sm font-semibold">Onde olhar</h3>
                 <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
-                  Desenhe sobre a imagem as áreas que devem ser ignoradas (rua, árvores, céu) ou as únicas
-                  que devem ser monitoradas. Reduz alarme falso sem perder o que importa.
+                  Desenhe sobre a imagem: a <strong className="font-medium">linha</strong> que não se
+                  atravessa, as <strong className="font-medium">áreas monitoradas</strong> e as
+                  <strong className="font-medium"> áreas ignoradas</strong> (rua, árvores, céu).
+                  Reduz alarme falso sem perder o que importa.
+                </p>
+                {/* Mesmo desenho, mesmo campo, duas portas — a de dentro da
+                    câmera e a da aba Câmeras da Inteligência. Dizer isso evita
+                    o operador achar que precisa desenhar duas vezes (era a
+                    queixa: /perimetro e esta aba pareciam telas diferentes). */}
+                <p className="mt-1 text-[11px] text-[hsl(var(--muted-foreground))]">
+                  É o mesmo desenho que aparece em Inteligência › Câmeras — desenhar aqui ou lá dá no mesmo.
                 </p>
               </div>
               {cam?.id ? (

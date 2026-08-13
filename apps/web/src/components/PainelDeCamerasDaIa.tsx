@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { ArrowLeft, Loader2, RefreshCw, RotateCw, Spline, SquareDashed, EyeOff, Video } from 'lucide-react';
+import { ArrowLeft, Loader2, Power, RefreshCw, RotateCw, Spline, SquareDashed, EyeOff, Video } from 'lucide-react';
 import { Link } from 'wouter';
 import { DetectionZonesEditor, type DetectionZone } from './DetectionZonesEditor';
 import { getApiBaseUrl } from '../lib/api-base';
@@ -13,6 +13,7 @@ import {
   resumoDaFrota,
   formatarAtrasoDoQuadro,
   type LinhaDeInteligencia,
+  podeDesligarIa,
   type TomDoEstado,
 } from '../lib/estado-da-ia';
 import { custoTipico, custoTotal, formatarCusto, descreverCusto } from '../lib/custo-da-ia';
@@ -95,6 +96,7 @@ export function PainelDeCamerasDaIa({
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [reiniciando, setReiniciando] = useState<string | null>(null);
+  const [alternando, setAlternando] = useState<string | null>(null);
   /** Câmera cuja cena está sendo desenhada. Null = lista. */
   const [desenhando, setDesenhando] = useState<string | null>(null);
   const [zonasPorCamera, setZonasPorCamera] = useState<Record<string, DetectionZone[]>>({});
@@ -150,6 +152,29 @@ export function PainelDeCamerasDaIa({
       setReiniciando(null);
     }
   }, [client, carregar]);
+
+  /** Liga/desliga a IA NESTA câmera. O portão de verdade é o do servidor; aqui
+   *  só não oferecemos o que ele recusaria (ver `podeDesligarIa`). */
+  const alternarIa = useCallback(async (cameraId: string, nome: string, ligar: boolean) => {
+    setAlternando(cameraId);
+    try {
+      await client.patch(`/cameras/${cameraId}`, { aiEnabled: ligar });
+      toast({
+        title: ligar ? 'IA ligada' : 'IA desligada',
+        description: `${nome} ${ligar ? 'volta a ser analisada' : 'deixa de ser analisada'} em alguns segundos.`,
+      });
+      window.setTimeout(() => void carregar(), 4000);
+      void onRecarregarEscopo();
+    } catch (e) {
+      toast({
+        title: 'Não foi possível mudar',
+        description: getRequestErrorMessage(e, 'Falha ao mudar a IA desta câmera.'),
+        variant: 'destructive',
+      });
+    } finally {
+      setAlternando(null);
+    }
+  }, [client, carregar, onRecarregarEscopo]);
 
   const zonasDe = useCallback((cameraId: string): DetectionZone[] => {
     const local = zonasPorCamera[cameraId];
@@ -323,6 +348,43 @@ export function PainelDeCamerasDaIa({
                         <Spline className="h-3.5 w-3.5" aria-hidden />
                         Onde olhar
                       </button>
+
+                      {(() => {
+                        const trava = podeDesligarIa({
+                          recordingMode: camera?.recordingMode,
+                          motionTrigger: (camera as { motionTrigger?: string } | undefined)?.motionTrigger,
+                        });
+                        const ligada = linha?.participation?.aiEnabled !== false;
+                        // Câmera cuja IA é OBRIGATÓRIA não ganha botão: oferecer
+                        // um controle que o servidor vai ignorar é pior que não
+                        // oferecer — o operador desliga, vê ligado de novo, e
+                        // conclui que o sistema está quebrado.
+                        if (!trava.pode) {
+                          return (
+                            <span
+                              className="text-[10px] text-[hsl(var(--muted-foreground))]"
+                              title={trava.motivo ?? undefined}
+                            >
+                              IA obrigatória aqui
+                            </span>
+                          );
+                        }
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => void alternarIa(cam.cameraId, cam.nome, !ligada)}
+                            disabled={alternando === cam.cameraId}
+                            className={`btn btn-sm ${ligada ? 'btn-secondary' : 'btn-primary'}`}
+                            title={ligada ? 'Desligar a IA nesta câmera' : 'Ligar a IA nesta câmera'}
+                            aria-label={`${ligada ? 'Desligar' : 'Ligar'} a IA da câmera ${cam.nome}`}
+                          >
+                            {alternando === cam.cameraId
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                              : <Power className="h-3.5 w-3.5" aria-hidden />}
+                            {ligada ? 'Desligar' : 'Ligar'}
+                          </button>
+                        );
+                      })()}
 
                       {estado.ofereceReiniciar && (
                         <button

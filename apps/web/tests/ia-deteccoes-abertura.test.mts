@@ -179,3 +179,31 @@ test('o filtro vazio explica se o DIA estava vazio ou só o filtro', () => {
   assert.match(p, /avisoDoFiltro/, 'não mostra o resultado do filtro ao operador');
   assert.match(p, /explicarResultado\(/, 'não usa a explicação testada');
 });
+
+// ── Lacunas fechadas depois da revisão ──────────────────────────────────────
+
+test('ligar/desligar a IA da câmera mora na aba Câmeras', () => {
+  // O achado "7 controles em 5 telas" só fica resolvido quando o interruptor
+  // principal está onde o estado é mostrado. Antes a tela dizia "ligue nas
+  // configurações da câmera" e não oferecia o caminho.
+  const painel = ler('src/components/PainelDeCamerasDaIa.tsx');
+  assert.match(painel, /alternarIa/, 'não há ação de ligar/desligar');
+  assert.match(painel, /aiEnabled: ligar/, 'não escreve o campo no backend');
+});
+
+test('câmera com IA OBRIGATÓRIA não ganha botão que o servidor ignoraria', () => {
+  // Oferecer o controle e ver o servidor desfazer faria o operador concluir que
+  // o sistema está quebrado. A regra é gêmea da do backend.
+  const painel = ler('src/components/PainelDeCamerasDaIa.tsx');
+  assert.match(painel, /podeDesligarIa\(/, 'não consulta a trava');
+  assert.match(painel, /IA obrigatória aqui/, 'não explica por que não há botão');
+});
+
+test('a aba da câmera e a da IA chamam o desenho pelo MESMO nome', () => {
+  // Eram "Zonas" e "Onde olhar" para o mesmo campo e o mesmo editor.
+  const detalhe = ler('src/pages/CameraDetailPage.tsx');
+  assert.match(detalhe, /\['zones', 'Onde olhar'\]/, 'a aba da câmera continua com nome antigo');
+  assert.doesNotMatch(detalhe, /Zonas de detecção/, 'o título antigo sobreviveu');
+  assert.match(detalhe, /mesmo desenho que aparece em Inteligência/,
+    'não avisa que é o mesmo desenho — a queixa era desenhar duas vezes');
+});
