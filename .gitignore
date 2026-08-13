@@ -51,6 +51,11 @@ webrtc-implementation-guide/
 # Local planning/audit notes
 *.md
 !README.md
+# NÃO é nota de planejamento: é a regra que toda tela precisa seguir, citada
+# nos comentários do código e nas revisões. Ficou fora do git por causa do
+# `*.md` acima e passou a existir só na máquina de quem a escreveu — mesma
+# armadilha dos scripts da VPN (descoberto em 13/08/2026, ao editá-la).
+!apps/web/src/lib/PADROES-DE-INTERFACE.md
 !docs/
 !docs/**/*.md
 !apps/mobile/README.md
