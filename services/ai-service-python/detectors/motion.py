@@ -1,3 +1,4 @@
+import time
 from collections import deque
 
 import cv2
@@ -132,6 +133,14 @@ class MotionDetector(Detector):
         self._chronic_threshold = float(MOTION_PROFILE.get("motion_chronic_threshold", 0.45))
         self._chronic_warmup = int(MOTION_PROFILE.get("motion_chronic_warmup", 60))
         self._chronic = None
+        # Descarte de disparo periódico (ver detectors/periodicity.py). Cobre a
+        # lacuna do mapa crônico: luz de piscada LENTA tem atividade baixa e
+        # escapa por lá, mas o relógio dela a entrega aqui.
+        self._periodic_enabled = bool(MOTION_PROFILE.get("motion_periodic_suppression", True))
+        self._periodic_cells = int(MOTION_PROFILE.get("motion_periodic_cells", 8))
+        self._periodic_min_samples = int(MOTION_PROFILE.get("motion_periodic_min_samples", 6))
+        self._periodic_cv_max = float(MOTION_PROFILE.get("motion_periodic_cv_max", 0.15))
+        self._periodic = None
 
     def _build_zone_factor_map(self, zones: list | None):
         """Mapa de NÍVEL DE SENSIBILIDADE por pixel (0..len(_FATOR_POR_NIVEL)-1).
@@ -410,6 +419,33 @@ class MotionDetector(Detector):
             self._consecutive_hits = 0
             self._motion_streak = 0
             return []
+
+        # ── DESCARTE DE DISPARO PERIÓDICO ───────────────────────────────────
+        # O que é MECÂNICO tem relógio: luz de aviso, letreiro, ventilador. O
+        # mapa crônico acima só pega o que fica ativo boa parte do tempo — uma
+        # luz que pisca DEVAGAR (a cada 8-10 s) tem atividade baixa e escapa por
+        # ele. Aqui a região é julgada pela REGULARIDADE dos intervalos: gente é
+        # irregular (chega, para, volta), máquina não.
+        # Descartado componente a componente para não perder a pessoa que passa
+        # ao lado da luz no mesmo quadro.
+        if self._periodic_enabled and components:
+            if self._periodic is None:
+                from .periodicity import DetectorDePeriodicidade
+                self._periodic = DetectorDePeriodicidade(
+                    celulas=self._periodic_cells,
+                    minimo_amostras=self._periodic_min_samples,
+                    cv_maximo=self._periodic_cv_max,
+                )
+            agora = time.monotonic()
+            restantes = [
+                c for c in components
+                if not self._periodic.e_periodico(c[1], self.frame_width, self.frame_height, agora)
+            ]
+            if not restantes:
+                self._consecutive_hits = 0
+                self._motion_streak = 0
+                return []
+            components = restantes
 
         best_area = components[0][0]
 

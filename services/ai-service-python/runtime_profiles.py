@@ -109,6 +109,14 @@ MOTION_PROFILE = {
     "motion_chronic_alpha": _env_float("MOTION_CHRONIC_ALPHA", 0.02),   # aprende luz piscando em ~20 s a 2 fps
     "motion_chronic_threshold": _env_float("MOTION_CHRONIC_THRESHOLD", 0.45),  # ativa ~metade do tempo = crônico
     "motion_chronic_warmup": _env_int("MOTION_CHRONIC_WARMUP", 60),     # não suprime nada antes disto
+    # DESCARTE DE DISPARO PERIÓDICO: o que é mecânico tem relógio (luz de aviso,
+    # letreiro, ventilador). Cobre a lacuna do mapa crônico acima, que só pega o
+    # que fica ativo boa parte do tempo — piscada LENTA passa por lá e é pega
+    # aqui, pela REGULARIDADE dos intervalos. Ver detectors/periodicity.py.
+    "motion_periodic_suppression": str(os.getenv("MOTION_PERIODIC_SUPPRESSION", "true")).strip().lower() != "false",
+    "motion_periodic_cells": _env_int("MOTION_PERIODIC_CELLS", 8),          # grade grosseira: pessoa andando muda de célula
+    "motion_periodic_min_samples": _env_int("MOTION_PERIODIC_MIN_SAMPLES", 6),  # não julga com poucas amostras
+    "motion_periodic_cv_max": _env_float("MOTION_PERIODIC_CV_MAX", 0.15),   # intervalos variando <15% = máquina
     # Congela o aprendizado do fundo nos primeiros N frames de movimento (padrão
     # Frigate): quem entra e FICA continua sendo detectado; mudança persistente
     # (carro estacionado) é absorvida gradualmente depois.
