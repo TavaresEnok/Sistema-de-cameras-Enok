@@ -1,0 +1,79 @@
+#!/bin/bash
+# VIGIA DA VPN: prova SERVICO (camera responde) e CIFRA (existe SA ESP).
+#
+# Historico dos dois furos ja pagos com cliente fora do ar:
+#
+#  12/08 — o vigia so provava ALCANCE. Com o IPsec caido e so o L2TP de pe, o
+#          peer responde igual: dava verde enquanto o video atravessava a
+#          internet EM CLARO (medido: 0 SAs ESP, 0 politicas). Nasceu dai a
+#          prova de cifra.
+#
+#  13/08 — o vigia pingava o PEER primeiro e aceitava isso como prova. Mas o
+#          peer e' a ponta do proprio tunel: responde sempre que o PPP esta de
+#          pe. Naquele dia o tunel voltou como ppp1, a rota de 192.168.100.0/24
+#          nao foi reposta, e as 3 cameras ficaram inalcancaveis por 8 HORAS
+#          com o vigia rodando a cada 3 min e registrando ZERO. Ele media o
+#          cano, nao a agua.
+#
+# Regra que ficou: SO CONTA O QUE O CLIENTE COMPRA. O cliente compra imagem de
+# camera, entao a prova e' uma CAMERA respondendo. O peer serve apenas para
+# distinguir "tunel caiu" de "tunel de pe e rota perdida" — e essa distincao
+# muda o remedio, nao o veredito.
+PEER=192.168.100.168
+CAMERAS='192.168.100.110 192.168.100.112 192.168.100.194'
+REDE=192.168.100.0/24
+
+alcanca_camera() {
+  for c in $CAMERAS; do ping -c1 -W3 "$c" >/dev/null 2>&1 && return 0; done
+  return 1
+}
+alcanca_peer() { ping -c1 -W3 "$PEER" >/dev/null 2>&1; }
+tem_cifra()    { [ "$(ip xfrm state 2>/dev/null | grep -c 'proto esp')" -gt 0 ]; }
+iface_do_tunel() {
+  ip -4 -o addr show 2>/dev/null \
+    | awk -v par="$PEER" '$2 ~ /^ppp/ && index($0, "peer " par) {print $2; exit}'
+}
+
+# O charon precisa estar vivo para renovar chave. Sem ele, a SA atual expira e
+# ninguem refaz — o tunel vira texto claro sem aviso.
+pgrep -x charon >/dev/null 2>&1 || {
+  logger -t vpn-dguardian "charon MORTO — reerguendo o IPsec pelo systemd"
+  systemctl start strongswan-starter >/dev/null 2>&1
+  sleep 5
+}
+
+if alcanca_camera && tem_cifra; then exit 0; fi
+
+# REMEDIO BARATO ANTES DO CARO: tunel de pe, par respondendo, mas camera fora
+# quase sempre e' rota faltando (ver 13/08). Repor a rota custa milissegundos e
+# nao interrompe nada; refazer o tunel custa ~25 s de gravacao perdida. So se
+# a rota nao resolver e' que se derruba o tunel.
+if ! alcanca_camera && alcanca_peer; then
+  IFACE="$(iface_do_tunel)"
+  if [ -n "$IFACE" ]; then
+    ip route replace "$REDE" dev "$IFACE" 2>/dev/null
+    if alcanca_camera; then
+      logger -t vpn-dguardian "rota $REDE havia sumido — reposta em $IFACE, cameras de volta SEM derrubar o tunel"
+      tem_cifra || logger -t vpn-dguardian "ALERTA: cameras de volta mas SEM CIFRA — refazendo"
+      tem_cifra && exit 0
+    fi
+  fi
+fi
+
+if alcanca_camera && ! tem_cifra; then
+  logger -t vpn-dguardian "ALERTA: tunel passa trafego SEM CIFRA — refazendo"
+else
+  logger -t vpn-dguardian "SEM ALCANCE as cameras — refazendo o tunel"
+fi
+
+/usr/local/sbin/vpn-dguardian up >/dev/null 2>&1
+sleep 25
+if alcanca_camera && tem_cifra; then
+  logger -t vpn-dguardian "tunel restabelecido, cifrado e com cameras alcancaveis"
+elif alcanca_camera; then
+  logger -t vpn-dguardian "GRAVE: tunel voltou SEM CIFRA — investigar o IPsec"
+elif alcanca_peer; then
+  logger -t vpn-dguardian "GRAVE: tunel de pe mas NENHUMA camera responde — rota ou lado do cliente"
+else
+  logger -t vpn-dguardian "FALHOU ao restabelecer — lado do cliente pode estar fora"
+fi

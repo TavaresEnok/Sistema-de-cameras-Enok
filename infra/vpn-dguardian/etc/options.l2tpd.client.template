@@ -1,0 +1,31 @@
+ipcp-accept-local
+ipcp-accept-remote
+refuse-eap
+noccp
+noauth
+persist
+maxfail 0
+holdoff 5
+idle 0
+mtu 1400
+mru 1400
+
+# SALVA-VIDAS 1: a VPN NUNCA vira rota padrão. Sem isto, todo o tráfego da VM
+# (inclusive o SSH 2211 e o HTTPS do cliente) passaria a sair pelo túnel e a
+# máquina ficaria inacessível. Só a rota de 192.168.100.0/24 é adicionada.
+nodefaultroute
+
+# SALVA-VIDAS 2: ausência proposital de "usepeerdns". Aceitar o DNS do peer
+# reescreveria o resolv.conf da VM e quebraria a resolução dela.
+
+# SEGREDO — preencher na instalação (a senha real NÃO vive no git; está no
+# cofre e em /etc/ppp/options.l2tpd.client do host que já roda).
+name Ajust
+password __SENHA_L2TP__
+
+# SONDA DO ENLACE. Sem isto o pppd nao percebe link morto: a interface fica
+# de pe, a rota fica de pe e nada trafega — o "tunel zumbi". Observado em
+# 12/08: ppp0 presente por minutos sem passar um pacote.
+# 3 falhas de 20s = 60s para derrubar e deixar persist/holdoff rediscar.
+lcp-echo-interval 20
+lcp-echo-failure 3

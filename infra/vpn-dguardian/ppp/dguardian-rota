@@ -1,0 +1,32 @@
+#!/bin/sh
+# ROTA DAS CAMERAS — POSTA PELO PROPRIO pppd, EM QUALQUER INTERFACE.
+#
+# Existe por causa de uma falha real (13/08/2026): o tunel caiu, o pppd
+# reconectou sozinho — mas voltou como ppp1, e nao como ppp0. O script
+# `vpn-dguardian` amarrava a rota de 192.168.100.0/24 em ppp0 pelo nome. Com o
+# nome mudado, ninguem recolocou a rota: sobrou so a rota /32 do par.
+#
+# O efeito foi o pior possivel: o tunel parecia PERFEITO (interface de pe, par
+# respondendo ping, 2 SAs ESP cifrando) e as 3 cameras estavam inalcancaveis.
+# O vigia tambem deu verde, porque pingava o par — que e' a ponta do proprio
+# tunel e responde sempre. Ficou 100% fora, em silencio.
+#
+# A licao: rota de tunel nao pode depender do NOME que o kernel sorteia para a
+# interface. Quem sabe o nome certo e' o pppd, e ele entrega no $1/$PPP_IFACE.
+# Este gancho roda a cada subida de PPP, sem intermediario que possa faltar.
+#
+# Argumentos do pppd: $1=interface $2=tty $3=vel $4=IP local $5=IP do par
+IFACE="${1:-$PPP_IFACE}"
+PAR="${5:-$PPP_REMOTE}"
+REDE=192.168.100.0/24
+
+# So o tunel do D-GUARDIAN. Um PPP qualquer (modem, outro cliente) nao pode
+# sequestrar a rota da rede das cameras.
+case "$PAR" in
+  192.168.100.*) ;;
+  *) exit 0 ;;
+esac
+
+ip route replace "$REDE" dev "$IFACE"
+logger -t vpn-dguardian "rota $REDE posta em $IFACE (par $PAR)"
+exit 0

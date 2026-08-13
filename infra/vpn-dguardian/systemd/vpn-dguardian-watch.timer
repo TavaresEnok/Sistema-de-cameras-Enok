@@ -1,0 +1,10 @@
+[Unit]
+Description=Verifica o alcance das cameras do cliente a cada 3 minutos
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=3min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

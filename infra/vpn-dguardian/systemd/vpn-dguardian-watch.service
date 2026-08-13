@@ -1,0 +1,6 @@
+[Unit]
+Description=Vigia de alcance da VPN — prova que passa trafego, nao so que a interface existe
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vpn-dguardian-watch

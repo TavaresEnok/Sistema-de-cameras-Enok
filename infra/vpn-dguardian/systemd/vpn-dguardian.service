@@ -1,0 +1,20 @@
+[Unit]
+Description=VPN L2TP/IPsec ate as cameras do cliente (D-GUARDIAN)
+Documentation=man:vpn-dguardian
+After=network-online.target strongswan-starter.service xl2tpd.service
+Wants=network-online.target
+Requires=xl2tpd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/vpn-dguardian up
+ExecStop=/usr/local/sbin/vpn-dguardian down
+# Subir o tunel envolve IPsec + L2TP + PPP: 3 min de folga.
+TimeoutStartSec=180
+# Se o cliente estiver fora na hora do boot, tenta de novo em vez de desistir.
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

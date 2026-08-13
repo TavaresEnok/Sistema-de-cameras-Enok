@@ -1,0 +1,107 @@
+#!/bin/bash
+# VPN do D-GUARDIAN: liga/desliga/diagnostica o túnel até a rede das câmeras.
+#
+#   vpn-dguardian up      liga
+#   vpn-dguardian down    desliga
+#   vpn-dguardian status  mostra o estado e testa as câmeras
+#
+# A rota padrão da VM NUNCA passa pelo túnel (opção `nodefaultroute` em
+# /etc/ppp/options.l2tpd.client). Só 192.168.100.0/24 vai por ele.
+#
+# NADA AQUI PODE CHAMAR A INTERFACE DE "ppp0". O kernel numera na ordem em que
+# as interfaces sobem; se o túnel cair e voltar enquanto a antiga ainda está
+# sendo recolhida, a nova nasce ppp1. Aconteceu em 13/08/2026 às 06:55 e custou
+# 8 horas de cliente fora: o "up" esperou por ppp0 que nunca veio, imprimiu
+# "túnel NO AR:" com o campo VAZIO e não pôs a rota. Quem sabe o nome certo é o
+# pppd — ou se pergunta a ele, ou se procura pelo IP do par.
+set -uo pipefail
+
+CAMERAS='192.168.100.110 192.168.100.112 192.168.100.194'
+REDE='192.168.100.0/24'
+PAR='192.168.100.168'
+
+# A interface do túnel é a que tem o PAR do outro lado — não a de nome bonito.
+iface_do_tunel() {
+  ip -4 -o addr show 2>/dev/null \
+    | awk -v par="$PAR" '$2 ~ /^ppp/ && index($0, "peer " par) {print $2; exit}'
+}
+
+case "${1:-status}" in
+  up)
+    # NAO usar "ipsec restart": ele derruba o charon que o systemd supervisiona
+    # e sobe um "starter" orfao, que morre e nao volta. Medido em 12/08: apos o
+    # vigia rodar, charon=0, SAs ESP=0 — o tunel seguia de pe SEM CIFRA, e o
+    # video do cliente atravessava a internet em claro.
+    # O systemd e' quem deve possuir o daemon; aqui so garantimos que esta vivo.
+    # FAIL-CLOSED: o L2TP so sai se casar com politica IPsec.
+    #
+    # Sem isto o tunel e' fail-OPEN — o L2TP sobe sem IPsec, e quando a cifra
+    # cai o video continua fluindo EM CLARO pela internet. Medido em 12/08:
+    # charon morto, 0 SAs ESP, e as tres cameras respondendo normalmente.
+    # Aqui o pior caso vira "sem imagem", nunca "imagem sem cifra".
+    #
+    # Idempotente e aplicado a cada subida: iptables nao persiste sozinho nesta
+    # maquina (sem netfilter-persistent), e a unidade de boot chama este "up".
+    LNS_IP=$(getent hosts hf2099ybvj0.sn.mynetname.net | awk '{print $1; exit}')
+    if [ -n "$LNS_IP" ]; then
+      iptables -C OUTPUT -d "$LNS_IP" -p udp --dport 1701 -m policy --dir out --pol ipsec -j ACCEPT 2>/dev/null \
+        || iptables -I OUTPUT 1 -d "$LNS_IP" -p udp --dport 1701 -m policy --dir out --pol ipsec -j ACCEPT
+      iptables -C OUTPUT -d "$LNS_IP" -p udp --dport 1701 -j DROP 2>/dev/null \
+        || iptables -I OUTPUT 2 -d "$LNS_IP" -p udp --dport 1701 -j DROP
+    fi
+    systemctl start strongswan-starter >/dev/null 2>&1
+    for _ in $(seq 1 10); do pgrep -x charon >/dev/null 2>&1 && break; sleep 1; done
+    ipsec up dguardian >/dev/null 2>&1 || { echo "IPsec NÃO subiu (fase 1/2)"; exit 1; }
+    systemctl is-active --quiet xl2tpd || systemctl start xl2tpd
+    sleep 2
+    echo "c dguardian" > /var/run/xl2tpd/l2tp-control
+    IFACE=""
+    for _ in $(seq 1 20); do IFACE="$(iface_do_tunel)"; [ -n "$IFACE" ] && break; sleep 1; done
+    if [ -z "$IFACE" ]; then
+      echo "L2TP/PPP não fechou — veja: journalctl -u xl2tpd -n 30"
+      exit 1
+    fi
+    # Cinto e suspensório: o gancho /etc/ppp/ip-up.d/dguardian-rota já põe esta
+    # rota. Repetir aqui é barato (idempotente) e cobre o caso do gancho ter
+    # sido removido por atualização de pacote.
+    ip route replace "$REDE" dev "$IFACE"
+    echo "túnel NO AR em $IFACE: $(ip -4 -br addr show "$IFACE")"
+    # Só declaramos vitória se uma CÂMERA responder. Interface de pé e par
+    # pingando não provam nada: o par É a ponta deste túnel.
+    for ip in $CAMERAS; do
+      ping -c1 -W3 "$ip" >/dev/null 2>&1 && { echo "câmeras alcançáveis (via $ip)"; exit 0; }
+    done
+    echo "ATENÇÃO: túnel de pé mas NENHUMA câmera responde — lado do cliente?"
+    exit 1
+    ;;
+  down)
+    echo "d dguardian" > /var/run/xl2tpd/l2tp-control 2>/dev/null
+    sleep 2
+    ipsec down dguardian >/dev/null 2>&1
+    ip route del "$REDE" 2>/dev/null
+    echo "desligado"
+    ;;
+  status)
+    IFACE="$(iface_do_tunel)"
+    echo "── IPsec ──"
+    ipsec status dguardian 2>/dev/null | grep -E "ESTABLISHED|INSTALLED" || echo "  fase 1/2 fora do ar"
+    echo "── cifra no kernel ──"
+    echo "  SAs ESP: $(ip xfrm state 2>/dev/null | grep -c 'proto esp')"
+    echo "── PPP ──"
+    if [ -n "$IFACE" ]; then ip -4 -br addr show "$IFACE"; else echo "  nenhuma interface com o par $PAR"; fi
+    echo "── rota das câmeras ──"
+    ip route show "$REDE" 2>/dev/null | grep -q . && ip route show "$REDE" || echo "  SEM ROTA para $REDE"
+    echo "── rota padrão (tem de sair por ens18, NUNCA pelo túnel) ──"
+    ip route show default
+    echo "── câmeras ──"
+    for ip in $CAMERAS; do
+      if ping -c1 -W2 "$ip" >/dev/null 2>&1; then
+        rtsp=$(timeout 3 bash -c "</dev/tcp/$ip/554" 2>/dev/null && echo "RTSP 554 aberta" || echo "RTSP 554 fechada")
+        echo "  $ip  responde  ($rtsp)"
+      else
+        echo "  $ip  sem resposta"
+      fi
+    done
+    ;;
+  *) echo "uso: vpn-dguardian {up|down|status}"; exit 2 ;;
+esac
