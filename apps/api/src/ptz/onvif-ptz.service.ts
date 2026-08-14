@@ -7,6 +7,8 @@ import { diagnosticarFalhaPtz } from './helpers/diagnostico-ptz.helper';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { PortCheckerService } from '../common/network/port-checker.service';
 import { injetarWsSecurity, deveTentarWsSecurity } from './helpers/ws-security.helper';
+import { lerCapacidades, lerServicos, reescreverParaHostAlcancavel } from './helpers/onvif-descoberta.helper';
+import { lerPresets, lerPosicao, limitarEixo, escaparXml, type PresetDaCamera } from './helpers/presets-ptz.helper';
 import { assertCameraTargetAllowed } from '../common/network/safe-url.helper';
 import { PtzStateStore } from './ptz-state.store';
 
@@ -554,6 +556,109 @@ export class OnvifPtzService {
     };
   }
 
+  /**
+   * Cache do que a câmera RESPONDEU sobre os próprios endereços.
+   *
+   * A descoberta custa uma requisição. Fazê-la antes de cada comando colocaria
+   * essa ida e volta no meio do joystick — o operador segurando a seta sentiria.
+   * Guardado por câmera+porta, com validade curta: firmware atualizado ou
+   * equipamento trocado no mesmo cadastro se corrige sozinho em minutos.
+   */
+  private readonly enderecosDescobertos = new Map<string, { em: number; ptz?: string; media?: string }>();
+  private readonly validadeDaDescobertaMs = 10 * 60_000;
+
+  private montarGetCapabilities() {
+    return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+  <soap:Body><tds:GetCapabilities><tds:Category>All</tds:Category></tds:GetCapabilities></soap:Body>
+</soap:Envelope>`;
+  }
+
+  private montarGetServices() {
+    return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+  <soap:Body><tds:GetServices><tds:IncludeCapability>false</tds:IncludeCapability></tds:GetServices></soap:Body>
+</soap:Envelope>`;
+  }
+
+  /**
+   * PERGUNTA ao equipamento onde ficam os serviços, em vez de adivinhar.
+   *
+   * Esta é a lacuna que o dono apontou em 14/08/2026, ao ver outra ferramenta
+   * movimentar uma câmera que o DRAC dizia não ter PTZ. A lista de palpites
+   * (`/onvif/ptz_service`, `/onvif/device_service`…) acerta nas marcas que já
+   * vimos e erra em toda câmera que use outro endereço — sempre com o mesmo
+   * sintoma enganoso, "esta câmera não tem PTZ".
+   *
+   * A norma resolve: GetCapabilities/GetServices devolvem os XAddr, as URLs
+   * REAIS daquele equipamento. É o que o Frigate faz (`update_xaddrs()`) antes
+   * de qualquer comando.
+   *
+   * Só o CAMINHO do XAddr é aproveitado: câmera atrás de roteador anuncia o
+   * próprio IP de LAN, inútil de fora. Host e porta continuam sendo os nossos.
+   */
+  private async perguntarEnderecos(entrada: {
+    host: string;
+    porta: number;
+    username: string;
+    password: string;
+    caminhoPreferido?: string | null;
+  }) {
+    const { host, porta } = entrada;
+    const achado: { em: number; ptz?: string; media?: string } = { em: Date.now() };
+    for (const caminho of this.candidateDevicePaths(entrada.caminhoPreferido)) {
+      for (const [corpo, ler] of [
+        [this.montarGetCapabilities(), lerCapacidades] as const,
+        [this.montarGetServices(), lerServicos] as const,
+      ]) {
+        const r = await this.digestSoapRequest({
+          host, port: porta, path: caminho, body: corpo,
+          username: entrada.username, password: entrada.password, timeout: 4000,
+        });
+        if (!r.ok || !r.responseBody) continue;
+        const servicos = ler(r.responseBody);
+        const ptzAnunciado = reescreverParaHostAlcancavel(servicos.ptz, host, porta)?.caminho;
+        const mediaAnunciada = reescreverParaHostAlcancavel(servicos.media, host, porta)?.caminho;
+        if (ptzAnunciado && !achado.ptz) achado.ptz = ptzAnunciado;
+        if (mediaAnunciada && !achado.media) achado.media = mediaAnunciada;
+        if (achado.ptz) break;
+      }
+      if (achado.ptz) break;
+    }
+    if (achado.ptz) {
+      this.logger.log(`ONVIF descoberto ${host}:${porta} ptz=${achado.ptz}${achado.media ? ` media=${achado.media}` : ''}`);
+    }
+    return achado;
+  }
+
+  /** O mesmo, guardando o resultado por câmera para não repetir a pergunta. */
+  private async descobrirEnderecos(camera: Camera, porta: number, auth: { username?: string; password?: string }) {
+    const chave = `${camera.id}:${porta}`;
+    const emCache = this.enderecosDescobertos.get(chave);
+    if (emCache && Date.now() - emCache.em < this.validadeDaDescobertaMs) return emCache;
+    if (!auth.username || !auth.password) return { em: Date.now() };
+    const achado = await this.perguntarEnderecos({
+      host: camera.ip, porta, username: auth.username, password: auth.password, caminhoPreferido: camera.onvifPath,
+    });
+    this.enderecosDescobertos.set(chave, achado);
+    return achado;
+  }
+
+  /**
+   * Os caminhos a tentar, na ordem: o que a câmera DISSE primeiro, depois os
+   * palpites de sempre.
+   *
+   * Quando a câmera já tem caminho aprendido e gravado (`onvifPath`), a
+   * descoberta é pulada — ela já respondeu uma vez, e refazer a pergunta antes
+   * de cada comando colocaria uma ida e volta no meio do joystick.
+   */
+  private async caminhosParaTentar(camera: Camera, porta: number, auth: { username?: string; password?: string }) {
+    const palpites = this.candidatePaths(camera.onvifPath);
+    if (camera.onvifPath?.trim()) return palpites;
+    const { ptz, media } = await this.descobrirEnderecos(camera, porta, auth);
+    return Array.from(new Set([ptz, media, ...palpites].filter((v): v is string => Boolean(v))));
+  }
+
   private async sendPtzWithFallbacks(
     camera: Camera,
     action: 'start' | 'stop',
@@ -566,7 +671,7 @@ export class OnvifPtzService {
     }
 
     const auth = this.resolveOnvifCredentials(camera);
-    const candidatePaths = this.candidatePaths(camera.onvifPath);
+    const candidatePaths = await this.caminhosParaTentar(camera, onvifPort, auth);
     const errors: string[] = [];
 
     if (this.shouldPreferProprietaryPtz(camera)) {
@@ -682,6 +787,10 @@ export class OnvifPtzService {
   private proprietaryPorts(camera: Camera) {
     return Array.from(new Set([
       camera.onvifPort ?? undefined,
+      // A porta HTTP cadastrada vem ANTES dos palpites: quem a preencheu sabe
+      // onde o painel da câmera atende, e é justamente o caso que a varredura
+      // de portas comuns não acerta (equipamento atrás de roteador).
+      camera.httpPort ?? undefined,
       this.proprietaryPtzPort,
       ...this.onvifFallbackPorts,
       80,
@@ -957,7 +1066,7 @@ export class OnvifPtzService {
       return { ok: false, message: 'ONVIF unreachable' };
     }
     const auth = this.resolveOnvifCredentials(camera);
-    const candidatePaths = this.candidatePaths(camera.onvifPath);
+    const candidatePaths = await this.caminhosParaTentar(camera, onvifPort, auth);
     const profileDiscovery = await this.discoverProfileTokens({
       host: camera.ip,
       port: onvifPort,
@@ -988,6 +1097,147 @@ export class OnvifPtzService {
     }
     this.logger.log(`PTZ home camera=${camera.id} ok=false`);
     return { ok: false, message: `Home position não aceita pelos endpoints testados: ${errors.slice(0, 4).join(' | ')}` };
+  }
+
+  private envelopePtz(corpo: string) {
+    return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <soap:Body>${corpo}</soap:Body>
+</soap:Envelope>`;
+  }
+
+  /**
+   * Tenta um comando PTZ em todos os caminhos e perfis conhecidos.
+   *
+   * Presets e movimento absoluto precisam exatamente da mesma dança de
+   * tentativas que mover já fazia — porta, caminho, token de perfil. Extraído
+   * para cá para não haver duas versões dessa lógica se afastando com o tempo:
+   * a câmera que responde a `ContinuousMove` num endereço responde a
+   * `GotoPreset` no mesmo.
+   */
+  private async comandoPtz(camera: Camera, montarCorpo: (profileToken: string) => string, rotulo: string) {
+    const onvifPort = await this.findOnvifPort(camera);
+    if (!onvifPort) return { ok: false as const, message: 'ONVIF unreachable' };
+
+    const auth = this.resolveOnvifCredentials(camera);
+    const caminhos = await this.caminhosParaTentar(camera, onvifPort, auth);
+    const descoberta = await this.discoverProfileTokens({
+      host: camera.ip, port: onvifPort, paths: caminhos,
+      username: auth.username, password: auth.password, timeout: 3000,
+    });
+    const tokens = this.candidateProfileTokens(camera.onvifProfileToken, camera.channel, descoberta.tokens);
+
+    const erros: string[] = [];
+    for (const caminho of caminhos) {
+      for (const profileToken of tokens) {
+        const r = await this.digestSoapRequest({
+          host: camera.ip, port: onvifPort, path: caminho,
+          body: this.envelopePtz(montarCorpo(profileToken)),
+          username: auth.username, password: auth.password, timeout: 6000,
+        });
+        if (r.ok) {
+          return { ok: true as const, message: 'ok', onvifPort, onvifPath: caminho, profileToken, responseBody: r.responseBody };
+        }
+        erros.push(`${caminho} ${profileToken}: ${r.message}`);
+      }
+    }
+    this.logger.log(`PTZ ${rotulo} camera=${camera.id} ok=false`);
+    return { ok: false as const, message: `${rotulo} não aceito pelos endpoints testados: ${erros.slice(0, 3).join(' | ')}` };
+  }
+
+  /**
+   * As posições gravadas NA CÂMERA.
+   *
+   * Em geral já existem: o instalador as grava no painel do equipamento ao
+   * apontar a dome. Nunca eram mostradas aqui — o DRAC só sabia empurrar a
+   * câmera para os lados, que é a forma mais lenta de chegar a um lugar que a
+   * câmera já sabe alcançar sozinha.
+   */
+  async listPresets(camera: Camera): Promise<{ ok: boolean; message: string; presets: PresetDaCamera[] }> {
+    const r = await this.comandoPtz(camera, (t) => `<tptz:GetPresets><tptz:ProfileToken>${t}</tptz:ProfileToken></tptz:GetPresets>`, 'GetPresets');
+    if (!r.ok) return { ok: false, message: r.message, presets: [] };
+    return { ok: true, message: 'ok', presets: lerPresets(r.responseBody ?? '') };
+  }
+
+  /** Vai até uma posição gravada. */
+  async gotoPreset(camera: Camera, presetToken: string, speed?: number) {
+    const velocidade = this.speedToFactor(speed);
+    const r = await this.comandoPtz(
+      camera,
+      (t) => `<tptz:GotoPreset><tptz:ProfileToken>${t}</tptz:ProfileToken>`
+        + `<tptz:PresetToken>${escaparXml(presetToken)}</tptz:PresetToken>`
+        + `<tptz:Speed><tt:PanTilt x="${velocidade}" y="${velocidade}"/><tt:Zoom x="${velocidade}"/></tptz:Speed>`
+        + '</tptz:GotoPreset>',
+      'GotoPreset',
+    );
+    // Ir a um preset é movimento de verdade: o cão de guarda de parada existe
+    // para o caso de o comando iniciar e a rede cair antes do fim.
+    this.logger.log(`PTZ preset camera=${camera.id} preset=${presetToken} ok=${r.ok}`);
+    return r;
+  }
+
+  /**
+   * Grava a posição ATUAL como preset.
+   *
+   * Sem `presetToken`, a câmera cria um novo e devolve o identificador; com
+   * ele, sobrescreve o existente. Quem chama decide — sobrescrever sem querer
+   * apagaria a posição que o instalador ajustou.
+   */
+  async savePreset(camera: Camera, nome: string, presetToken?: string) {
+    return this.comandoPtz(
+      camera,
+      (t) => `<tptz:SetPreset><tptz:ProfileToken>${t}</tptz:ProfileToken>`
+        + `<tptz:PresetName>${escaparXml(nome)}</tptz:PresetName>`
+        + (presetToken ? `<tptz:PresetToken>${escaparXml(presetToken)}</tptz:PresetToken>` : '')
+        + '</tptz:SetPreset>',
+      'SetPreset',
+    );
+  }
+
+  /** Apaga uma posição gravada. */
+  async removePreset(camera: Camera, presetToken: string) {
+    return this.comandoPtz(
+      camera,
+      (t) => `<tptz:RemovePreset><tptz:ProfileToken>${t}</tptz:ProfileToken>`
+        + `<tptz:PresetToken>${escaparXml(presetToken)}</tptz:PresetToken></tptz:RemovePreset>`,
+      'RemovePreset',
+    );
+  }
+
+  /**
+   * Onde a câmera está apontando agora.
+   *
+   * Eixo que a câmera não informa volta `null`, não zero — zero é o centro, e
+   * confundir os dois faria um "voltar à posição anterior" mover a câmera para
+   * um lugar onde ela nunca esteve.
+   */
+  async getPosition(camera: Camera) {
+    const r = await this.comandoPtz(camera, (t) => `<tptz:GetStatus><tptz:ProfileToken>${t}</tptz:ProfileToken></tptz:GetStatus>`, 'GetStatus');
+    if (!r.ok) return { ok: false as const, message: r.message, position: null };
+    return { ok: true as const, message: 'ok', position: lerPosicao(r.responseBody ?? '') };
+  }
+
+  /**
+   * Vai a uma coordenada. É o que destrava ronda, voltar-para-casa por posição
+   * e, mais adiante, o acompanhamento automático de objeto.
+   */
+  async absoluteMove(camera: Camera, alvo: { pan?: number; tilt?: number; zoom?: number }, speed?: number) {
+    const velocidade = this.speedToFactor(speed);
+    const temPanTilt = Number.isFinite(alvo.pan) || Number.isFinite(alvo.tilt);
+    const temZoom = Number.isFinite(alvo.zoom);
+    if (!temPanTilt && !temZoom) {
+      return { ok: false as const, message: 'Nenhum eixo informado.' };
+    }
+    return this.comandoPtz(
+      camera,
+      (t) => `<tptz:AbsoluteMove><tptz:ProfileToken>${t}</tptz:ProfileToken><tptz:Position>`
+        + (temPanTilt ? `<tt:PanTilt x="${limitarEixo(Number(alvo.pan ?? 0))}" y="${limitarEixo(Number(alvo.tilt ?? 0))}"/>` : '')
+        // Zoom vai de 0 a 1 na norma; -1 não existe e faz câmera recusar.
+        + (temZoom ? `<tt:Zoom x="${limitarEixo(Number(alvo.zoom), 0, 1)}"/>` : '')
+        + `</tptz:Position><tptz:Speed><tt:PanTilt x="${velocidade}" y="${velocidade}"/><tt:Zoom x="${velocidade}"/></tptz:Speed>`
+        + '</tptz:AbsoluteMove>',
+      'AbsoluteMove',
+    );
   }
 
   async listRelayOutputs(camera: Camera) {
@@ -1137,12 +1387,27 @@ export class OnvifPtzService {
 
   async detectPtzEndpoint(input: DetectOnvifInput) {
     const ports = Array.from(new Set([input.onvifPort, ...this.onvifFallbackPorts, 80, 2020].filter((v): v is number => Number.isFinite(v as number))));
-    const candidatePaths = this.candidatePaths(input.onvifPath);
+    const palpitesDeCaminho = this.candidatePaths(input.onvifPath);
     const discoveryByPort: Record<number, Awaited<ReturnType<OnvifPtzService['discoverProfileTokens']>>> = {};
 
     for (const port of ports) {
       const reachable = await this.portChecker.check(input.ip, port);
       if (!reachable) continue;
+
+      // PERGUNTAR antes de adivinhar. É a diferença entre "esta câmera não tem
+      // PTZ" e "eu não sabia onde procurar" — a confusão que fez o dono ver
+      // outra ferramenta mover uma câmera que aqui aparecia como fixa.
+      const anunciados = input.username && input.password
+        ? await this.perguntarEnderecos({
+            host: input.ip, porta: port,
+            username: input.username, password: input.password,
+            caminhoPreferido: input.onvifPath,
+          })
+        : { ptz: undefined, media: undefined };
+      const candidatePaths = Array.from(new Set(
+        [anunciados.ptz, anunciados.media, ...palpitesDeCaminho].filter((v): v is string => Boolean(v)),
+      ));
+
       const profileDiscovery = input.username && input.password
         ? await this.discoverProfileTokens({
             host: input.ip,

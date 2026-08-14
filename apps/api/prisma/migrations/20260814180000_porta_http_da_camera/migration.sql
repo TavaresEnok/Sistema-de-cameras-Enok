@@ -1,0 +1,13 @@
+-- Porta HTTP do painel da câmera.
+--
+-- Pedido do dono em 14/08/2026: no cadastro, a porta ONVIF estava escondida em
+-- "Avançado para técnico" e não havia campo para a porta HTTP. Ambas passam a
+-- ficar junto da RTSP.
+--
+-- Opcional por natureza: a maioria das câmeras responde nas portas comuns, que
+-- o sistema já varre. O campo existe para o caso em que ela NÃO responde —
+-- equipamento atrás de roteador com porta encaminhada, que foi exatamente o
+-- caso da Mercusys (51491 externo → 2020 interno).
+--
+-- Coluna anulável: nenhuma câmera existente muda de comportamento.
+ALTER TABLE "Camera" ADD COLUMN "httpPort" INTEGER;

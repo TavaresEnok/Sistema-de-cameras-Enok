@@ -44,6 +44,13 @@ export class CreateCameraDto {
   @Max(65535)
   onvifPort?: number;
 
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  httpPort?: number;
+
   @ValidateIf((o) => o.sourceMode !== 'rtmp_push')
   @IsString()
   username!: string;

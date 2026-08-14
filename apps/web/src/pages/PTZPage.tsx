@@ -23,6 +23,7 @@ import axios from 'axios';
 import { getApiBaseUrl } from '../lib/api-base';
 import { sendPtzCommand, type PTZDirection } from '../lib/ptz';
 import { useAuthStore } from '../store/authStore';
+import { PosicoesDaCamera } from '../components/PosicoesDaCamera';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import {
   situacaoDeDeteccao,
@@ -678,6 +679,16 @@ export default function PTZPage() {
                 onStop={() => void stopMove()}
               />
             </div>
+
+            {selectedCam && (
+              <PosicoesDaCamera
+                key={selectedCam.id}
+                cameraId={selectedCam.id}
+                podeGravar={userRole === 'admin'}
+                desabilitado={controlsDisabled}
+                aoIr={(nome) => { setCommandState('ok'); setLastCommand(`Foi para "${nome}" em ${selectedCam.name}`); }}
+              />
+            )}
           </div>
 
         </div>

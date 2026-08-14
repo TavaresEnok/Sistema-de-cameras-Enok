@@ -75,6 +75,10 @@ model Camera {
   ip                String
   rtspPort          Int     @default(554)
   onvifPort         Int?
+  /// Porta HTTP do painel da câmera. Opcional. Serve para os comandos
+  /// proprietários (cgi-bin) das marcas que não falam ONVIF direito — sem ela,
+  /// o sistema tenta uma lista de portas comuns e às vezes não acerta.
+  httpPort          Int?
   username          String
   passwordEncrypted String
   rtspPath          String?

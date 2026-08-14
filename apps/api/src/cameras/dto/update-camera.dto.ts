@@ -30,6 +30,13 @@ export class UpdateCameraDto {
   @Max(65535)
   onvifPort?: number;
 
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  httpPort?: number;
+
   @IsOptional()
   @IsString()
   username?: string;

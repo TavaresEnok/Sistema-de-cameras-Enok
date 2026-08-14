@@ -182,6 +182,7 @@ function WizardModal({
     ip: string;
     rtspPort: number;
     onvifPort?: number;
+    httpPort?: number;
     username: string;
     password: string;
     rtspPath?: string;
@@ -219,6 +220,7 @@ function WizardModal({
     ip: string;
     rtspPort: number;
     onvifPort?: number;
+    httpPort?: number;
     username?: string;
     password?: string;
     rtspPath?: string;
@@ -323,6 +325,7 @@ function WizardModal({
     ip: '',
     port: '554',
     onvifPort: '',
+    httpPort: '',
     protocol: 'rtsp',
     username: '',
     password: '',
@@ -441,6 +444,7 @@ function WizardModal({
         ip: form.ip.trim(),
         rtspPort: Number(form.port),
         onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : undefined,
+        httpPort: form.httpPort.trim() ? Number(form.httpPort) : undefined,
         username: form.username.trim(),
         password: form.password,
         rtspPath: form.rtspPath.trim() || undefined,
@@ -533,6 +537,7 @@ function WizardModal({
         ip: form.ip.trim(),
         rtspPort: Number(form.port),
         onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : undefined,
+        httpPort: form.httpPort.trim() ? Number(form.httpPort) : undefined,
         username: form.username.trim(),
         password: form.password,
         rtspPath: form.rtspPath.trim() || undefined,
@@ -634,34 +639,47 @@ function WizardModal({
           {step === 0 && (
             <div className="space-y-3">
               <div className="space-y-1">
-                <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Endereço IP</label>
+                <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Endereço IP<span className="ml-0.5 text-red-500">*</span></label>
                 <input value={form.ip} onChange={(e) => updateField('ip', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="192.168.20.149" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta RTSP</label>
+                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta RTSP<span className="ml-0.5 text-red-500">*</span></label>
                   <input value={form.port} onChange={(e) => updateField('port', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="554" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Usuário</label>
+                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Usuário<span className="ml-0.5 text-red-500">*</span></label>
                   <input value={form.username} onChange={(e) => updateField('username', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="admin" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Senha</label>
+                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Senha<span className="ml-0.5 text-red-500">*</span></label>
                   <input type="password" value={form.password} onChange={(e) => updateField('password', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="********" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Canal</label>
                   <input value={form.channel} onChange={(e) => updateField('channel', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="1" />
                 </div>
+                {/* ONVIF e HTTP saíram de "Avançado para técnico" (pedido do dono
+                    em 14/08/2026): é onde se resolve câmera atrás de roteador, e
+                    ninguém procura isso dentro de uma gaveta fechada. Continuam
+                    OPCIONAIS — sem asterisco, e o rótulo diz o que acontece
+                    quando ficam em branco. */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta ONVIF</label>
+                  <input value={form.onvifPort} onChange={(e) => updateField('onvifPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Deixe vazio: eu procuro" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta HTTP</label>
+                  <input value={form.httpPort} onChange={(e) => updateField('httpPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Deixe vazio: eu procuro" />
+                </div>
               </div>
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                <span className="text-red-500">*</span> obrigatórios. As portas ONVIF e HTTP só são
+                necessárias quando a câmera está atrás de um roteador com portas encaminhadas.
+              </p>
               <details className="rounded border border-border bg-background/60 px-3 py-2">
                 <summary className="cursor-pointer text-xs font-medium text-[hsl(var(--muted-foreground))]">Avançado para técnico</summary>
                 <div className="mt-3 grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta ONVIF opcional</label>
-                    <input value={form.onvifPort} onChange={(e) => updateField('onvifPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Automático" />
-                  </div>
                   <div className="space-y-1">
                     <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Protocolo</label>
                     <Select value={form.protocol} onValueChange={(value) => updateField('protocol', value)}>
@@ -1129,6 +1147,7 @@ export default function CamerasPage() {
     ip: string;
     rtspPort: number;
     onvifPort?: number;
+    httpPort?: number;
     username: string;
     password: string;
     rtspPath?: string;
@@ -1172,6 +1191,7 @@ export default function CamerasPage() {
     ip: string;
     rtspPort: number;
     onvifPort?: number;
+    httpPort?: number;
     username?: string;
     password?: string;
     rtspPath?: string;

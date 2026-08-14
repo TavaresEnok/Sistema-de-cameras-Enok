@@ -22,6 +22,108 @@ export class PtzController {
     private readonly ptzCapability: PtzCapabilityService,
   ) {}
 
+  /**
+   * As posições gravadas na câmera.
+   *
+   * Leitura pura — não move nada — então basta poder CONTROLAR a câmera, o
+   * mesmo portão do resto do PTZ.
+   */
+  @Roles(UserRole.OPERATOR)
+  @RequirePermission('ptzControl')
+  @Get(':cameraId/presets')
+  async listarPresets(@CurrentUser() user: AuthUser, @Param('cameraId') cameraId: string) {
+    await this.accessControlService.assertCanControlCamera(user, cameraId);
+    const camera = await this.camerasService.getCameraOrThrow(cameraId);
+    const r = await this.ptzService.listPresets(camera);
+    return r.ok
+      ? { status: 'ok', presets: r.presets }
+      : { status: 'error', message: r.message, presets: [] };
+  }
+
+  @Roles(UserRole.OPERATOR)
+  @RequirePermission('ptzControl')
+  @Post(':cameraId/presets/:presetToken/goto')
+  async irParaPreset(
+    @CurrentUser() user: AuthUser,
+    @Param('cameraId') cameraId: string,
+    @Param('presetToken') presetToken: string,
+    @Body() corpo: { speed?: number },
+    @Req() req: Request,
+  ) {
+    await this.accessControlService.assertCanControlCamera(user, cameraId);
+    const camera = await this.camerasService.getCameraOrThrow(cameraId);
+    const r = await this.ptzService.gotoPreset(camera, presetToken, corpo?.speed);
+    await this.auditService.log(user.id, 'ptz.preset_goto', 'Camera', cameraId, { presetToken, ok: r.ok }, req);
+    return r.ok ? { status: 'ok', cameraId, presetToken, details: r } : { status: 'error', message: r.message };
+  }
+
+  /**
+   * Gravar e apagar posição mexem no equipamento de forma que o próximo
+   * operador herda — por isso exigem quem ADMINISTRA a câmera, e não só quem
+   * a controla. Apagar o preset "portão" que o instalador ajustou é o tipo de
+   * estrago que não se desfaz de dentro do sistema.
+   */
+  @Roles(UserRole.ADMIN)
+  @RequirePermission('cameraConfig')
+  @Post(':cameraId/presets')
+  async gravarPreset(
+    @CurrentUser() user: AuthUser,
+    @Param('cameraId') cameraId: string,
+    @Body() corpo: { name?: string; presetToken?: string },
+    @Req() req: Request,
+  ) {
+    await this.accessControlService.assertCanAdminCamera(user, cameraId);
+    const nome = String(corpo?.name ?? '').trim();
+    if (!nome) return { status: 'error', message: 'Dê um nome à posição.' };
+    const camera = await this.camerasService.getCameraOrThrow(cameraId);
+    const r = await this.ptzService.savePreset(camera, nome, corpo?.presetToken);
+    await this.auditService.log(user.id, 'ptz.preset_save', 'Camera', cameraId, { name: nome, ok: r.ok }, req);
+    return r.ok ? { status: 'ok', cameraId, name: nome } : { status: 'error', message: r.message };
+  }
+
+  @Roles(UserRole.ADMIN)
+  @RequirePermission('cameraConfig')
+  @Post(':cameraId/presets/:presetToken/remove')
+  async apagarPreset(
+    @CurrentUser() user: AuthUser,
+    @Param('cameraId') cameraId: string,
+    @Param('presetToken') presetToken: string,
+    @Req() req: Request,
+  ) {
+    await this.accessControlService.assertCanAdminCamera(user, cameraId);
+    const camera = await this.camerasService.getCameraOrThrow(cameraId);
+    const r = await this.ptzService.removePreset(camera, presetToken);
+    await this.auditService.log(user.id, 'ptz.preset_remove', 'Camera', cameraId, { presetToken, ok: r.ok }, req);
+    return r.ok ? { status: 'ok', cameraId, presetToken } : { status: 'error', message: r.message };
+  }
+
+  /** Onde a câmera está apontando agora. Eixo não informado volta null. */
+  @Roles(UserRole.OPERATOR)
+  @RequirePermission('ptzControl')
+  @Get(':cameraId/position')
+  async posicao(@CurrentUser() user: AuthUser, @Param('cameraId') cameraId: string) {
+    await this.accessControlService.assertCanControlCamera(user, cameraId);
+    const camera = await this.camerasService.getCameraOrThrow(cameraId);
+    const r = await this.ptzService.getPosition(camera);
+    return r.ok ? { status: 'ok', position: r.position } : { status: 'error', message: r.message, position: null };
+  }
+
+  @Roles(UserRole.OPERATOR)
+  @RequirePermission('ptzControl')
+  @Post(':cameraId/absolute')
+  async moverAbsoluto(
+    @CurrentUser() user: AuthUser,
+    @Param('cameraId') cameraId: string,
+    @Body() corpo: { pan?: number; tilt?: number; zoom?: number; speed?: number },
+    @Req() req: Request,
+  ) {
+    await this.accessControlService.assertCanControlCamera(user, cameraId);
+    const camera = await this.camerasService.getCameraOrThrow(cameraId);
+    const r = await this.ptzService.absoluteMove(camera, corpo ?? {}, corpo?.speed);
+    await this.auditService.log(user.id, 'ptz.absolute', 'Camera', cameraId, { pan: corpo?.pan ?? null, tilt: corpo?.tilt ?? null, zoom: corpo?.zoom ?? null, ok: r.ok }, req);
+    return r.ok ? { status: 'ok', cameraId, details: r } : { status: 'error', message: r.message };
+  }
+
   @Roles(UserRole.OPERATOR)
   @RequirePermission('ptzControl')
   @Post(':cameraId/move')
