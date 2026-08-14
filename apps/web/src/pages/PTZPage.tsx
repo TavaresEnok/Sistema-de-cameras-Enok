@@ -19,10 +19,16 @@ import { SeletorDeCamera } from '../components/SeletorDeCamera';
 import { Slider } from '@/components/ui/slider';
 import { toast } from '../hooks/use-toast';
 import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
+import axios from 'axios';
 import { getApiBaseUrl } from '../lib/api-base';
 import { sendPtzCommand, type PTZDirection } from '../lib/ptz';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
+import {
+  situacaoDeDeteccao,
+  candidatasParaTeste,
+  explicarResultadoDoTeste,
+} from '../lib/deteccao-de-ptz';
 
 type CommandState = 'idle' | 'sending' | 'ok' | 'error';
 const API_URL = getApiBaseUrl();
@@ -112,6 +118,7 @@ export default function PTZPage() {
   const accessToken = useAuthStore((state) => state.accessToken);
   const userRole = useAuthStore((state) => state.user?.role ?? 'viewer');
   const cameras = useVmsDataStore((state) => state.cameras);
+  const recarregarCameras = useVmsDataStore((state) => state.load);
   const ptzCameras = useMemo(
     () => cameras
       .filter((camera) => camera.enabled && camera.ptzCapable)
@@ -123,10 +130,46 @@ export default function PTZPage() {
   // se recusa a carimbar isso por falta de resposta, e volta a tentar quando a
   // câmera reaparecer. Sem dizer isto na tela, quem tem uma PTZ fora do ar vê
   // "nenhuma câmera compatível" e conclui que o sistema não a reconhece.
-  const aguardandoDeteccao = useMemo(
-    () => cameras.filter((camera) => camera.enabled && camera.ptzDetectado === null),
+  // ── TESTAR UMA CÂMERA À MÃO ───────────────────────────────────────────────
+  // A rota `POST /ptz/:id/probe` e a marcação manual existiam sem botão. Sem
+  // elas na tela, quem sabia que tinha PTZ não tinha o que fazer além de
+  // desconfiar do sistema — que foi exatamente o relato.
+  const [cameraParaTestar, setCameraParaTestar] = useState('');
+  const [testando, setTestando] = useState(false);
+  const [resultadoDoTeste, setResultadoDoTeste] = useState<
+    { titulo: string; detalhe: string; sucesso: boolean } | null
+  >(null);
+
+  const candidatas = useMemo(
+    () => candidatasParaTeste(cameras.filter((c) => c.enabled !== false)),
     [cameras],
   );
+
+  const testarCamera = useCallback(async () => {
+    if (!cameraParaTestar || !accessToken) return;
+    setTestando(true);
+    setResultadoDoTeste(null);
+    try {
+      const { data } = await axios.post(
+        `${API_URL}/ptz/${cameraParaTestar}/probe`,
+        {},
+        { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 45_000 },
+      );
+      setResultadoDoTeste(explicarResultadoDoTeste(data ?? {}));
+      // O resultado muda a lista da página inteira: só recarregar a frota
+      // reflete a câmera que acabou de ganhar PTZ.
+      await recarregarCameras().catch(() => undefined);
+    } catch {
+      setResultadoDoTeste({
+        titulo: 'Não foi possível testar',
+        detalhe: 'A verificação não respondeu. Isto não diz nada sobre a câmera ter PTZ ou não.',
+        sucesso: false,
+      });
+    } finally {
+      setTestando(false);
+    }
+  }, [cameraParaTestar, accessToken, recarregarCameras]);
+
   const [selectedCamId, setSelectedCamId] = useState('');
   const [speed, setSpeed] = useState(5);
   const [activeDirection, setActiveDirection] = useState<PTZDirection | null>(null);
@@ -299,27 +342,74 @@ export default function PTZPage() {
               O sistema pergunta a cada câmera se ela aceita comandos de movimento e guarda a resposta.
               Só aparecem aqui as que responderam que sim.
             </p>
-            {aguardandoDeteccao.length > 0 && (
-              <p className="mx-auto mt-3 max-w-md rounded-xl border border-border bg-background/55 px-4 py-3 text-[12px] leading-relaxed text-[hsl(var(--muted-foreground))]">
-                <strong className="font-medium text-foreground">
-                  {aguardandoDeteccao.length} câmera(s) ainda não puderam ser verificadas
-                </strong>{' '}
-                porque estão fora do ar: {aguardandoDeteccao.slice(0, 4).map((c) => c.name).join(', ')}
-                {aguardandoDeteccao.length > 4 ? ` e mais ${aguardandoDeteccao.length - 4}` : ''}.
-                A detecção acontece sozinha assim que elas voltarem.
-              </p>
+          </div>
+
+          {/* A AÇÃO, no lugar do texto genérico. Antes havia dois cartões
+              ("já possui uma câmera PTZ?", "câmeras fixas continuam normais")
+              que não faziam nada — e a única frase específica dizia que as
+              câmeras estavam "fora do ar", o que era falso para as do dono.
+              Agora a tela testa a câmera que o operador escolher. */}
+          <div className="border-t border-border px-8 py-6 text-left">
+            <div className="text-xs font-semibold">Acha que uma câmera tem PTZ?</div>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              Escolha e teste agora. A verificação pergunta direto ao equipamento.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <select
+                value={cameraParaTestar}
+                onChange={(e) => { setCameraParaTestar(e.target.value); setResultadoDoTeste(null); }}
+                className="h-8 min-w-[220px] flex-1 rounded border border-border bg-background px-2 text-[11px]"
+                aria-label="Câmera para testar PTZ"
+              >
+                <option value="">Selecione uma câmera…</option>
+                {candidatas.map((c) => (
+                  <option key={c.id} value={c.id} disabled={!situacaoDeDeteccao(c).podeTestar}>
+                    {c.name}{situacaoDeDeteccao(c).podeTestar ? '' : ' — fora do ar'}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => void testarCamera()}
+                disabled={!cameraParaTestar || testando}
+                className="btn btn-primary btn-sm"
+              >
+                {testando ? 'Testando…' : 'Testar agora'}
+              </button>
+            </div>
+
+            {/* O motivo de ESTA câmera, não uma frase para todas. */}
+            {cameraParaTestar && !resultadoDoTeste && (() => {
+              const c = candidatas.find((x) => x.id === cameraParaTestar);
+              if (!c) return null;
+              return (
+                <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                  {situacaoDeDeteccao(c).motivo}
+                </p>
+              );
+            })()}
+
+            {resultadoDoTeste && (
+              <div className={`mt-3 rounded-lg border px-3 py-2.5 ${resultadoDoTeste.sucesso
+                ? 'border-[hsl(var(--status-online)_/_0.4)] bg-[hsl(var(--status-online)_/_0.08)]'
+                : 'border-border bg-[hsl(var(--muted)_/_0.4)]'}`}>
+                <div className="text-[11px] font-medium">{resultadoDoTeste.titulo}</div>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                  {resultadoDoTeste.detalhe}
+                </p>
+                {!resultadoDoTeste.sucesso && (
+                  <button
+                    type="button"
+                    onClick={() => setLocation(`/cameras/${cameraParaTestar}`)}
+                    className="btn btn-secondary btn-sm mt-2"
+                  >
+                    Abrir cadastro desta câmera
+                  </button>
+                )}
+              </div>
             )}
           </div>
-          <div className="grid gap-3 px-8 py-6 text-left sm:grid-cols-2">
-            <div className="rounded-xl border border-border bg-background/55 p-4">
-              <div className="text-xs font-semibold">Já possui uma câmera PTZ?</div>
-              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Confirme ONVIF, perfil e credenciais no cadastro da câmera.</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background/55 p-4">
-              <div className="text-xs font-semibold">Câmeras fixas continuam normais</div>
-              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Ao Vivo e gravação não dependem do suporte a PTZ.</p>
-            </div>
-          </div>
+
           <div className="flex justify-center gap-2 border-t border-border px-8 py-4">
             <button type="button" onClick={() => setLocation('/live')} className="btn btn-secondary btn-sm">Voltar ao Ao Vivo</button>
             {userRole !== 'viewer' && (

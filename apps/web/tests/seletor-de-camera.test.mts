@@ -79,9 +79,17 @@ test('a tela de PTZ não trata "ainda não sondada" como "sem PTZ"', () => {
   // A distinção que fez a diferença no caso real: as câmeras NOC têm PTZ, mas
   // estavam offline quando a varredura passou. Dizer só "nenhuma câmera
   // compatível" faria o dono concluir que o sistema não as reconhece.
+  //
+  // A regra saiu da página e virou `lib/deteccao-de-ptz.ts` em 14/08/2026,
+  // porque a versão da página estava ERRADA: dava "está fora do ar" como motivo
+  // único, inclusive para câmera ONLINE nunca sondada — que era o caso das NOC
+  // quando o dono voltou a olhar. O módulo distingue os dois, e tem teste
+  // próprio em tests/deteccao-de-ptz.test.mts.
+  const helper = read('src/lib/deteccao-de-ptz.ts');
+  assert.match(helper, /nunca-sondada-online/, 'não separa o estado pendente');
+  assert.match(helper, /nunca-sondada-offline/, 'não distingue pendente de inalcançável');
   const fonte = read('src/pages/PTZPage.tsx');
-  assert.match(fonte, /ptzDetectado === null/, 'não separa o estado pendente');
-  assert.match(fonte, /fora do ar|não puderam ser verificadas/i, 'não explica a pendência ao operador');
+  assert.match(fonte, /situacaoDeDeteccao\(/, 'a página não usa a explicação por câmera');
 });
 
 test('a capacidade PTZ vem da API, não é deduzida no cliente', () => {
