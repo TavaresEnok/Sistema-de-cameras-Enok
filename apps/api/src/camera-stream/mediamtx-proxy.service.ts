@@ -1123,13 +1123,32 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   // Decide se o stream de Live é H.265 (precisa transcode). Usa cache curto para
   // não sondar a câmera a cada requisição de URLs. Em falha de probe, assume H.265
   // (transcode sempre entrega vídeo ao navegador; o pior caso é só custo de CPU).
-  private async resolveLiveStreamIsHevc(cacheKey: string, sourceUrl: string, transport: string): Promise<boolean> {
+  private async resolveLiveStreamIsHevc(cacheKey: string, sourceUrl: string, transport: string, codecConhecido?: string | null): Promise<boolean> {
     const cached = this.liveCodecCache.get(cacheKey);
     if (cached && Date.now() - cached.at < MediamtxProxyService.LIVE_CODEC_TTL_MS) {
       return cached.isHevc;
     }
     const probed = await this.probeStreamIsHevc(sourceUrl, transport);
     if (probed === null) {
+      // A SONDA FALHOU. Assumir HEVC aqui era o padrão, e custava caro: em
+      // câmera de sessão única a sonda é uma SEGUNDA conexão e falha SEMPRE —
+      // então uma fonte que já é H.264 era reencodada H.264→H.264 para sempre,
+      // com ~5× de CPU e perda de qualidade, sem ganho nenhum. Reclamado em
+      // 14/08/2026: "acho que em qualquer canal a camera está enviando H.264
+      // ... 5x cpu sendo que já está em H.264 em qualquer stream ??????"
+      //
+      // Quando o cadastro já sabe o codec (detectado no cadastro, quando não
+      // havia disputa de sessão), essa informação é melhor que um chute. Só
+      // caímos no "presuma HEVC" quando NINGUÉM sabe — aí o pior caso volta a
+      // ser custo de CPU, e nunca tela preta.
+      if (codecConhecido) {
+        const conhecidoEhHevc = isHevcCodec(codecConhecido);
+        this.logger.log(
+          `Sonda de codec falhou; usando o codec já conhecido da câmera (${codecConhecido}) `
+          + `em vez de presumir HEVC. Transcode ${conhecidoEhHevc ? 'necessário' : 'DISPENSADO'}.`,
+        );
+        return conhecidoEhHevc;
+      }
       return true;
     }
     this.liveCodecCache.set(cacheKey, { isHevc: probed, at: Date.now() });
@@ -1236,7 +1255,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         ? isHevcCodec(chosenCodec)
         : detectedCodec && isHevcCodec(detectedCodec)
         ? true
-        : await this.resolveLiveStreamIsHevc(cacheKey, chosenSourceUrl, transport);
+        : await this.resolveLiveStreamIsHevc(cacheKey, chosenSourceUrl, transport,
+            detectedCodec || String(camera.streamVideoCodec ?? '').trim().toLowerCase() || null);
 
     // A fonte Live e uma escolha operacional explicita. HEVC e convertido
     // para o navegador, mas nunca trocado silenciosamente por outro subtype.
@@ -2072,9 +2092,13 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         publicacaoAoVivo: baseAoVivo,
         // A base só é cópia crua quando nada está convertendo nela.
         publicacaoEhCopiaCrua: !isHevc && !transcodeAudioForWebrtc,
-        aceitaSegundaSessao: baseAoVivo
-          ? await this.cameraAceitaSegundaSessao(cameraId, sourceUrl, rtspTransport)
-          : null,
+        // Publicação que é cópia crua JÁ é o original — reaproveitá-la é
+        // byte a byte a mesma coisa. Testar a câmera aí seria só espera:
+        // a sonda numa câmera que recusa leva o timeout inteiro, e foi o que
+        // deixou o dono 3 minutos em "Reconectando à câmera…".
+        aceitaSegundaSessao: !baseAoVivo || (!isHevc && !transcodeAudioForWebrtc)
+          ? null
+          : await this.cameraAceitaSegundaSessao(cameraId, sourceUrl, rtspTransport),
       });
       sourceParaEstePath = decisao.url;
       if (decisao.motivo === 'reaproveita-publicacao') {
