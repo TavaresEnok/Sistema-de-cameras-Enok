@@ -38,6 +38,8 @@ type Form = {
   rtspPort: string;
   username: string;
   password: string;
+  onvifPort: string;
+  httpPort: string;
   rtspPath: string;
   preferredRtspTransport: 'tcp' | 'udp';
   preferredLiveProtocol: string;
@@ -183,6 +185,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           rtspPort: String(data.rtspPort ?? selectedCamera.rtspPort ?? 554),
           username: data.username ?? '',
           password: '',
+          onvifPort: data.onvifPort != null ? String(data.onvifPort) : '',
+          httpPort: data.httpPort != null ? String(data.httpPort) : '',
           rtspPath: data.rtspPath ?? '',
           preferredRtspTransport: (data.preferredRtspTransport ?? 'tcp') as 'tcp' | 'udp',
           preferredLiveProtocol: normalizePreferredLiveProtocol(data.preferredLiveProtocol),
@@ -316,6 +320,10 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           rtspPort: Number(form.rtspPort),
           username: form.username.trim() || undefined,
           ...(deveEnviarSenha(form.password, senhaRevelada) ? { password: form.password } : {}),
+          // Vazio de propósito volta a ser "procure sozinho"; por isso null e
+          // não undefined, que o backend leria como "não mexi neste campo".
+          onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : null,
+          httpPort: form.httpPort.trim() ? Number(form.httpPort) : null,
           rtspPath: form.rtspPath.trim(),
           preferredRtspTransport: form.preferredRtspTransport,
           preferredLiveProtocol: form.preferredLiveProtocol === 'mjpeg' ? 'webrtc' : form.preferredLiveProtocol,
@@ -608,6 +616,16 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                               </button>
                             )}
                           </div>
+                        </FormField>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Fora de qualquer gaveta: é aqui que se conserta câmera
+                            atrás de roteador, e foi o que o dono não achou. */}
+                        <FormField label="Porta ONVIF" hint="opcional">
+                          <Input value={form.onvifPort} onChange={(e) => upd('onvifPort', e.target.value)} placeholder="vazio = eu procuro" className="text-sm font-mono" />
+                        </FormField>
+                        <FormField label="Porta HTTP" hint="opcional">
+                          <Input value={form.httpPort} onChange={(e) => upd('httpPort', e.target.value)} placeholder="vazio = eu procuro" className="text-sm font-mono" />
                         </FormField>
                       </div>
                       <FormField label="Caminho RTSP" hint="vazio = detectar">
