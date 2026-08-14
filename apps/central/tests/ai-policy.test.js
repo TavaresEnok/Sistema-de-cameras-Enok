@@ -131,3 +131,53 @@ test('o resumo de auditoria mostra as classes escolhidas', () => {
   assert.match(texto, /person/);
   assert.match(texto, /car/);
 });
+
+// ── O IMPASSE CIRCULAR (13/08/2026) ─────────────────────────────────────────
+//
+// `aiAdvanced` é DERIVADO de object||face — responde "esta instalação deve
+// rodar IA pesada agora?". O painel usava esse MESMO campo para decidir se
+// podia OFERECER as caixas de object/face. Com as duas desligadas (o padrão),
+// aiAdvanced valia false, as caixas nasciam `disabled`, e não havia como ligar
+// a primeira. A funcionalidade era inalcançável desde que nasceu, e a tela
+// ainda acusava o contrato — numa instalação com licença ACTIVE.
+//
+// A separação: `aiAdvancedAllowed` é o TETO (a licença permite?), e é ele que
+// o painel consulta.
+
+test('licença ACTIVE com tudo desligado ainda PERMITE ligar objeto', () => {
+  const r = applyAiPolicyToRestrictions(
+    { aiAdvanced: true },                       // teto da licença: liberado
+    { motion: true, object: false, face: false }, // padrão de fábrica
+  );
+  assert.equal(r.aiAdvanced, false, 'derivado: nada pesado rodando agora');
+  assert.equal(r.aiAdvancedAllowed, true, 'TETO: a licença permite — sem isto o painel trava');
+});
+
+test('licença que NÃO permite continua barrando, e o teto diz isso', () => {
+  const r = applyAiPolicyToRestrictions(
+    { aiAdvanced: false },                      // suspensa/restrita
+    { motion: true, object: true, face: false },  // painel tentou ligar
+  );
+  assert.equal(r.aiObject, false, 'o painel não pode furar a política comercial');
+  assert.equal(r.aiAdvancedAllowed, false, 'o teto explica POR QUE está barrado');
+  assert.equal(r.aiAdvanced, false);
+});
+
+test('o teto não muda quando a política do painel muda', () => {
+  const teto = { aiAdvanced: true };
+  const semNada = applyAiPolicyToRestrictions(teto, { motion: true, object: false, face: false });
+  const comObjeto = applyAiPolicyToRestrictions(teto, { motion: true, object: true, face: false });
+  assert.equal(semNada.aiAdvancedAllowed, comObjeto.aiAdvancedAllowed,
+    'o teto é da LICENÇA: não pode oscilar com o clique do operador');
+  assert.notEqual(semNada.aiAdvanced, comObjeto.aiAdvanced,
+    'o derivado, sim, acompanha a escolha');
+});
+
+test('o painel usa o TETO, não o derivado', () => {
+  // Guarda de código: se alguém voltar a ler `aiAdvanced` aqui, o impasse volta
+  // e some em silêncio — a caixa simplesmente não responde ao clique.
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const linha = html.split('\n').find((l) => l.includes('avancadaBloqueada ='));
+  assert.ok(linha, 'a decisão de bloqueio sumiu do painel');
+  assert.match(linha, /aiAdvancedAllowed/, 'o painel voltou a se basear no valor derivado');
+});

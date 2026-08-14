@@ -131,6 +131,19 @@ function applyAiPolicyToRestrictions(restrictions, policy) {
     // painel liberou alguma das pesadas. Instalação antiga que não entenda as
     // chaves novas continua obedecendo a este campo.
     aiAdvanced: advancedAllowed && (wanted.object || wanted.face),
+    // O TETO, separado do valor derivado acima — e a separação NÃO é enfeite.
+    //
+    // `aiAdvanced` responde "esta instalação DEVE rodar IA pesada agora?", e por
+    // isso é derivado de object||face. O painel usava esse mesmo campo para
+    // decidir se PODIA oferecer as caixas de object/face, e o resultado era um
+    // impasse circular: com ambas desligadas (o padrão), `aiAdvanced` virava
+    // false, as caixas nasciam `disabled`, e não havia como ligar a primeira.
+    // A funcionalidade era inalcançável desde que nasceu — e a tela ainda
+    // mostrava a tarja "Contrato", culpando uma licença que estava ACTIVE.
+    //
+    // Este campo responde outra pergunta: "a LICENÇA permite?". É ele que o
+    // painel deve consultar para habilitar os controles.
+    aiAdvancedAllowed: advancedAllowed,
     // Viaja junto das capacidades: a instalação precisa saber O QUÊ detectar,
     // não só que pode detectar. Vazio quando objeto está desligado, para não
     // sugerir permissão que não existe.

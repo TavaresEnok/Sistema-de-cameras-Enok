@@ -1783,11 +1783,27 @@
         recording_disabled_all: 'Gravação desativada',
         recording_storage_capacity_insufficient: 'Armazenamento insuficiente',
         recording_storage_capacity_attention: 'Armazenamento em atenção',
-        recording_without_last_segment: 'Gravação sem segmento',
-        disk_usage_high: 'Uso de disco alto',
+        recording_without_last_segment: 'Última gravação não identificada',
+        disk_usage_high: 'Uso de disco crítico',
         disk_usage_attention: 'Uso de disco em atenção',
-        cameras_unavailable: 'Câmeras indisponíveis',
-        no_online_cameras: 'Nenhuma câmera online',
+        cameras_unavailable: 'Câmeras sem comunicação',
+        no_online_cameras: 'Todas as câmeras sem comunicação',
+        stream_high_cpu_risk: 'Vídeo exigindo muito processamento',
+        live_failures_recent: 'Falhas ao abrir vídeo ao vivo',
+        cameras_stalled: 'Câmeras sem novas gravações',
+        camera_recording_expected_inactive: 'Gravação esperada não iniciada',
+        motion_detection_failsafe: 'Detecção de movimento indisponível',
+        cloud_recordings_missing: 'Gravações não encontradas na nuvem',
+        cloud_upload_delayed: 'Envio para a nuvem atrasado',
+        installation_offline: 'Instalação sem comunicação',
+        infra_watchdog_stale: 'Verificação automática sem comunicação',
+        infra_container: 'Serviço da instalação indisponível',
+        infra_api: 'Serviço principal indisponível',
+        infra_web: 'Página da instalação indisponível',
+        infra_live: 'Vídeo ao vivo indisponível',
+        infra_backup: 'Backup desatualizado',
+        infra_security: 'Informação sigilosa em registro',
+        'infra_site-cameras': 'Rede das câmeras indisponível',
       };
       const auditLabels = {
         'auth.login_success': 'Login realizado',
@@ -1948,7 +1964,7 @@
         const h = item.metrics && item.metrics.infraHealth;
         if (!h) return false;
         const issues = Array.isArray(h.issues) ? h.issues : [];
-        return issues.some((i) => /^(live:|container:)/.test(i));
+        return issues.some((i) => /^(live:|container:|api:|web:|security:|site-cameras:)/.test(i));
       }
       function riskScore(item) {
         let score = 0;
@@ -2538,7 +2554,7 @@
         if (infraCritical(item)) out.push(['bad', 'infra crítica']);
         if (readinessStatus(item) === 'blocked') out.push(['bad', 'produção bloqueada']);
         const ci = camIssues(item);
-        if (ci) out.push(['warn', `${ci} câmera(s) em falha`]);
+        if (ci) out.push(['warn', `${ci} ${ci === 1 ? 'câmera em falha' : 'câmeras em falha'}`]);
         if (item.status === 'ONLINE' && number(metric(item, 'cameraTotal', 0)) > 0 && number(metric(item, 'cameraOnline', 0)) === 0) out.push(['bad', 'nenhuma câmera online']);
         const disk = diskPercent(item);
         if (disk >= 90) out.push(['bad', `disco ${Math.round(disk)}%`]);
@@ -2547,14 +2563,14 @@
         else if (item.licenseStatus === 'RESTRICTED') out.push(['warn', 'contrato restrito']);
         if (configPending(item)) out.push(['warn', 'config. não aplicada']);
         const rec = number(metric(item, 'recordingAttentionCameras', 0));
-        if (rec) out.push(['warn', `${rec} gravação(ões) em atenção`]);
+        if (rec) out.push(['warn', `${rec} ${rec === 1 ? 'câmera com gravação em atenção' : 'câmeras com gravação em atenção'}`]);
         // Detector de movimento CEGO com gravação de emergência ligada. É "bad"
         // de propósito: a instalação está se defendendo sozinha (gravando
         // contínuo), mas a causa — detector sem frames — segue de pé e já ficou
         // invisível uma vez: 9 câmeras cegas por horas com a Central mostrando
         // tudo normal, porque nenhuma métrica carregava isso.
         const cego = number(metric(item, 'motionFailsafeCameras', 0));
-        if (cego) out.push(['bad', `${cego} detector(es) cego(s) — gravando por fail-safe`]);
+        if (cego) out.push(['bad', `Movimento indisponível em ${cego} ${cego === 1 ? 'câmera' : 'câmeras'} — gravação de segurança ativada`]);
         // Envio à nuvem parado ou atrasado. Ficou invisível uma vez: horas de
         // NoSuchBucket com 100% das subidas falhando e nenhuma linha aqui — o
         // disco foi enchendo e o problema só apareceu quando já era perda.
@@ -2566,15 +2582,15 @@
         const nuvemOkHa = metric(item, 'cloudUploadLastSuccessAgeSeconds', null);
         const falhando = nuvemErro && nuvemErroHa != null && (nuvemOkHa == null || nuvemOkHa > nuvemErroHa);
         if (falhando && nuvemPend > 0) {
-          out.push(['bad', `nuvem: envio falhando (${escapeHtml(String(nuvemErro))}) — ${fmt.format(nuvemPend)} pendente(s)`]);
+          out.push(['bad', `Envio para a nuvem interrompido — ${fmt.format(nuvemPend)} ${nuvemPend === 1 ? 'gravação aguarda' : 'gravações aguardam'}`]);
         } else if (nuvemPend >= 300) {
-          out.push(['warn', `nuvem: ${fmt.format(nuvemPend)} envio(s) na fila`]);
+          out.push(['warn', `${fmt.format(nuvemPend)} gravações aguardam envio para a nuvem`]);
         }
         // Gravações APAGADAS POR FORA do sistema: a vigilância conferiu o
         // bucket (saudável) e o objeto não estava lá. Não é indisponibilidade
         // — é perda, e o dono precisa saber ANTES de precisar do vídeo.
         const sumidas = number(metric(item, 'cloudCopiesMissing', 0));
-        if (sumidas) out.push(['bad', `${fmt.format(sumidas)} gravação(ões) apagada(s) do bucket por fora`]);
+        if (sumidas) out.push(['bad', `${fmt.format(sumidas)} ${sumidas === 1 ? 'gravação não foi encontrada' : 'gravações não foram encontradas'} na nuvem`]);
         return out;
       }
       function renderAttentionQueue() {
@@ -2616,14 +2632,14 @@
       function infraChip(item) {
         const h = item.metrics && item.metrics.infraHealth;
         if (!h) return '';
-        if (h.stale) return '<span class="badge warn" title="watchdog sem atualizar há >15min">infra ?</span>';
+        if (h.stale) return '<span class="badge warn" title="A verificação automática não envia informações há mais de 15 minutos">verificação pendente</span>';
         const issues = Array.isArray(h.issues) ? h.issues : [];
         if (issues.length) {
-          const crit = issues.some((i) => /^(live:|container:)/.test(i));
-          return `<span class="badge ${crit ? 'bad' : 'warn'}" title="${escapeHtml(issues.join(', '))}">infra ${crit ? 'crítica' : 'atenção'}</span>`;
+          const crit = issues.some((i) => /^(live:|container:|api:|web:|security:|site-cameras:)/.test(i));
+          return `<span class="badge ${crit ? 'bad' : 'warn'}" title="A instalação informou ${issues.length} ${issues.length === 1 ? 'problema operacional' : 'problemas operacionais'}">sistema ${crit ? 'crítico' : 'em atenção'}</span>`;
         }
         const healed = Array.isArray(h.selfHealed) ? h.selfHealed : [];
-        if (healed.length) return `<span class="badge ok" title="auto-curou: ${escapeHtml(healed.join(', '))}">auto-curou</span>`;
+        if (healed.length) return '<span class="badge ok" title="O sistema corrigiu automaticamente um problema recente">recuperado automaticamente</span>';
         return '';
       }
       /* ── Tabelas: repintar SÓ a linha que mudou ──────────────────────────
@@ -2729,7 +2745,16 @@
           { id: 'truck', nome: 'Caminhão' }, { id: 'bicycle', nome: 'Bicicleta' },
           { id: 'dog', nome: 'Cachorro' }, { id: 'cat', nome: 'Gato' },
         ];
-        const avancadaBloqueada = item.restrictions && item.restrictions.aiAdvanced === false;
+        // O TETO DA LICENÇA, nunca o valor derivado. `aiAdvanced` é calculado a
+        // partir de object||face, então usá-lo aqui criava um impasse: com as
+        // duas desligadas (o padrão) ele valia false, as caixas nasciam
+        // desabilitadas, e a IA de objeto era impossível de ligar.
+        // `aiAdvancedAllowed` responde a pergunta certa: a licença permite?
+        // O `!== false` mantém instalação antiga (que ainda não manda o campo
+        // novo) com os controles LIBERADOS — o servidor valida de novo e é ele
+        // quem rebaixa, então o pior caso aqui é um clique recusado, e não uma
+        // funcionalidade inalcançável.
+        const avancadaBloqueada = item.restrictions && item.restrictions.aiAdvancedAllowed === false;
         body.innerHTML = `
           ${avancadaBloqueada ? '<div class="alert-item" style="margin-bottom:12px;border-color:var(--amber-line);background:var(--amber-soft)"><span class="badge warn">Contrato</span><div style="margin-top:6px">O contrato desta instalação não permite IA avançada; objeto e face ficam indisponíveis mesmo se marcados.</div></div>' : ''}
           <div>
@@ -3741,14 +3766,14 @@
             <div class="grid-2">
               <section class="panel">
                 <div class="panel-head"><div><div class="panel-title">Para quem avisar</div>
-                  <div class="panel-subtitle">Destinos de alerta desta instalação</div></div></div>
+                  <div class="panel-subtitle">Quem recebe avisos sobre a saúde desta instalação</div></div></div>
                 <!-- Formulário fica na CASCA, como o de contrato: ele só muda
                      por ação do operador (salvar/testar), nunca por heartbeat.
                      Num corpo volátil, a repintura de 30s apagaria o que a
                      pessoa está digitando no meio do cadastro. -->
                 <div class="detail-body">
                   <div class="field">
-                    <label for="alertas-emails">E-mails que recebem os alertas</label>
+                    <label for="alertas-emails">E-mails que recebem os avisos operacionais</label>
                     <textarea id="alertas-emails" rows="3" placeholder="um endereço por linha&#10;plantao@empresa.com.br"
                       ${item.alertas?.emailDisponivel ? '' : 'disabled'}>${escapeHtml((item.alertas?.emails || []).join('\n'))}</textarea>
                     ${item.alertas?.emailDisponivel
@@ -3831,9 +3856,13 @@
                   <details class="ajuda-bloco">
                     <summary><span class="ajuda-marca">?</span> Quando o aviso é disparado</summary>
                     <div class="ajuda-corpo">
-                      <p>Quando um alerta <b>aparece</b> — e, se você quiser, também quando ele
+                      <p>Quando um problema operacional <b>aparece</b> — por exemplo, câmera sem
+                         comunicação, gravação interrompida, pouco espaço em disco, atraso na
+                         nuvem ou instalação desconectada — e, se você quiser, também quando ele
                          <b>passa</b>. Alerta que continua ativo não é reenviado: você recebe
                          uma vez quando o problema começa, não a cada minuto enquanto dura.</p>
+                      <p class="ajuda-nota">Esta configuração não envia alarmes de movimento,
+                         invasão ou análise de vídeo. Ela avisa sobre a saúde do sistema.</p>
                       <p class="ajuda-nota">Um alerta que já tinha sido resolvido e volta a
                          acontecer conta como novo — reincidência é informação.</p>
                     </div>
@@ -4055,19 +4084,25 @@
       function collectAlerts() {
         const alerts = [];
         for (const item of state.installations) {
-          if (item.status === 'PENDING_INSTALL') alerts.push({ title: 'Instalação aguardando execução', message: `${displayName(item)} foi provisionado, mas ainda não enviou heartbeat.`, item, tone: 'neutral' });
-          else if (item.status !== 'ONLINE') alerts.push({ title: 'Cliente sem comunicação', message: `${displayName(item)} não enviou sinal recente.`, item, tone: 'bad' });
+          if (item.status === 'PENDING_INSTALL') alerts.push({ title: 'Instalação aguardando ativação', message: `${displayName(item)} foi cadastrada, mas ainda não se conectou à Central.`, item, tone: 'neutral' });
+          else if (item.status !== 'ONLINE') alerts.push({ title: 'Instalação sem comunicação', message: `${displayName(item)} parou de enviar informações à Central.`, item, tone: 'bad' });
           if (['RESTRICTED', 'SUSPENDED'].includes(item.licenseStatus)) alerts.push({ title: `Contrato ${contractLabels[item.licenseStatus]}`, message: item.licenseMessage || 'Política comercial exige atenção.', item, tone: item.licenseStatus === 'SUSPENDED' ? 'bad' : 'warn' });
-          if (diskPercent(item) >= 85) alerts.push({ title: 'Armazenamento alto', message: `${metric(item, 'diskUsagePercent', 0)}% de uso em ${displayName(item)}.`, item, tone: 'warn' });
-          const camIssue = camIssues(item);
-          if (camIssue) alerts.push({ title: 'Câmeras em atenção', message: `${camIssue} câmera(s) com falha em ${displayName(item)}.`, item, tone: 'warn' });
-          const streamRisk = number(metric(item, 'streamHighCpuRiskCameras', 0));
-          if (streamRisk) alerts.push({ title: 'Streaming em atenção', message: `${streamRisk} câmera(s) com risco alto de CPU/live em ${displayName(item)}.`, item, tone: streamRisk >= 3 ? 'bad' : 'warn' });
-          const liveFailures = number(metric(item, 'streamLiveFailuresLast24h', 0));
-          if (liveFailures) alerts.push({ title: 'Falhas recentes de live', message: `${liveFailures} falha(s) de live nas últimas 24h em ${displayName(item)}.`, item, tone: liveFailures >= 10 ? 'bad' : 'warn' });
-          const recordingAttention = number(metric(item, 'recordingAttentionCameras', 0));
-          if (recordingAttention) alerts.push({ title: 'Gravação em atenção', message: `${recordingAttention} câmera(s) com gap ou segmento ausente em ${displayName(item)}.`, item, tone: 'warn' });
-          for (const alert of item.alerts || []) alerts.push({ title: alertTitle(alert), message: alertMessage(alert), item, tone: alert.level === 'critical' ? 'bad' : 'warn' });
+          const operational = Array.isArray(item.alerts) ? item.alerts : [];
+          if (operational.length) {
+            for (const alert of operational) alerts.push({ title: alertTitle(alert), message: alertMessage(alert), item, tone: alert.level === 'critical' ? 'bad' : 'warn' });
+          } else {
+            // Instalações antigas ainda não mandam o catálogo. Deriva o
+            // essencial das métricas apenas nesse caso, evitando duplicatas.
+            if (diskPercent(item) >= 85) alerts.push({ title: 'Uso de disco crítico', message: `O disco de ${displayName(item)} está com ${metric(item, 'diskUsagePercent', 0)}% de uso.`, item, tone: 'bad' });
+            const camIssue = camIssues(item);
+            if (camIssue) alerts.push({ title: 'Câmeras sem comunicação', message: `${camIssue} ${camIssue === 1 ? 'câmera está' : 'câmeras estão'} sem comunicação ou com erro em ${displayName(item)}.`, item, tone: 'warn' });
+            const streamRisk = number(metric(item, 'streamHighCpuRiskCameras', 0));
+            if (streamRisk) alerts.push({ title: 'Vídeo exigindo muito processamento', message: `${streamRisk} ${streamRisk === 1 ? 'câmera pode' : 'câmeras podem'} apresentar lentidão em ${displayName(item)}.`, item, tone: streamRisk >= 3 ? 'bad' : 'warn' });
+            const liveFailures = number(metric(item, 'streamLiveFailuresLast24h', 0));
+            if (liveFailures) alerts.push({ title: 'Falhas ao abrir vídeo ao vivo', message: `${liveFailures === 1 ? 'Foi detectada' : 'Foram detectadas'} ${liveFailures} ${liveFailures === 1 ? 'falha' : 'falhas'} nas últimas 24 horas em ${displayName(item)}.`, item, tone: liveFailures >= 10 ? 'bad' : 'warn' });
+            const recordingAttention = number(metric(item, 'recordingAttentionCameras', 0));
+            if (recordingAttention) alerts.push({ title: 'Gravação em atenção', message: `${recordingAttention} ${recordingAttention === 1 ? 'câmera está' : 'câmeras estão'} sem novas gravações em ${displayName(item)}.`, item, tone: 'warn' });
+          }
         }
         return alerts;
       }
