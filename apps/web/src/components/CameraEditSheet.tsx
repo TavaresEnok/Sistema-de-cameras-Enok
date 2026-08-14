@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { useLocation } from 'wouter';
-import { Save, Trash2, ExternalLink, LoaderCircle, Copy, RefreshCw, Check, Radio, ArrowRightLeft } from 'lucide-react';
+import { Save, Trash2, ExternalLink, LoaderCircle, Copy, RefreshCw, Check, Radio, ArrowRightLeft, Eye, EyeOff } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import { Camera, useVmsDataStore } from '../store/vmsDataStore';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
 import { getApiBaseUrl } from '../lib/api-base';
+import { descreverCredencial, deveEnviarSenha } from '../lib/senha-da-camera';
 import { normalizeVideoCodec, normalizePreferredLiveProtocol } from '../lib/camera-format';
 import { SeletorDeClassesDeGravacao } from './SeletorDeClassesDeGravacao';
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
@@ -112,8 +113,39 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
   const [confirmarVoltarRtsp, setConfirmarVoltarRtsp] = useState(false);
   const [copiado, setCopiado] = useState<string | null>(null);
   const [pendentes, setPendentes] = useState<PendingIngest[]>([]);
+  const [senhaVisivel, setSenhaVisivel] = useState(false);
+  const [buscandoSenha, setBuscandoSenha] = useState(false);
+  const [avisoDaSenha, setAvisoDaSenha] = useState<string | null>(null);
+  // A senha COMO VEIO do servidor, para saber se o dono só espiou ou mexeu.
+  const [senhaRevelada, setSenhaRevelada] = useState<string | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  /**
+   * O olho da senha. Ocultar é local; revelar BUSCA no servidor, porque a senha
+   * nunca vem no payload da câmera — só nesta rota, que é auditada.
+   */
+  const alternarSenha = async () => {
+    if (senhaVisivel) { setSenhaVisivel(false); return; }
+    // Já digitou algo? Então é a senha nova dele, e é essa que ele quer ver.
+    if (senhaRevelada !== null || form?.password) { setSenhaVisivel(true); return; }
+    if (!camera?.id || !accessToken) return;
+    setBuscandoSenha(true);
+    try {
+      const { data } = await axios.get(`${getApiBaseUrl()}/cameras/${camera.id}/credential`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const lida = descreverCredencial(data);
+      setAvisoDaSenha(lida.aviso);
+      setSenhaRevelada(lida.valor);
+      setForm((f) => (f ? { ...f, password: lida.valor } : f));
+      setSenhaVisivel(lida.revelavel);
+    } catch {
+      setAvisoDaSenha(descreverCredencial(null).aviso);
+    } finally {
+      setBuscandoSenha(false);
+    }
+  };
 
   const cameraId = camera?.id ?? null;
   useEffect(() => {
@@ -123,6 +155,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
     setForm(null);
     setIngest(null);
     setConfirmDelete(false);
+    setSenhaVisivel(false);
+    setSenhaRevelada(null);
+    setAvisoDaSenha(null);
     setLoading(true);
     // Modo de origem vem de endpoint próprio (a chave é credencial e só
     // administrador lê). Falha aqui não pode impedir editar a câmera.
@@ -280,7 +315,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           ip: form.ip.trim(),
           rtspPort: Number(form.rtspPort),
           username: form.username.trim() || undefined,
-          ...(form.password.trim() ? { password: form.password } : {}),
+          ...(deveEnviarSenha(form.password, senhaRevelada) ? { password: form.password } : {}),
           rtspPath: form.rtspPath.trim(),
           preferredRtspTransport: form.preferredRtspTransport,
           preferredLiveProtocol: form.preferredLiveProtocol === 'mjpeg' ? 'webrtc' : form.preferredLiveProtocol,
@@ -549,8 +584,30 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                         <FormField label="Usuário">
                           <Input placeholder="admin" value={form.username} onChange={(e) => upd('username', e.target.value)} className="text-sm" />
                         </FormField>
-                        <FormField label="Senha">
-                          <Input type="password" placeholder="Manter atual" value={form.password} onChange={(e) => upd('password', e.target.value)} className="text-sm" />
+                        <FormField label="Senha" hint={avisoDaSenha ?? undefined}>
+                          <div className="relative">
+                            <Input
+                              type={senhaVisivel ? 'text' : 'password'}
+                              placeholder="Manter atual"
+                              value={form.password}
+                              onChange={(e) => { upd('password', e.target.value); setAvisoDaSenha(null); }}
+                              className="text-sm pr-9"
+                            />
+                            {camera?.id && (
+                              <button
+                                type="button"
+                                onClick={alternarSenha}
+                                disabled={buscandoSenha}
+                                title={senhaVisivel ? 'Ocultar senha' : 'Ver a senha desta câmera'}
+                                aria-label={senhaVisivel ? 'Ocultar senha' : 'Ver a senha desta câmera'}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                              >
+                                {buscandoSenha
+                                  ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                                  : senhaVisivel ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                              </button>
+                            )}
+                          </div>
                         </FormField>
                       </div>
                       <FormField label="Caminho RTSP" hint="vazio = detectar">

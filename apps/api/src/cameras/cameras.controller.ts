@@ -774,6 +774,36 @@ export class CamerasController {
     return camera;
   }
 
+  /**
+   * A SENHA da câmera, em claro, para quem administra a câmera.
+   *
+   * Pedido do dono em 14/08/2026: "se eu quiser ver a senha da câmera eu
+   * deveria ver". É legítimo — quem cadastrou o equipamento precisa recuperar a
+   * credencial para conferir no painel da câmera, trocar de gravador ou passar
+   * ao técnico. Hoje o campo só sobrescrevia ("Manter atual"), então uma senha
+   * esquecida obrigava a resetar a câmera de fábrica.
+   *
+   * Três decisões que fazem isto ser aceitável:
+   *
+   *   · MESMO portão da edição (ADMIN + cameraConfig + acesso àquela câmera).
+   *     Quem pode TROCAR a senha já podia definir uma conhecida — negar a
+   *     leitura não protegia nada, só empurrava para o caminho pior;
+   *   · rota PRÓPRIA, nunca no payload da câmera. A senha só viaja quando
+   *     alguém pede explicitamente, e não em toda listagem;
+   *   · AUDITADA, sempre. Ler credencial é o tipo de ação que precisa de rastro
+   *     de quem e quando — é o que separa recurso de vazamento.
+   */
+  @Roles(UserRole.ADMIN)
+  @RequirePermission('cameraConfig')
+  @Get(':id/credential')
+  async revelarCredencial(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+    await this.accessControlService.assertCanAdminCamera(user, id);
+    const credencial = await this.camerasService.revelarCredencial(id);
+    // Antes de devolver: se a auditoria falhar, a senha NÃO sai.
+    await this.auditService.log(user.id, 'camera.credential_revealed', 'Camera', id, { username: credencial.username }, req);
+    return credencial;
+  }
+
   @Roles(UserRole.ADMIN)
   @RequirePermission('cameraConfig')
   @Patch(':id')

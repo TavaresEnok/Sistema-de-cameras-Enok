@@ -395,6 +395,34 @@ export class CamerasService {
     return sanitizeCamera(camera);
   }
 
+  /**
+   * Usuário e senha desta câmera, em claro.
+   *
+   * Isolado num método próprio para ficar ÓBVIO onde a senha sai do sistema —
+   * e para que qualquer uso novo tenha de passar por aqui, onde este comentário
+   * está. Quem chama é responsável por auditar (ver o controlador).
+   *
+   * Senha ilegível NÃO vira string vazia: uma câmera cuja credencial foi
+   * cifrada com chave antiga e não abre precisa DIZER isso, e não fingir que a
+   * senha é em branco — o operador tentaria "entrar sem senha" e concluiria que
+   * o equipamento está aberto.
+   */
+  async revelarCredencial(id: string): Promise<{ username: string; password: string | null; ilegivel: boolean }> {
+    const camera = await this.getCameraOrThrow(id);
+    if (!camera.passwordEncrypted) {
+      return { username: camera.username ?? '', password: null, ilegivel: false };
+    }
+    try {
+      return {
+        username: camera.username ?? '',
+        password: this.cryptoService.decrypt(camera.passwordEncrypted),
+        ilegivel: false,
+      };
+    } catch {
+      return { username: camera.username ?? '', password: null, ilegivel: true };
+    }
+  }
+
   async update(id: string, dto: UpdateCameraDto) {
     const existing = await this.getCameraOrThrow(id);
     // Em RTMP push o IP é apenas um marcador inerte criado pelo próprio sistema
