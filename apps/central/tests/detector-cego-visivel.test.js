@@ -52,14 +52,31 @@ function rodarReasonsFor(item) {
   return contexto.fn(item);
 }
 
+function rodarCollectAlerts(item) {
+  const contexto = {
+    state: { installations: [item] },
+    contractLabels: {},
+    displayName: (it) => it.name,
+    diskPercent: (it) => Number(it.metrics?.diskUsagePercent || 0),
+    camIssues: (it) => Number(it.metrics?.cameraOffline || 0) + Number(it.metrics?.cameraError || 0),
+    number: Number,
+    metric: (it, key, dflt) => (it.metrics && it.metrics[key] != null ? it.metrics[key] : dflt),
+    alertTitle: (alert) => alert.code,
+    alertMessage: (alert) => alert.message,
+  };
+  vm.createContext(contexto);
+  vm.runInContext(`${extrairFuncao('collectAlerts')}; this.fn = collectAlerts;`, contexto);
+  return contexto.fn();
+}
+
 const saudavel = { status: 'ONLINE', licenseStatus: 'ACTIVE', metrics: { cameraTotal: 5, cameraOnline: 5 } };
 
-test('detector cego em fail-safe vira linha VERMELHA na fila de atenção', () => {
+test('detecção de movimento indisponível vira linha VERMELHA em linguagem clara', () => {
   const razoes = rodarReasonsFor({
     ...saudavel,
     metrics: { ...saudavel.metrics, motionFailsafeCameras: 3 },
   });
-  const linha = razoes.find(([, texto]) => texto.includes('detector'));
+  const linha = razoes.find(([, texto]) => /movimento indisponível/i.test(texto));
   assert.ok(linha, 'sem esta linha o episódio das 9 câmeras cegas seria invisível DE NOVO');
   assert.equal(linha[0], 'bad', 'a instalação se defende sozinha, mas a causa segue de pé — é vermelho');
   assert.ok(linha[1].includes('3'), 'o operador precisa da contagem, não só do aviso');
@@ -87,7 +104,7 @@ test('instalação ANTIGA (heartbeat sem a métrica) não quebra nem alarma', ()
 // Episódio real: horas de NoSuchBucket, 100% das subidas falhando, e nenhuma
 // linha na Central — o disco encheu e virou perda antes de alguém saber.
 
-test('envio falhando com fila vira linha VERMELHA com o código do erro', () => {
+test('envio falhando com fila vira linha VERMELHA sem expor código técnico', () => {
   const razoes = rodarReasonsFor({
     ...saudavel,
     metrics: {
@@ -101,7 +118,8 @@ test('envio falhando com fila vira linha VERMELHA com o código do erro', () => 
   const linha = razoes.find(([, texto]) => texto.includes('nuvem'));
   assert.ok(linha, 'sem esta linha o NoSuchBucket fica invisível DE NOVO');
   assert.equal(linha[0], 'bad');
-  assert.ok(linha[1].includes('NoSuchBucket'), 'o código é o que aponta a causa');
+  assert.ok(!linha[1].includes('NoSuchBucket'), 'o operador recebe a consequência; o código técnico fica no diagnóstico');
+  assert.match(linha[1], /envio.*interrompido/i);
   assert.ok(linha[1].includes('812'), 'o tamanho da fila dimensiona o atraso');
 });
 
@@ -139,15 +157,39 @@ test('fila pequena e sem erro: nenhuma linha de nuvem', () => {
   assert.ok(!razoes.some(([, texto]) => texto.includes('nuvem')));
 });
 
-test('gravações apagadas POR FORA do bucket viram linha VERMELHA própria', () => {
+test('gravações não encontradas na nuvem viram linha VERMELHA própria', () => {
   // Não é indisponibilidade: a vigilância conferiu o bucket saudável e o
   // objeto não estava lá. O dono precisa saber ANTES de precisar do vídeo.
   const razoes = rodarReasonsFor({
     ...saudavel,
     metrics: { ...saudavel.metrics, cloudCopiesMissing: 37 },
   });
-  const linha = razoes.find(([, texto]) => texto.includes('apagada'));
+  const linha = razoes.find(([, texto]) => /não foram encontradas.*nuvem/i.test(texto));
   assert.ok(linha, 'perda externa invisível é como o incidente começou');
   assert.equal(linha[0], 'bad');
   assert.ok(linha[1].includes('37'));
+});
+
+test('painel não duplica o mesmo problema vindo do catálogo e das métricas', () => {
+  const alertas = rodarCollectAlerts({
+    name: 'Loja',
+    status: 'ONLINE',
+    licenseStatus: 'ACTIVE',
+    metrics: { diskUsagePercent: 91, cameraOffline: 2 },
+    alerts: [{ code: 'disk_usage_high', level: 'critical', message: 'O disco está crítico.' }],
+  });
+  assert.equal(alertas.length, 1, 'catálogo presente é a fonte; métricas são apenas fallback legado');
+  assert.equal(alertas[0].message, 'O disco está crítico.');
+});
+
+test('instalação antiga sem catálogo mantém fallback em linguagem clara', () => {
+  const alertas = rodarCollectAlerts({
+    name: 'Loja',
+    status: 'ONLINE',
+    licenseStatus: 'ACTIVE',
+    metrics: { streamHighCpuRiskCameras: 2 },
+  });
+  assert.equal(alertas.length, 1);
+  assert.match(alertas[0].title, /Vídeo exigindo muito processamento/);
+  assert.doesNotMatch(alertas[0].message, /CPU|transcode|streaming/i);
 });

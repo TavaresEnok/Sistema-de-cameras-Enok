@@ -797,9 +797,16 @@ function metricValue(item, key, fallback = null) {
 }
 
 function alertKey(alert) {
+  const informedKey = String(alert?.key || '').trim().toLowerCase().slice(0, 160);
+  if (informedKey) return informedKey;
   const code = String(alert?.code || 'generic').trim().toLowerCase();
+  if (code !== 'generic') return code;
   const message = String(alert?.message || '').trim().toLowerCase().slice(0, 120);
   return `${code}:${message}`;
+}
+
+function alertLevelRank(level) {
+  return level === 'critical' ? 2 : 1;
 }
 
 /**
@@ -828,13 +835,15 @@ function despacharAlertasDaInstalacao(item, novos, resolvidos) {
   void (async () => {
     try {
       if (novos.length) {
-        await alertas.despacharAlerta(config, alertas.montarMensagem({ instalacao: item, alertas: novos }));
+        const resultados = await alertas.despacharAlerta(config, alertas.montarMensagem({ instalacao: item, alertas: novos }));
+        registrarFalhasDeEntrega(item, resultados);
       }
       if (resolvidos.length && config.avisarRecuperacao) {
-        await alertas.despacharAlerta(
+        const resultados = await alertas.despacharAlerta(
           config,
           alertas.montarMensagem({ instalacao: item, alertas: resolvidos, recuperado: true }),
         );
+        registrarFalhasDeEntrega(item, resultados);
       }
     } catch (erro) {
       console.error(`[alertas] falha ao avisar instalacao=${item.id}: ${erro?.message || erro}`);
@@ -842,10 +851,31 @@ function despacharAlertasDaInstalacao(item, novos, resolvidos) {
   })();
 }
 
+function registrarFalhasDeEntrega(item, resultados) {
+  for (const resultado of Array.isArray(resultados) ? resultados : []) {
+    if (resultado?.ok) continue;
+    const canal = resultado?.canal === 'email' ? 'e-mail' : 'Telegram';
+    const motivo = String(resultado?.erro || 'falha sem detalhe').replace(/[\r\n]+/g, ' ').slice(0, 240);
+    console.error(`[alertas] ${canal} não entregue instalacao=${item.id}: ${motivo}`);
+  }
+}
+
 function updateAlertHistory(existing, alerts, now) {
   const history = Array.isArray(existing.alertHistory) ? existing.alertHistory.slice() : [];
   const activeKeys = new Set(alerts.map(alertKey));
-  const indexByKey = new Map(history.map((entry, index) => [entry.key, index]));
+  const indexByKey = new Map();
+  history.forEach((entry, index) => {
+    indexByKey.set(entry.key, index);
+    // Migra sem novo disparo as chaves antigas (`code:mensagem`). A versão
+    // anterior incluía percentual/contagem no identificador; ao atualizar a
+    // Central, um problema que já estava ativo não pode parecer inédito.
+    const canonical = alertKey(alertas.normalizarAlertaOperacional({
+      code: entry.code,
+      level: entry.level,
+      message: entry.message,
+    }));
+    if (!indexByKey.has(canonical)) indexByKey.set(canonical, index);
+  });
   const novos = [];
   const resolvidos = [];
 
@@ -869,10 +899,13 @@ function updateAlertHistory(existing, alerts, now) {
       continue;
     }
     const entry = history[previousIndex];
-    if (entry.status !== 'ACTIVE') {
+    const escalated = entry.status === 'ACTIVE'
+      && alertLevelRank(alert.level) > alertLevelRank(entry.level);
+    if (entry.status !== 'ACTIVE' || escalated) {
       novos.push({ key, level: alert.level || entry.level || 'warning', code: alert.code || entry.code || 'generic', message: alert.message || entry.message || 'Alerta operacional.' });
     }
     entry.status = 'ACTIVE';
+    entry.key = key;
     entry.level = alert.level || entry.level || 'warning';
     entry.code = alert.code || entry.code || 'generic';
     entry.message = alert.message || entry.message || 'Alerta operacional.';
@@ -894,6 +927,71 @@ function updateAlertHistory(existing, alerts, now) {
     .slice(0, ALERT_HISTORY_LIMIT);
 
   return { history: ordenado, novos, resolvidos };
+}
+
+/**
+ * O heartbeat não consegue avisar a própria ausência. Este passo é executado
+ * pela Central e acrescenta o alerta de comunicação sem resolver os demais
+ * problemas que ficaram ativos no último heartbeat.
+ */
+function updateConnectivityAlert(item, now = new Date()) {
+  const current = now instanceof Date ? now : new Date(now);
+  const last = item?.lastHeartbeatAt ? new Date(item.lastHeartbeatAt) : null;
+  if (!last || !Number.isFinite(last.getTime()) || !Number.isFinite(current.getTime())) {
+    return { changed: false, history: item?.alertHistory || [], novos: [] };
+  }
+  const ageSeconds = Math.floor((current.getTime() - last.getTime()) / 1000);
+  if (ageSeconds <= ONLINE_THRESHOLD_SECONDS) {
+    return { changed: false, history: item?.alertHistory || [], novos: [] };
+  }
+
+  const history = Array.isArray(item.alertHistory) ? item.alertHistory : [];
+  if (history.some((entry) => entry?.status === 'ACTIVE' && entry?.key === 'installation_connectivity')) {
+    return { changed: false, history, novos: [] };
+  }
+
+  const active = history
+    .filter((entry) => entry?.status === 'ACTIVE' && entry?.key !== 'installation_connectivity')
+    .map((entry) => ({ key: entry.key, level: entry.level, code: entry.code, message: entry.message }));
+  const minutes = Math.max(1, Math.floor(ageSeconds / 60));
+  active.push(alertas.normalizarAlertaOperacional({
+    key: 'installation_connectivity',
+    level: 'critical',
+    code: 'installation_offline',
+    message: `A instalação não envia informações à Central há ${minutes} minutos. A equipe deve verificar a internet e o servidor local.`,
+  }));
+  const result = updateAlertHistory(item, active, current.toISOString());
+  return { changed: result.novos.length > 0, history: result.history, novos: result.novos };
+}
+
+function startConnectivityMonitor() {
+  const intervalMs = Math.max(15_000, Math.min(60_000, Math.floor(ONLINE_THRESHOLD_SECONDS * 1000 / 3)));
+  const run = () => {
+    void runSerialized(async () => {
+      const db = await loadDb();
+      const notifications = [];
+      let changed = false;
+      const now = new Date();
+      for (const item of Object.values(db.installations || {})) {
+        const result = updateConnectivityAlert(item, now);
+        if (!result.changed) continue;
+        item.alertHistory = result.history;
+        notifications.push({ item, alerts: result.novos });
+        changed = true;
+      }
+      if (!changed) return;
+      await saveDb(db);
+      for (const notification of notifications) {
+        despacharAlertasDaInstalacao(notification.item, notification.alerts, []);
+      }
+    }).catch((error) => {
+      console.error(`[alertas] falha ao verificar comunicação das instalações: ${error?.message || error}`);
+    });
+  };
+  const timer = setInterval(run, intervalMs);
+  if (typeof timer.unref === 'function') timer.unref();
+  run();
+  return timer;
 }
 
 /** A versão aprovada da frota, ou null enquanto ninguém promoveu nada. */
@@ -1354,7 +1452,8 @@ async function handleHeartbeat(req, res) {
     existing.configApplyStatus = 'UNSUPPORTED';
     existing.supportedConfigKeys = null;
   }
-  const alerts = Array.isArray(metrics.alerts) ? metrics.alerts : Array.isArray(body.alerts) ? body.alerts : [];
+  const receivedAlerts = Array.isArray(metrics.alerts) ? metrics.alerts : Array.isArray(body.alerts) ? body.alerts : [];
+  const alerts = receivedAlerts.slice(0, 100).map(alertas.normalizarAlertaOperacional);
   const memoryUsagePercent = body.server?.totalMemoryBytes
     ? Math.round(((Number(body.server.totalMemoryBytes) - Number(body.server.freeMemoryBytes || 0)) / Number(body.server.totalMemoryBytes)) * 100)
     : null;
@@ -1398,7 +1497,7 @@ async function handleHeartbeat(req, res) {
     lastHeartbeatAt: now,
     updatedAt: now,
     metrics,
-    alerts: alerts.slice(0, 100),
+    alerts,
     alertHistory,
     server: body.server || existing.server || null,
     storage: body.storage || existing.storage || null,
@@ -3470,6 +3569,7 @@ function startServer() {
   Promise.resolve(datastore.acquireInstanceLock())
     .then(() => {
       startTimeseriesMaintenance();
+      startConnectivityMonitor();
       server.listen(PORT, HOST, () => {
         console.log(`DRAC Central ouvindo em http://${HOST}:${PORT}`);
       });
@@ -3517,8 +3617,11 @@ module.exports = {
   fleetSummary,
   heartbeatCameraBlock,
   heartbeatCameraRaw,
+  updateAlertHistory,
+  updateConnectivityAlert,
   runSerialized,
   startServer,
+  startConnectivityMonitor,
   startTimeseriesMaintenance,
   verifyPassword,
 };

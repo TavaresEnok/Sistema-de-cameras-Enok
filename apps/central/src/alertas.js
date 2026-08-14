@@ -201,7 +201,15 @@ async function enviarTelegram(config, texto) {
 // ── Envio: e-mail ───────────────────────────────────────────────────────────
 
 function smtpConfigurado() {
-  return Boolean(String(process.env.CENTRAL_SMTP_HOST || '').trim());
+  const cfg = configSmtp();
+  return Boolean(
+    cfg.host
+    && Number.isInteger(cfg.port)
+    && cfg.port >= 1
+    && cfg.port <= 65_535
+    && emailPlausivel(cfg.from)
+    && (!cfg.user || cfg.pass),
+  );
 }
 
 function configSmtp() {
@@ -247,10 +255,16 @@ function falarSmtp(socket, comando, esperado) {
 }
 
 async function enviarEmail(destinatarios, assunto, corpo) {
-  if (!smtpConfigurado()) return { ok: false, erro: 'A Central não tem servidor de e-mail configurado.' };
+  if (!smtpConfigurado()) {
+    return {
+      ok: false,
+      erro: 'A conta de e-mail da Central está incompleta. Verifique servidor, remetente e credenciais.',
+    };
+  }
   if (!destinatarios.length) return { ok: false, erro: 'Nenhum destinatário.' };
 
   const cfg = configSmtp();
+  const assuntoSeguro = String(assunto ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, 180);
   let socket;
   try {
     socket = await new Promise((resolve, reject) => {
@@ -261,7 +275,7 @@ async function enviarEmail(destinatarios, assunto, corpo) {
     });
 
     await falarSmtp(socket, null, [220]);
-    await falarSmtp(socket, 'EHLO drac-central', [250]);
+    await falarSmtp(socket, 'EHLO ajustcam-central', [250]);
 
     if (!cfg.secure) {
       // Porta 587 exige subir para TLS antes de mandar senha. Sem isto a
@@ -271,7 +285,7 @@ async function enviarEmail(destinatarios, assunto, corpo) {
         const seguro = tls.connect({ socket, servername: cfg.host }, () => resolve(seguro));
         seguro.once('error', reject);
       });
-      await falarSmtp(socket, 'EHLO drac-central', [250]);
+      await falarSmtp(socket, 'EHLO ajustcam-central', [250]);
     }
 
     if (cfg.user) {
@@ -287,9 +301,9 @@ async function enviarEmail(destinatarios, assunto, corpo) {
     await falarSmtp(socket, 'DATA', [354]);
 
     const cabecalho = [
-      `From: DRAC Central <${cfg.from}>`,
+      `From: AjustCam Central <${cfg.from}>`,
       `To: ${destinatarios.join(', ')}`,
-      `Subject: =?UTF-8?B?${Buffer.from(assunto).toString('base64')}?=`,
+      `Subject: =?UTF-8?B?${Buffer.from(assuntoSeguro).toString('base64')}?=`,
       'MIME-Version: 1.0',
       'Content-Type: text/plain; charset=UTF-8',
       'Content-Transfer-Encoding: base64',
@@ -312,14 +326,169 @@ async function enviarEmail(destinatarios, assunto, corpo) {
 const ESCAPE_HTML = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
 const escaparTelegram = (t) => String(t ?? '').replace(/[&<>]/g, (c) => ESCAPE_HTML[c]);
 
+const primeiroNumero = (texto, fallback = 0) => {
+  const encontrado = String(texto ?? '').match(/\d+(?:[.,]\d+)?/);
+  return encontrado ? Number(encontrado[0].replace(',', '.')) : fallback;
+};
+
+const quantidade = (valor, singular, plural = `${singular}s`) =>
+  `${valor} ${Number(valor) === 1 ? singular : plural}`;
+
+const ROTULOS_SERVICO = Object.freeze({
+  api: 'serviço principal',
+  web: 'página do sistema',
+  postgres: 'banco de dados',
+  redis: 'serviço de filas',
+  mediamtx: 'serviço de vídeo ao vivo',
+  go2rtc: 'serviço de compatibilidade de vídeo',
+  'rtmp-ingest': 'recebimento de vídeo das câmeras',
+  'postgres-backup': 'serviço de backup do banco de dados',
+  'postgres-backup-verify': 'verificação dos backups do banco de dados',
+  central: 'comunicação com a Central',
+  'ai-service': 'serviço de análise de vídeo',
+  'camera-worker': 'serviço de processamento de câmeras',
+});
+
+function alertaInfraAmigavel(codigo, mensagem) {
+  const detalhe = String(mensagem ?? '').replace(/^Infra:\s*/i, '');
+  const partes = detalhe.split(':').map((parte) => parte.trim());
+  const tipo = partes[0] || codigo.replace(/^infra_/, '');
+
+  if (tipo === 'container') {
+    const nome = partes[1] || 'desconhecido';
+    const rotulo = ROTULOS_SERVICO[nome] || `serviço ${nome.replace(/[-_]+/g, ' ')}`;
+    return {
+      key: `infra_container:${nome}`,
+      level: 'critical',
+      message: `O ${rotulo} da instalação não está funcionando.`,
+    };
+  }
+  if (tipo === 'api') return { key: 'infra_api', level: 'critical', message: 'O serviço principal da instalação não está respondendo.' };
+  if (tipo === 'web') return { key: 'infra_web', level: 'critical', message: 'A página do sistema na instalação não está respondendo.' };
+  if (tipo === 'build-agent') return { key: 'infra_build_agent', level: 'warning', message: 'O serviço de geração do aplicativo não está respondendo.' };
+  if (tipo === 'live') return { key: `infra_live:${partes[1] || 'video'}`, level: 'critical', message: 'O serviço de vídeo ao vivo não está respondendo corretamente.' };
+  if (tipo === 'backup') return { key: 'infra_backup', level: 'warning', message: 'A instalação está sem um backup recente há mais de 36 horas.' };
+  if (tipo === 'security') return { key: 'infra_security_log', level: 'critical', message: 'O sistema encontrou uma possível informação sigilosa nos registros. A equipe técnica deve verificar.' };
+  if (tipo === 'site-cameras') return { key: 'infra_camera_network', level: 'critical', message: 'A rede das câmeras não está respondendo a partir do servidor da instalação.' };
+
+  return {
+    key: codigo || 'infra_unknown',
+    level: 'warning',
+    message: 'A instalação detectou um problema interno que precisa de verificação técnica.',
+  };
+}
+
+/**
+ * Converte o contrato técnico do heartbeat em texto para o operador.
+ *
+ * A Central pode receber heartbeat de versões antigas durante meses. Fazer a
+ * tradução aqui mantém Telegram, e-mail, histórico e tela compreensíveis sem
+ * exigir que todas as instalações sejam atualizadas ao mesmo tempo.
+ */
+function normalizarAlertaOperacional(entrada) {
+  const alerta = entrada && typeof entrada === 'object' ? entrada : {};
+  const code = String(alerta.code || 'generic').trim().toLowerCase().slice(0, 100);
+  const original = String(alerta.message || '').trim().slice(0, 500);
+  const informado = String(alerta.key || '').trim().toLowerCase().slice(0, 160);
+  let level = alerta.level === 'critical' ? 'critical' : 'warning';
+  let key = informado || code;
+  let message = original || 'A instalação informou um problema operacional.';
+  const n = primeiroNumero(original);
+
+  switch (code) {
+    case 'disk_usage_high':
+      key = informado || 'disk_usage';
+      level = 'critical';
+      message = `O disco do servidor está com ${n}% de uso. O espaço para novas gravações está crítico.`;
+      break;
+    case 'disk_usage_attention':
+      key = informado || 'disk_usage';
+      message = `O disco do servidor está com ${n}% de uso e precisa de atenção.`;
+      break;
+    case 'cameras_unavailable':
+      message = `${quantidade(n, 'câmera')} ${n === 1 ? 'está' : 'estão'} sem comunicação ou com erro.`;
+      break;
+    case 'no_online_cameras':
+      level = 'critical';
+      message = 'Todas as câmeras da instalação estão sem comunicação.';
+      break;
+    case 'stream_high_cpu_risk':
+      message = `${quantidade(n, 'câmera')} ${n === 1 ? 'está exigindo' : 'estão exigindo'} processamento elevado para exibir vídeo. As imagens podem apresentar lentidão.`;
+      break;
+    case 'live_failures_recent':
+      message = `${n === 1 ? 'Foi detectada' : 'Foram detectadas'} ${quantidade(n, 'falha')} ao abrir imagens ao vivo nas últimas 24 horas.`;
+      break;
+    case 'recording_without_last_segment':
+      message = 'O sistema não conseguiu identificar o horário da gravação mais recente.';
+      break;
+    case 'recording_disabled_all':
+      message = 'Nenhuma câmera está configurada para gravar, embora a instalação exija gravação.';
+      break;
+    case 'recording_storage_capacity_insufficient':
+      key = informado || 'recording_storage_capacity';
+      level = 'critical';
+      message = 'O armazenamento disponível não é suficiente para manter o período de gravações configurado.';
+      break;
+    case 'recording_storage_capacity_attention':
+      key = informado || 'recording_storage_capacity';
+      message = 'O armazenamento está próximo do limite necessário para manter o período de gravações configurado.';
+      break;
+    case 'cameras_stalled':
+      message = `${quantidade(n, 'câmera')} ${n === 1 ? 'parou' : 'pararam'} de gerar novas gravações.`;
+      break;
+    case 'camera_recording_expected_inactive':
+      message = `${quantidade(n, 'câmera')} ${n === 1 ? 'deveria estar gravando, mas não está' : 'deveriam estar gravando, mas não estão'}.`;
+      break;
+    case 'motion_detection_failsafe':
+      message = `A detecção de movimento deixou de responder em ${quantidade(n, 'câmera')}. A gravação de segurança foi ativada automaticamente.`;
+      break;
+    case 'cloud_recordings_missing':
+      level = 'critical';
+      message = `${quantidade(n, 'gravação', 'gravações')} ${n === 1 ? 'que deveria estar armazenada na nuvem não foi encontrada' : 'que deveriam estar armazenadas na nuvem não foram encontradas'}.`;
+      break;
+    case 'cloud_upload_delayed':
+      message = `${quantidade(n, 'gravação', 'gravações')} ${n === 1 ? 'aguarda' : 'aguardam'} envio para a nuvem há mais tempo que o esperado.`;
+      break;
+    case 'infra_watchdog_stale':
+      message = 'O serviço que verifica a saúde da instalação não envia informações há mais de 15 minutos.';
+      break;
+    case 'installation_offline':
+      key = informado || 'installation_connectivity';
+      level = 'critical';
+      message = original || 'A instalação parou de se comunicar com a Central. A equipe deve verificar a internet e o servidor local.';
+      break;
+    default:
+      if (code.startsWith('infra_')) {
+        // Um heartbeat novo já pode mandar a frase amigável junto de uma chave
+        // estável. Heartbeats antigos mandavam `Infra:tipo:detalhe`; só esse
+        // formato precisa ser traduzido novamente.
+        if (!informado || /^Infra:\s*/i.test(original)) {
+          const infra = alertaInfraAmigavel(code, original);
+          key = informado || infra.key;
+          level = infra.level;
+          message = infra.message;
+        }
+      }
+      break;
+  }
+
+  return { key, level, code, message };
+}
+
 /**
  * Monta a mensagem. Curta de propósito: chega no celular de alguém que talvez
  * esteja dormindo, e precisa responder "onde, o quê, quando" sem abrir nada.
  */
 function montarMensagem({ instalacao, alertas, recuperado = false }) {
   const nome = instalacao?.name || instalacao?.customerName || instalacao?.id || 'Instalação';
-  const titulo = recuperado ? `✅ Normalizado — ${nome}` : `🔴 Alerta — ${nome}`;
-  const linhas = alertas.slice(0, 8).map((a) => `• ${a.message || a.key || 'ocorrência'}`);
+  const normalizados = alertas.map(normalizarAlertaOperacional);
+  const temCritico = normalizados.some((alerta) => alerta.level === 'critical');
+  const titulo = recuperado
+    ? `✅ Problema resolvido — ${nome}`
+    : temCritico
+      ? `🚨 Problema crítico — ${nome}`
+      : `⚠️ Atenção necessária — ${nome}`;
+  const linhas = normalizados.slice(0, 8).map((a) => `• ${a.message}`);
   if (alertas.length > 8) linhas.push(`• …e mais ${alertas.length - 8}`);
   const quando = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 
@@ -365,4 +534,5 @@ module.exports = {
   cifrar,
   decifrar,
   emailPlausivel,
+  normalizarAlertaOperacional,
 };

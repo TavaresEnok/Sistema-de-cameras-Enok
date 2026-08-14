@@ -189,6 +189,15 @@ services:
       # receber configuração de storage e a tela devolveria "não pôde ser
       # decifrada". Faltar esta linha era um defeito latente, não um detalhe.
       - CENTRAL_STORAGE_SECRET=${CENTRAL_STORAGE_SECRET:-}
+      # Conta remetente compartilhada pela Central. Cada instalação escolhe
+      # apenas os destinatários. Sem uma configuração completa, a própria tela
+      # mantém o canal de e-mail indisponível — nunca aparenta estar ativo.
+      - CENTRAL_SMTP_HOST=${CENTRAL_SMTP_HOST:-}
+      - CENTRAL_SMTP_PORT=${CENTRAL_SMTP_PORT:-587}
+      - CENTRAL_SMTP_SECURE=${CENTRAL_SMTP_SECURE:-false}
+      - CENTRAL_SMTP_USER=${CENTRAL_SMTP_USER:-}
+      - CENTRAL_SMTP_PASS=${CENTRAL_SMTP_PASS:-}
+      - CENTRAL_SMTP_FROM=${CENTRAL_SMTP_FROM:-}
       - DRAC_CENTRAL_ADMIN_TOKEN=${DRAC_CENTRAL_ADMIN_TOKEN:-}
       - DRAC_CENTRAL_SESSION_HOURS=${DRAC_CENTRAL_SESSION_HOURS:-8}
       - DRAC_CENTRAL_ALLOWED_ORIGINS=${DRAC_CENTRAL_ALLOWED_ORIGINS:-https://localhost}

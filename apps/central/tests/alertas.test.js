@@ -97,7 +97,34 @@ test('mensagem de recuperação é distinta da de falha', () => {
   const falha = alertas.montarMensagem({ instalacao: { name: 'X' }, alertas: [{ message: 'a' }] });
   const volta = alertas.montarMensagem({ instalacao: { name: 'X' }, alertas: [{ message: 'a' }], recuperado: true });
   assert.notEqual(falha.assunto, volta.assunto, 'operador não pode confundir queda com recuperação');
-  assert.match(volta.assunto, /Normalizado/);
+  assert.match(volta.assunto, /Problema resolvido/);
+});
+
+test('catálogo traduz códigos técnicos para linguagem de operador', () => {
+  const casos = [
+    [{ code: 'stream_high_cpu_risk', message: '3 camera(s) com risco alto de CPU/transcode.' }, /3 câmeras.*processamento elevado/],
+    [{ code: 'infra_container', message: 'Infra: container:postgres:exited' }, /banco de dados.*não está funcionando/],
+    [{ code: 'infra_live', message: 'Infra: live:webrtc-porta-morta' }, /vídeo ao vivo.*não está respondendo/],
+    [{ code: 'cloud_recordings_missing', message: '2 objetos missing' }, /2 gravações.*nuvem.*não foram encontradas/],
+  ];
+  for (const [entrada, esperado] of casos) {
+    const saida = alertas.normalizarAlertaOperacional(entrada);
+    assert.match(saida.message, esperado);
+    assert.doesNotMatch(saida.message, /transcode|container|webrtc|objeto missing/i);
+  }
+});
+
+test('mensagem diferencia atenção de problema crítico', () => {
+  const atencao = alertas.montarMensagem({
+    instalacao: { name: 'Loja' },
+    alertas: [{ code: 'disk_usage_attention', level: 'warning', message: 'Uso de disco em 76%.' }],
+  });
+  const critico = alertas.montarMensagem({
+    instalacao: { name: 'Loja' },
+    alertas: [{ code: 'disk_usage_high', level: 'critical', message: 'Uso de disco em 91%.' }],
+  });
+  assert.match(atencao.assunto, /Atenção necessária/);
+  assert.match(critico.assunto, /Problema crítico/);
 });
 
 test('lista longa de alertas é truncada com aviso de quantos sobraram', () => {
@@ -114,7 +141,7 @@ test('sem SMTP configurado o canal de e-mail se declara indisponível', async ()
     assert.equal(alertas.alertasPublicos({}).emailDisponivel, false, 'a tela precisa poder explicar por que o e-mail não vai');
     const r = await alertas.enviarEmail(['a@b.com'], 'x', 'y');
     assert.equal(r.ok, false);
-    assert.match(r.erro, /servidor de e-mail/i, 'erro genérico não ajuda ninguém');
+    assert.match(r.erro, /conta de e-mail/i, 'erro genérico não ajuda ninguém');
   } finally {
     if (anterior !== undefined) process.env.CENTRAL_SMTP_HOST = anterior;
   }
@@ -137,27 +164,18 @@ test('um canal quebrado não impede o outro', async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // DEDUPLICAÇÃO — a regra que decide se o canal é usável ou vira spam.
 //
-// `updateAlertHistory` vive no server.js (que sobe um servidor ao ser
-// carregado), então o teste extrai só a função. Feio, mas o alvo é a lógica de
-// transição, e ela é o coração do recurso: sem isto, um disco cheio manda 60
+// `updateAlertHistory` vive no server.js e é exportada para testar a regra real.
+// Ela é o coração do recurso: sem isto, um disco cheio manda 60
 // mensagens por hora e o operador silencia o canal — justamente antes da
 // próxima ocorrência que importava.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function carregarUpdateAlertHistory() {
-  const fonte = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/server.js'), 'utf8');
-  const inicio = fonte.indexOf('function updateAlertHistory(');
-  const fim = fonte.indexOf('\nfunction ', inicio + 10);
-  const corpo = fonte.slice(inicio, fim);
-  const crypto = require('node:crypto');
-  const ALERT_HISTORY_LIMIT = 500;
-  const alertKey = (a) => `${String(a?.code || 'generic').toLowerCase()}:${String(a?.message || '').toLowerCase().slice(0, 120)}`;
-  // eslint-disable-next-line no-eval
-  return eval(`(${corpo.replace('function updateAlertHistory', 'function')})`);
-}
+const {
+  updateAlertHistory,
+  updateConnectivityAlert,
+} = require('../src/server');
 
 test('alerta que PERSISTE não gera aviso repetido a cada heartbeat', () => {
-  const updateAlertHistory = carregarUpdateAlertHistory();
   const disco = [{ code: 'disk', message: 'Disco em 95%', level: 'critical' }];
 
   const r1 = updateAlertHistory({}, disco, '2026-08-07T16:00:00Z');
@@ -168,7 +186,6 @@ test('alerta que PERSISTE não gera aviso repetido a cada heartbeat', () => {
 });
 
 test('recuperação avisa uma vez, e reincidência conta como novo', () => {
-  const updateAlertHistory = carregarUpdateAlertHistory();
   const disco = [{ code: 'disk', message: 'Disco em 95%', level: 'critical' }];
 
   const ativo = updateAlertHistory({}, disco, '2026-08-07T16:00:00Z');
@@ -178,6 +195,65 @@ test('recuperação avisa uma vez, e reincidência conta como novo', () => {
 
   const voltou = updateAlertHistory({ alertHistory: resolvido.history }, disco, '2026-08-07T16:03:00Z');
   assert.equal(voltou.novos.length, 1, 'problema que volta é informação, não repetição');
+});
+
+test('percentual e contagem variáveis não transformam o mesmo problema em spam', () => {
+  const primeiro = updateAlertHistory({}, [
+    alertas.normalizarAlertaOperacional({ code: 'disk_usage_attention', message: 'Uso de disco em 76%.' }),
+    alertas.normalizarAlertaOperacional({ code: 'cameras_unavailable', message: '2 camera(s) indisponivel(is).' }),
+  ], '2026-08-07T16:00:00Z');
+  const segundo = updateAlertHistory({ alertHistory: primeiro.history }, [
+    alertas.normalizarAlertaOperacional({ code: 'disk_usage_attention', message: 'Uso de disco em 77%.' }),
+    alertas.normalizarAlertaOperacional({ code: 'cameras_unavailable', message: '3 camera(s) indisponivel(is).' }),
+  ], '2026-08-07T16:01:00Z');
+  assert.equal(segundo.novos.length, 0, 'mudou só o valor, não o tipo do problema');
+});
+
+test('agravamento de atenção para crítico gera um novo aviso, sem duplicar o problema', () => {
+  const atencao = updateAlertHistory({}, [
+    alertas.normalizarAlertaOperacional({ code: 'disk_usage_attention', level: 'warning', message: 'Uso de disco em 80%.' }),
+  ], '2026-08-07T16:00:00Z');
+  const critico = updateAlertHistory({ alertHistory: atencao.history }, [
+    alertas.normalizarAlertaOperacional({ code: 'disk_usage_high', level: 'critical', message: 'Uso de disco em 90%.' }),
+  ], '2026-08-07T16:01:00Z');
+  assert.equal(critico.novos.length, 1, 'ficar crítico precisa avisar novamente');
+  assert.equal(critico.history.filter((item) => item.status === 'ACTIVE').length, 1, 'um problema, uma entrada ativa');
+});
+
+test('histórico da versão antiga migra para chave estável sem reenviar alerta', () => {
+  const antigo = {
+    alertHistory: [{
+      id: 'old',
+      key: 'disk_usage_attention:uso de disco em 76%.',
+      status: 'ACTIVE',
+      level: 'warning',
+      code: 'disk_usage_attention',
+      message: 'Uso de disco em 76%.',
+      firstSeenAt: '2026-08-07T15:00:00Z',
+      lastSeenAt: '2026-08-07T15:00:00Z',
+      occurrences: 1,
+    }],
+  };
+  const atual = updateAlertHistory(antigo, [
+    alertas.normalizarAlertaOperacional({ code: 'disk_usage_attention', message: 'Uso de disco em 77%.' }),
+  ], '2026-08-07T16:00:00Z');
+  assert.equal(atual.novos.length, 0, 'atualizar a Central não pode reenviar problema já conhecido');
+  assert.equal(atual.history[0].key, 'disk_usage');
+  assert.equal(atual.history[0].status, 'ACTIVE');
+});
+
+test('Central cria alerta quando a instalação para de comunicar e não repete', () => {
+  const item = { id: 'x', lastHeartbeatAt: '2026-08-07T15:55:00Z', alertHistory: [] };
+  const primeira = updateConnectivityAlert(item, new Date('2026-08-07T16:00:00Z'));
+  assert.equal(primeira.changed, true);
+  assert.equal(primeira.novos[0].code, 'installation_offline');
+  assert.match(primeira.novos[0].message, /5 minutos/);
+
+  const segunda = updateConnectivityAlert({ ...item, alertHistory: primeira.history }, new Date('2026-08-07T16:01:00Z'));
+  assert.equal(segunda.changed, false, 'queda persistente não pode avisar a cada varredura');
+
+  const recuperou = updateAlertHistory({ alertHistory: primeira.history }, [], '2026-08-07T16:01:01Z');
+  assert.equal(recuperou.resolvidos.length, 1, 'o próximo heartbeat precisa avisar a recuperação');
 });
 
 test('os manipuladores da aba usam os helpers que EXISTEM na página', () => {
