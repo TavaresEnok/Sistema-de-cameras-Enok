@@ -2188,7 +2188,22 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // simultâneos — e mesmo lá com fallback (abaixo) se a sessão for negada.
       const useNvenc =
         gpuAccel && this.transcodePipelineHasNvenc() && deliveryMode !== 'grid';
-      const cpuVideoArgs = sanitizeGridSource
+      // VÍDEO JÁ H.264 NÃO SE REENCODA. Nunca.
+      //
+      // O publisher aqui existe por VÁRIOS motivos, e só um deles é o vídeo:
+      // `transcodeAudioForWebrtc` (áudio ligado) também o obriga, porque o
+      // WebRTC não aceita o G.711 das câmeras. Só que os argumentos de vídeo
+      // eram sempre os de transcode — então uma fonte H.264 com áudio ligado
+      // era reencodada H.264→H.264 para converter o ÁUDIO.
+      //
+      // Foi o que o dono viu na tela, e com razão: "H264 → H.264 · 5X CPU ...
+      // isso é piada???" (14/08/2026). Não era: era o vídeo pagando o preço da
+      // conversão do áudio.
+      //
+      // A grade segue reencodando porque ali o vídeo muda de verdade (é
+      // redimensionado); nos demais modos, H.264 entra e sai intacto.
+      const videoJaServe = !isHevc && deliveryMode !== 'grid';
+      const cpuVideoArgs = sanitizeGridSource || videoJaServe
         ? '-c:v copy'
         : deliveryMode === 'grid'
         // `veryfast`, não `ultrafast`. Quando tirei o NVENC da grade (sessões
@@ -2211,7 +2226,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           '-b:v 6000k -maxrate 6000k -bufsize 12000k -pix_fmt yuv420p ' +
           '-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2';
       const nvencVideoArgs =
-        useNvenc && !sanitizeGridSource
+        // Nem a GPU: reencodar H.264 em H.264 é caro em qualquer lugar.
+        useNvenc && !sanitizeGridSource && !videoJaServe
           ? '-c:v h264_nvenc -preset p4 -tune ll -profile:v main -rc cbr ' +
             '-b:v 5000k -maxrate 5000k -bufsize 10000k -pix_fmt yuv420p ' +
             '-g 30 -bf 0'
