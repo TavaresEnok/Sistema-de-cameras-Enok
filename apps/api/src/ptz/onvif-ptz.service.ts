@@ -6,6 +6,7 @@ import { type PtzCommandDto } from './dto/ptz-command.dto';
 import { diagnosticarFalhaPtz } from './helpers/diagnostico-ptz.helper';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { PortCheckerService } from '../common/network/port-checker.service';
+import { injetarWsSecurity, deveTentarWsSecurity } from './helpers/ws-security.helper';
 import { assertCameraTargetAllowed } from '../common/network/safe-url.helper';
 import { PtzStateStore } from './ptz-state.store';
 
@@ -284,11 +285,57 @@ export class OnvifPtzService {
         headers: baseHeaders,
       };
 
+      // ── SEGUNDA TENTATIVA: WS-Security UsernameToken ────────────────────
+      //
+      // Descoberto em 14/08/2026: este cliente só falava HTTP Digest, e a
+      // MAIORIA das câmeras ONVIF usa WS-Security — que é o mecanismo padrão da
+      // norma. A Mercusys do dono devolvia `400 Authority failure` SEM oferecer
+      // Digest, o código desistia com "Auth não é Digest", e o resultado virava
+      // "esta câmera não tem PTZ". Outra ferramenta movimentou a mesma câmera
+      // pelo mesmo IP e porta; a diferença era só a autenticação.
+      //
+      // Medido depois da correção, na câmera real: GetProfiles passou de
+      // HTTP 400 para HTTP 200, devolvendo profile_1/vsconf/asconf e PTZ.
+      //
+      // É ADITIVO de propósito: só entra quando a câmera recusou por autorização
+      // E não ofereceu Digest. Quem funciona hoje pelo Digest não muda de
+      // caminho — e não há risco de regressão na frota.
+      const tentarComWsSecurity = (statusInicial: number | undefined, corpoInicial: string) => {
+        if (method === 'GET' || !username) return false;
+        if (!deveTentarWsSecurity({ statusCode: statusInicial, wwwAuthenticate: null, corpo: corpoInicial })) {
+          return false;
+        }
+        const corpoAssinado = injetarWsSecurity(body, { usuario: username, senha: password ?? '' });
+        if (corpoAssinado === body) return false; // envelope irreconhecível
+        const req3 = http.request(
+          {
+            ...requestOptions,
+            headers: { ...baseHeaders, 'Content-Length': Buffer.byteLength(corpoAssinado) },
+          },
+          (res3) => collectBody(res3, resolve),
+        );
+        req3.on('error', (error) => resolve({ ok: false, message: `SOAP PTZ falhou: ${error.message}` }));
+        req3.on('timeout', () => {
+          req3.destroy();
+          resolve({ ok: false, message: 'SOAP PTZ timeout' });
+        });
+        req3.write(corpoAssinado);
+        req3.end();
+        return true;
+      };
+
       const req1 = http.request(requestOptions, (res1) => {
         if (res1.statusCode === 401) {
           const authHeader = res1.headers['www-authenticate'];
           if (!authHeader || !String(authHeader).toLowerCase().startsWith('digest')) {
-            resolve({ ok: false, message: 'Auth não é Digest' });
+            // Sem desafio Digest: a câmera provavelmente espera WS-Security.
+            let corpo401 = '';
+            res1.on('data', (c) => { corpo401 += String(c).slice(0, 500); });
+            res1.on('end', () => {
+              if (!tentarComWsSecurity(res1.statusCode, corpo401)) {
+                resolve({ ok: false, message: 'Auth não é Digest' });
+              }
+            });
             return;
           }
 
@@ -323,6 +370,19 @@ export class OnvifPtzService {
             req2.write(body);
           }
           req2.end();
+          return;
+        }
+
+        if (res1.statusCode === 400) {
+          // 400 com texto de autorização: a família de firmware da Mercusys
+          // recusa assim, sem 401 e sem desafio.
+          let corpo400 = '';
+          res1.on('data', (c) => { corpo400 += String(c).slice(0, 500); });
+          res1.on('end', () => {
+            if (!tentarComWsSecurity(400, corpo400)) {
+              resolve({ ok: false, statusCode: 400, responseBody: corpo400, message: `ONVIF SOAP HTTP 400` });
+            }
+          });
           return;
         }
 
