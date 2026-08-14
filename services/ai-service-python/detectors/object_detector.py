@@ -20,9 +20,14 @@ def _gpu_realmente_presente() -> bool:
     sistema de arquivos — NUNCA quebra. Pedir CUDA sem placa segfalta o
     onnxruntime; esta função é o que impede isso.
     """
-    visiveis = os.environ.get("NVIDIA_VISIBLE_DEVICES", "").strip().lower()
-    if visiveis in ("", "void", "none"):
-        return False
+    # O DEVICE NODE decide, não a variável de ambiente. O toolkit da NVIDIA
+    # endurecido (v1.17+, correção de CVE) troca NVIDIA_VISIBLE_DEVICES por
+    # 'void' na criação de contêiner não-privilegiado MESMO quando entrega os
+    # dispositivos — vetar por ela era falso negativo: placa presente, CUDA
+    # recusado, tudo caindo para CPU. Diagnóstico de 14/08/2026: env 'void',
+    # /dev/nvidia0 existindo, e o serviço a 4 núcleos de CPU com a RTX parada.
+    # Sem placa não há device node, e a proteção original (nunca pedir CUDA
+    # sem GPU, que segfalta o onnxruntime) continua valendo por inteiro.
     return os.path.exists("/dev/nvidia0") or os.path.exists("/dev/nvidiactl")
 
 
@@ -192,6 +197,16 @@ class ObjectDetector(Detector):
         # Por isso a checagem é pela PRESENÇA REAL do dispositivo (device node),
         # que nunca quebra: se a GPU não está acessível ao container, nem se pede
         # CUDA. Assim, arrancar a placa e reiniciar → volta em CPU, sem crash.
+        # Diagnóstico do portão de CUDA NO MOMENTO da decisão (14/08/2026):
+        # avaliado por fora, cada condição dava True e mesmo assim o provider
+        # saía CPU. O que o processo vê aqui é a única verdade que importa.
+        print(
+            f"[ObjectDetector] portao-cuda: wants={self._onnx_wants_cuda} "
+            f"presente={_gpu_realmente_presente()} "
+            f"env_runtime={os.environ.get('GENERAL_RUNTIME')!r} "
+            f"nvidia0={os.path.exists('/dev/nvidia0')} "
+            f"visible={os.environ.get('NVIDIA_VISIBLE_DEVICES')!r}"
+        )
         usar_cuda = self._onnx_wants_cuda and _gpu_realmente_presente()
         providers = (
             ["CUDAExecutionProvider", "CPUExecutionProvider"]

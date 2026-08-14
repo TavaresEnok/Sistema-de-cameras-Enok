@@ -13,6 +13,12 @@
 
 services:
   ai-service:
+    # RESERVA FORMAL do dispositivo, além do env. Toolkits novos (v1.17+, era
+    # do driver 610) recusam GPU concedida só por NVIDIA_VISIBLE_DEVICES em
+    # contêiner não-privilegiado — o runtime troca o valor por 'void' na
+    # criação, silenciosamente, e `docker inspect` segue mostrando 'all'.
+    # A reserva via device request não depende dessa política.
+    gpus: all
     build:
       context: ../services/ai-service-python
       dockerfile: Dockerfile.gpu
@@ -31,6 +37,14 @@ services:
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      # Driver novo (610.x, RTX 50xx) fica FORA das faixas do NVIDIA_REQUIRE_CUDA
+      # da imagem CUDA 12.4 (escritas quando driver<536 era o mais novo). Com a
+      # exigência insatisfeita o runtime da NVIDIA neutraliza a placa trocando
+      # NVIDIA_VISIBLE_DEVICES para 'void' NA CRIAÇÃO — o processo nasce sem GPU
+      # enquanto `docker inspect` mostra 'all'. Diagnóstico de 14/08/2026, uma
+      # noite inteira: o portão de CUDA do detector via 'void' e caía para CPU.
+      # Esta é a válvula OFICIAL para pular a checagem de versão.
+      - NVIDIA_DISABLE_REQUIRE=1
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       # IA por GPU LIGADA e verificada (paridade de detecção com OpenVINO
       # confirmada, 4,3 ms/frame na RTX 5060 Ti). Ambos caem para CPU sozinhos
