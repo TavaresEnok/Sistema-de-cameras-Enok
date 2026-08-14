@@ -199,7 +199,7 @@ GENERAL_PROFILE = {
     "hide_after_misses": _env_int("GENERAL_HIDE_AFTER_MISSES", 5),
     "show_after_hits": _env_int("GENERAL_SHOW_AFTER_HITS", 1),
     "min_object_height_px": _env_int("GENERAL_MIN_OBJECT_HEIGHT_PX", 10),
-    "overlay_mode": _env_str("GENERAL_OVERLAY_MODE", "triangle"),
+    "overlay_mode": _env_str("GENERAL_OVERLAY_MODE", "box"),
     "overlay_ttl_ms": _env_int("GENERAL_OVERLAY_TTL_MS", 1800),
     "persistent_track_id": _env_bool("GENERAL_PERSISTENT_TRACK_ID", True),
     "recognition": _env_bool("GENERAL_RECOGNITION", False),
