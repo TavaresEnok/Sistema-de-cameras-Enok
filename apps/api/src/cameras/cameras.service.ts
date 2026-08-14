@@ -69,6 +69,7 @@ import {
   GRID_LIVE_TARGET_FPS,
   resolveGridLiveProfile,
 } from '../camera-stream/helpers/live-delivery-profile.helper';
+import { decidirEstadoDaCamera, devoSondarRtsp } from './helpers/prova-de-vida.helper';
  
 
 export function sanitizeCamera<T extends { passwordEncrypted: string }>(camera: T): Omit<T, 'passwordEncrypted'> {
@@ -1018,10 +1019,22 @@ export class CamerasService {
       };
     }
 
-    let status: CameraStatus = CameraStatus.OFFLINE;
-    if (rtspReachable && onvifReachable && (input.username ? selectedRtspPortAuthOk : true)) {
-      status = CameraStatus.ONLINE;
-    }
+    // ESTÁ CHEGANDO VÍDEO? É a pergunta que faltava. A regra antiga exigia
+    // porta RTSP, porta ONVIF e autenticação — e nenhuma delas responde se a
+    // câmera está viva: elas testam se ela aceita MAIS UMA conexão. Câmera de
+    // sessão única recusa, e o sistema a dava por morta com a imagem na tela.
+    // Câmera ainda não cadastrada não publica em lugar nenhum: não há
+    // transmissão para consultar, e a decisão fica com as sondas.
+    const transmitindoAgora = null;
+    const veredicto = decidirEstadoDaCamera({
+      transmitindoAgora,
+      rtspAlcancavel: rtspReachable,
+      onvifAlcancavel: onvifReachable,
+      autenticacaoRtspOk: selectedRtspPortAuthOk,
+      temCredencial: Boolean(input.username),
+    });
+    const status: CameraStatus =
+      veredicto.status === 'ONLINE' ? CameraStatus.ONLINE : CameraStatus.OFFLINE;
 
     const suggestedRtspPath = mainProfile?.rtspPath ?? detectedRtspPath ?? `/cam/realmonitor?channel=${channel}&subtype=${mainSubtype}`;
     const candidatePaths = Array.from(new Set([input.onvifPath?.trim(), '/onvif/ptz_service', '/onvif/device_service'].filter((v): v is string => Boolean(v))));
@@ -1717,6 +1730,32 @@ export class CamerasService {
    * de "não consegui perguntar" — tratar igual marcaria a frota como offline num
    * soluço do MediaMTX.
    */
+  /**
+   * O servidor de mídia está recebendo quadros desta câmera AGORA?
+   *
+   * Prova de vida que NÃO custa uma sessão à câmera: quem responde é o nosso
+   * servidor, que já tem a conexão aberta. Existe porque câmera de sessão
+   * única (a Mercusys do cliente é uma) RECUSA a segunda conexão, e a recusa
+   * era lida como "câmera caiu" — com o vídeo na tela o tempo todo.
+   *
+   * Devolve `null` quando não deu para saber. Null não é "não transmite":
+   * confundir os dois inventaria uma queda sempre que o MediaMTX estivesse
+   * ocupado.
+   */
+  async cameraTransmitindoAgora(cameraId: string): Promise<boolean | null> {
+    const base = `cam_${cameraId.replace(/[^a-zA-Z0-9]/g, '')}`;
+    // Os três caminhos que uma câmera pode publicar: principal, grade e
+    // original. Basta um estar recebendo para a câmera estar viva.
+    for (const caminho of [base, `${base}_grid`, `${base}_orig`]) {
+      try {
+        if (await this.ingestPathIsLive(caminho)) return true;
+      } catch {
+        return null;
+      }
+    }
+    return false;
+  }
+
   private async ingestPathIsLive(pathName: string): Promise<boolean> {
     const base = (this.configService.get<string>('mediaMtxApiBaseUrl') ?? 'http://mediamtx:9997').replace(/\/+$/, '');
     const user = (this.configService.get<string>('mediaMtxApiUser') ?? '').trim();
@@ -2184,6 +2223,19 @@ export class CamerasService {
         return this.getPushSourcedStatus(camera, previousStatus, startedAt);
       }
 
+      // ── ELA JÁ ESTÁ MANDANDO VÍDEO? ────────────────────────────────────────
+      //
+      // Perguntado ANTES de qualquer sonda, e por um bom motivo: a sonda abaixo
+      // abre uma SEGUNDA sessão RTSP na câmera, e há equipamento que só aceita
+      // UMA. Medido na Mercusys do cliente em 14/08/2026, com o MediaMTX já
+      // puxando: três sondas seguidas levaram "Operation not permitted". O
+      // vigia lia a recusa como queda e marcava OFFLINE — com o vídeo na tela.
+      //
+      // É o mesmo raciocínio que a câmera de push já usava logo acima ("saúde é
+      // ESTAR PUBLICANDO"), agora valendo para todas: quadros chegando é prova
+      // mais forte que porta aberta, e não custa nada à câmera.
+      const transmitindoAgora = await this.cameraTransmitindoAgora(camera.id);
+
       const rtspReachable = await this.portChecker.check(camera.ip, camera.rtspPort);
       const onvifReachable =
         camera.onvifPort == null ? true : await this.portChecker.check(camera.ip, camera.onvifPort);
@@ -2191,7 +2243,7 @@ export class CamerasService {
       let detectedRtspPath: string | null = null;
       let detectedStream: ProbedStreamMetadata | null = null;
 
-      if (rtspReachable) {
+      if (rtspReachable && devoSondarRtsp(transmitindoAgora)) {
         try {
           const password = this.cryptoService.decrypt(camera.passwordEncrypted);
           const liveProfile = resolveDeliveryRtspProfile(camera);
@@ -2233,9 +2285,17 @@ export class CamerasService {
         }
       }
 
-      let status: CameraStatus = CameraStatus.OFFLINE;
-      if (rtspReachable && onvifReachable && rtspAuthOk) {
-        status = CameraStatus.ONLINE;
+      const veredicto = decidirEstadoDaCamera({
+        transmitindoAgora,
+        rtspAlcancavel: rtspReachable,
+        onvifAlcancavel: onvifReachable,
+        autenticacaoRtspOk: rtspAuthOk,
+        temCredencial: Boolean(camera.username),
+      });
+      const status: CameraStatus =
+        veredicto.status === 'ONLINE' ? CameraStatus.ONLINE : CameraStatus.OFFLINE;
+      if (veredicto.status === 'OFFLINE' && previousStatus === CameraStatus.ONLINE) {
+        this.logger.warn(`${camera.name}: ONLINE → OFFLINE — ${veredicto.explicacao}`);
       }
 
       // O probe acima leu o perfil de LIVE. Se a gravação usa o MESMO stream
