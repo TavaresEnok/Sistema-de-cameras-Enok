@@ -96,14 +96,21 @@ const NAV_SECTIONS: NavSection[] = [
 const PAGINAS_OCULTAS = new Set<string>([
   '/investigation',
   '/audit-logs',
-  // A fila de detecções e o desenho de linha/áreas deixaram de ser itens de
-  // menu porque viraram ABAS da Inteligência (13/08/2026) — não porque foram
-  // desativadas. "Perímetro" era uma tela inteira para um trabalho que pertence
-  // à câmera, e desenhar acontecia em dois lugares diferentes gravando no mesmo
-  // campo. As rotas seguem de pé: /review é o destino do link direto da
-  // notificação do aplicativo, e /perimetro?cameraId= ainda é linkável.
+  // A fila de detecções deixou de ser item de menu porque virou ABA da
+  // Inteligência (13/08/2026) — não porque foi desativada. A rota segue de pé:
+  // /review é o destino do link direto da notificação do aplicativo.
   '/review',
-  '/perimetro',
+  // PERÍMETRO VOLTOU AO MENU (14/08/2026).
+  //
+  // Eu o escondi na reorganização da IA alegando que virara aba da
+  // Inteligência. Errado, e o dono corrigiu: "em inteligencia não tem como eu
+  // desenhar o perimetro!". Tirei do menu o único caminho para uma função que
+  // NÃO tem substituto.
+  //
+  // E tirei de todas as instalações, quando o pedido era removê-la só do
+  // D-GUARDIAN. Esconder página é decisão POR INSTALAÇÃO: para isso existe
+  // `hiddenNavPaths` nas configurações de cada uma. É lá que o D-GUARDIAN
+  // esconde — nunca aqui, no código que vale para todos.
 ]);
 
 /* Role accent — no red for admin; steel blue hierarchy */
