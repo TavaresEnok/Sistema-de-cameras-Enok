@@ -42,6 +42,7 @@ import {
   type LiveViewMode,
 } from './helpers/live-delivery-profile.helper';
 import { liveViewModeToSourceProfile } from './helpers/source-profile.helper';
+import { decidirFonteDaMaxima } from './helpers/fonte-da-maxima.helper';
 import { SourceGatewayService } from './source-gateway.service';
 
 type DeliveryUrls = {
@@ -1086,6 +1087,33 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     });
   }
 
+  /**
+   * Esta câmera aceita uma SEGUNDA sessão RTSP enquanto já está publicando?
+   *
+   * Guardado por câmera porque é característica do equipamento, não do momento.
+   * A Mercusys do cliente recusa ("Operation not permitted"); a maioria aceita.
+   * Sem essa distinção só há escolha ruim: reaproveitar sempre degradaria a
+   * Máxima da frota inteira, e discar sempre mantém a tela preta nas de sessão
+   * única.
+   */
+  private readonly aceitaSegundaSessaoPorCamera = new Map<string, { valor: boolean; em: number }>();
+  private static readonly SEGUNDA_SESSAO_TTL_MS = 30 * 60_000;
+
+  private async cameraAceitaSegundaSessao(cameraId: string, urlDaCamera: string, transport: string): Promise<boolean> {
+    const guardado = this.aceitaSegundaSessaoPorCamera.get(cameraId);
+    if (guardado && Date.now() - guardado.em < MediamtxProxyService.SEGUNDA_SESSAO_TTL_MS) {
+      return guardado.valor;
+    }
+    // O probe JÁ É uma segunda sessão: se ele conecta, a câmera aceita. Falha
+    // (null) cobre recusa e rede ruim — nos dois casos discar de novo é aposta
+    // ruim, e o pior resultado possível é justamente a tela preta.
+    const resultado = await this.probeStreamIsHevc(urlDaCamera, transport).catch(() => null);
+    const valor = resultado !== null;
+    this.aceitaSegundaSessaoPorCamera.set(cameraId, { valor, em: Date.now() });
+    this.logger.log(`Câmera ${cameraId} ${valor ? 'aceita' : 'RECUSA'} uma segunda sessão RTSP simultânea.`);
+    return valor;
+  }
+
   private async probeStreamIsHevc(sourceUrl: string, transport: string): Promise<boolean | null> {
     const codec = await this.probeStreamVideoCodec(sourceUrl, transport);
     if (!codec) return null;
@@ -2026,8 +2054,39 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // 'original' (passthrough) a fonte HEVC segue intocada e o rótulo deve refletir isso.
     const transcodedForLive = needsPublisher && (isHevc || transcodeAudioForWebrtc);
 
+    // ── MÁXIMA SEM DISCAR DE NOVO ──────────────────────────────────────────
+    //
+    // O modo 'original' usava a URL da CÂMERA como origem, enquanto os outros
+    // dois modos são alimentados pelo nosso ffmpeg. Trocar para Máxima abria
+    // uma SEGUNDA conexão em paralelo — e câmera de sessão única recusa, não
+    // chega byte, o player fica preto. Foi o relato de 14/08/2026, e é o mesmo
+    // princípio que o Frigate documenta: "reduce the number of connections to
+    // your camera", consumindo do restream em vez de reconectar.
+    let sourceParaEstePath = sourceUrl;
+    if (deliveryMode === 'original') {
+      const nomeDaBase = this.pathNameFromCameraId(cameraId, 'selected');
+      const baseAoVivo = await this.getPath(nomeDaBase).then((p: any) => p?.ready === true).catch(() => false);
+      const decisao = decidirFonteDaMaxima({
+        urlDaCamera: sourceUrl,
+        urlDaPublicacao: baseAoVivo ? this.buildInternalRtspUrl(nomeDaBase) : null,
+        publicacaoAoVivo: baseAoVivo,
+        // A base só é cópia crua quando nada está convertendo nela.
+        publicacaoEhCopiaCrua: !isHevc && !transcodeAudioForWebrtc,
+        aceitaSegundaSessao: baseAoVivo
+          ? await this.cameraAceitaSegundaSessao(cameraId, sourceUrl, rtspTransport)
+          : null,
+      });
+      sourceParaEstePath = decisao.url;
+      if (decisao.motivo === 'reaproveita-publicacao') {
+        this.logger.log(
+          `Máxima de ${cameraId} servida pela publicação já aberta `
+          + `(${decisao.fidelidadeOriginal ? 'cópia crua' : 'convertida'}) — a câmera recusa uma segunda sessão.`,
+        );
+      }
+    }
+
     const desiredPath: any = {
-      source: sourceUrl,
+      source: sourceParaEstePath,
       // 'original' (máxima qualidade) puxa o stream PRINCIPAL direto da câmera em
       // passthrough. Sempre sob demanda com janela curta: senão o path seguraria
       // uma sessão RTSP + banda WAN do main 24/7 mesmo sem ninguém assistindo.
