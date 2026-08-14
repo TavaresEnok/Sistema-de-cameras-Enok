@@ -33,6 +33,24 @@ MOTORCYCLE_CLASS_ID = 3
 BUS_CLASS_ID = 5
 RIDER_VEHICLE_CLASS_IDS = {BICYCLE_CLASS_ID, MOTORCYCLE_CLASS_ID}
 VEHICLE_CLASS_IDS = {BICYCLE_CLASS_ID, CAR_CLASS_ID, MOTORCYCLE_CLASS_ID, BUS_CLASS_ID}
+def classe_liberada(cls: int) -> bool:
+    """A licença deste cliente permite MOSTRAR esta classe?
+
+    Escrito em 14/08/2026, depois de o dono ver quadrado em CARRO com a
+    Central liberando só "pessoa". As chaves GENERAL_DETECT_* existiam no
+    perfil e NADA as consumia — chave morta: o publicador emitia toda classe
+    que o modelo enxerga, e a licença virava enfeite.
+
+    Pessoa nunca é filtrada (é a classe base de toda instalação). Moto e
+    bicicleta seguem detectáveis quando veículos estão liberados.
+    """
+    if cls == PERSON_CLASS_ID:
+        return True
+    if cls in VEHICLE_CLASS_IDS:
+        return bool(GENERAL_PROFILE.get("detect_vehicles"))
+    return bool(GENERAL_PROFILE.get("detect_objects"))
+
+
 CLASS_LABELS = {
     PERSON_CLASS_ID: "pessoa",
     BICYCLE_CLASS_ID: "bicicleta",
@@ -334,6 +352,8 @@ class ObjectDetector(Detector):
                 class_ids = tracked.class_id if tracked.class_id is not None else []
                 for bbox, score, track_id, class_id in zip(tracked.xyxy, confidences, tracker_ids, class_ids):
                     tracked_cls = int(class_id) if class_id is not None else cls
+                    if not classe_liberada(tracked_cls):
+                        continue
                     raw_track_id = int(track_id)
                     output.append(
                         Detection(
@@ -493,6 +513,8 @@ class ObjectDetector(Detector):
             x2 = int(max(0, min(width, (float(x2) - pad_x) / scale)))
             y2 = int(max(0, min(height, (float(y2) - pad_y) / scale)))
             if x2 <= x1 or y2 <= y1 or (y2 - y1) < self.min_object_height:
+                continue
+            if not classe_liberada(cls):
                 continue
             detections.append(
                 Detection(
