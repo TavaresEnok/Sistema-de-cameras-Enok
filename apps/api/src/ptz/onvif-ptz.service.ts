@@ -43,7 +43,9 @@ type RelayState = 'active' | 'inactive';
 @Injectable()
 export class OnvifPtzService {
   private readonly logger = new Logger(OnvifPtzService.name);
-  private readonly onvifFallbackPorts = [8075, 8080, 8000, 8899];
+  // 2020 é a porta padrão de Mercusys/TP-Link e estava só no fim de uma lista
+  // montada em outro ponto do arquivo; aqui ela entra no palpite principal.
+  private readonly onvifFallbackPorts = [8075, 8080, 8000, 8899, 2020];
   private readonly proprietaryPtzPort = 8075;
   private readonly moveWatchdogs = new Map<string, NodeJS.Timeout>();
 
@@ -404,6 +406,12 @@ export class OnvifPtzService {
   private candidatePaths(preferred?: string | null) {
     return Array.from(new Set([
       preferred?.trim(),
+      // `/onvif/service` é o endpoint ÚNICO da norma — a câmera expõe device,
+      // media e PTZ no mesmo caminho. Faltava aqui, e é o que a Mercusys do
+      // dono anuncia (medido em 14/08/2026: os seis XAddr dela apontam todos
+      // para `http://172.20.0.66:2020/onvif/service`). Vem primeiro entre os
+      // palpites porque cobre as três famílias de uma vez.
+      '/onvif/service',
       '/onvif/ptz_service',
       '/onvif/device_service',
       '/onvif/media_service',
@@ -413,6 +421,7 @@ export class OnvifPtzService {
   private candidateDevicePaths(preferred?: string | null) {
     return Array.from(new Set([
       preferred?.trim(),
+      '/onvif/service',
       '/onvif/device_service',
       '/onvif/device',
       '/onvif/ptz_service',
