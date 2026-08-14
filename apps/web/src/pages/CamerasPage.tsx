@@ -41,6 +41,8 @@ import {
   type PreviewFrame,
 } from '../lib/camera-preview-frame';
 import { CLASSE_CONEXAO, CLASSE_MODO_GRAVACAO, PONTO_CONEXAO, ROTULO_CONEXAO, estadoConexao } from '../lib/camera-status';
+import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
+import { rotuloDoGatilhoDeObjeto, podeUsarGatilhoDeObjeto } from '../lib/gatilho-de-objeto';
 const STATUSES = ['all', 'online', 'recording', 'motion', 'alarm', 'offline', 'no_signal', 'maintenance'] as const;
 const STATUS_LABEL: Record<(typeof STATUSES)[number], string> = {
   all: 'Todos os status',
@@ -307,6 +309,8 @@ function WizardModal({
     subtype?: number;
   }) => Promise<PreviewFrame>;
 }) {
+  // O gatilho de objeto é descrito pelo que a CENTRAL liberou (14/08/2026).
+  const { classes: classesLiberadas } = useClassesLiberadas();
   const [step, setStep] = useState(0);
   const [detectedMax, setDetectedMax] = useState<{
     width: number | null;
@@ -774,7 +778,13 @@ function WizardModal({
                       <SelectContent>
                         <SelectItem value="continuous" className="text-xs">Contínua</SelectItem>
                         <SelectItem value="motion" className="text-xs">Por movimento</SelectItem>
-                        <SelectItem value="object" className="text-xs">Pessoa ou veículo (IA)</SelectItem>
+                        {/* Mesmo motivo das outras duas telas: o rótulo sai do
+                            que a Central liberou, nunca de texto fixo. */}
+                        <SelectItem value="object" className="text-xs" disabled={!podeUsarGatilhoDeObjeto(classesLiberadas).pode}>
+                          {podeUsarGatilhoDeObjeto(classesLiberadas).pode
+                            ? `${rotuloDoGatilhoDeObjeto(classesLiberadas)} (IA)`
+                            : 'Objeto (IA) — não liberado'}
+                        </SelectItem>
                         <SelectItem value="manual" className="text-xs">Manual</SelectItem>
                       </SelectContent>
                     </Select>

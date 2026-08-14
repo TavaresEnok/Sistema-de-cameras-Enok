@@ -888,6 +888,10 @@ export class CamerasController {
       frameHeight: (metadata as any)?.frameHeight,
       zonas: (camera as any)?.detectionZones,
       classesDaCameraEscolhidas: (camera as any)?.recordingObjectClasses,
+      // O que a CENTRAL liberou. Sem este cruzamento, uma câmera configurada
+      // para gravar com carro numa instalação que só liberou pessoa ficaria
+      // muda esperando um evento que a IA nunca emite (relatado em 14/08/2026).
+      classesLiberadasNaInstalacao: (await this.commercialPolicy.getPolicy().catch(() => null))?.aiObjectClasses,
     })) {
       await this.recordingManager.handleMotionDetected(id, metadata).catch(() => undefined);
     }

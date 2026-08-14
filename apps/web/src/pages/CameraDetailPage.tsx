@@ -32,6 +32,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DetectionZonesEditor, type DetectionZone } from '../components/DetectionZonesEditor';
+import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
+import { rotuloDoGatilhoDeObjeto, podeUsarGatilhoDeObjeto } from '../lib/gatilho-de-objeto';
 import { cn } from '@/lib/utils';
 import { LiveStreamPlayer, type LivePlayerStatus } from '../components/LiveStreamPlayer';
 import { toast } from '../hooks/use-toast';
@@ -553,6 +555,10 @@ function PtzButton({
 
 export default function CameraDetailPage() {
   const params = useParams<{ id: string }>();
+  // O gatilho de objeto é descrito pelo que a CENTRAL liberou, nunca por texto
+  // fixo — ver lib/gatilho-de-objeto.ts.
+  const { classes: classesLiberadas } = useClassesLiberadas();
+  const gateDeObjeto = podeUsarGatilhoDeObjeto(classesLiberadas);
   const [, setLocation] = useLocation();
   const accessToken = useAuthStore((state) => state.accessToken);
   const cameras = useVmsDataStore((state) => state.cameras);
@@ -1926,7 +1932,16 @@ export default function CameraDetailPage() {
                           {/* Grava só com pessoa/veículo confirmado pela IA. Movimento é
                               um sinal burro (sombra, folha, chuva disparam); objeto é o
                               que o operador quer quando o disco enche de nada. */}
-                          <option value="object">Pessoa ou veículo (IA)</option>
+                          {/* Rótulo vindo do que a Central liberou — escrever
+                              "Pessoa ou veículo" fixo prometia veículo numa
+                              instalação só de pessoa (14/08/2026). Desabilitado
+                              (não escondido) quando não há classe liberada:
+                              esconder faz parecer defeito. */}
+                          <option value="object" disabled={!gateDeObjeto.pode}>
+                            {gateDeObjeto.pode
+                              ? `${rotuloDoGatilhoDeObjeto(classesLiberadas)} (IA)`
+                              : 'Objeto (IA) — não liberado para esta instalação'}
+                          </option>
                           {form.recordingMode === 'schedule' ? <option value="schedule" disabled>Agenda (indisponível)</option> : null}
                           <option value="manual">Manual</option>
                         </SettingsSelect>
@@ -1941,6 +1956,7 @@ export default function CameraDetailPage() {
                           className="md:col-span-2"
                           classes={form.recordingObjectClasses}
                           onChange={(classes) => updateField('recordingObjectClasses', classes)}
+                          classesLiberadas={classesLiberadas}
                         />
                       ) : null}
                       {form.recordingMode === 'schedule' ? (

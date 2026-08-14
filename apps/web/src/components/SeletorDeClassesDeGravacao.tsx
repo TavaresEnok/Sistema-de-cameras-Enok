@@ -15,17 +15,26 @@ export function SeletorDeClassesDeGravacao({
   classes,
   onChange,
   className,
+  classesLiberadas,
 }: {
   classes: string[];
   onChange: (classes: string[]) => void;
   className?: string;
+  /** O que a CENTRAL liberou. Ausente = não informado, oferece o catálogo
+   *  completo (comportamento histórico). Informado, oferece SÓ o liberado:
+   *  marcar "Carro" numa instalação de pessoa seria escolher um evento que a
+   *  IA nunca emite, e a câmera ficaria muda esperando (14/08/2026). */
+  classesLiberadas?: string[];
 }) {
+  const catalogo = Array.isArray(classesLiberadas) && classesLiberadas.length
+    ? CLASSES_DE_GRAVACAO.filter((c) => classesLiberadas.includes(c.valor))
+    : CLASSES_DE_GRAVACAO;
   return (
     <div className={`rounded-lg border border-border bg-muted/30 px-3 py-2.5 ${className ?? ''}`}>
       <div className="text-[11px] font-medium text-foreground">O que inicia a gravação</div>
       <div className="mt-0.5 text-[10.5px] text-muted-foreground">{resumoDeClasses(classes)}</div>
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {CLASSES_DE_GRAVACAO.map(({ valor, rotulo }) => {
+        {catalogo.map(({ valor, rotulo }) => {
           const marcada = classes.includes(valor);
           return (
             <button

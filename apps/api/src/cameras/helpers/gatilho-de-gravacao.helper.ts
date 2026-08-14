@@ -55,6 +55,34 @@ export function classesDaCamera(escolhidas: unknown): Set<string> {
   return limpas.length ? new Set(limpas) : CLASSES_QUE_GRAVAM;
 }
 
+/**
+ * O que a câmera VAI gravar de fato: a escolha dela cruzada com o que a CENTRAL
+ * liberou para esta instalação.
+ *
+ * Relatado em 14/08/2026, com a Central liberando somente "Pessoa": a tela
+ * prometia "pessoa ou veículo" e o padrão do backend (`CLASSES_QUE_GRAVAM`)
+ * incluía bicicleta, carro, moto, ônibus e caminhão — classes que a IA daquela
+ * instalação JAMAIS emitiria. Uma câmera configurada para gravar com carro
+ * ficaria muda esperando um evento que não vem, e nada na tela diria por quê.
+ *
+ * Regra: `liberadas` ausente/vazio significa "a Central não informou" — e aí
+ * mantemos o comportamento histórico, sem cruzar. Restringir por falta de
+ * informação transformaria um heartbeat atrasado em câmera muda, que é
+ * exatamente o desfecho que este cruzamento existe para evitar.
+ */
+export function classesEfetivasDeGravacao(
+  escolhidas: unknown,
+  liberadas: unknown,
+): Set<string> {
+  const daCamera = classesDaCamera(escolhidas);
+  if (!Array.isArray(liberadas)) return daCamera;
+  const permitidas = new Set(
+    liberadas.map((c) => String(c ?? '').trim().toLowerCase()).filter(Boolean),
+  );
+  if (!permitidas.size) return daCamera;
+  return new Set([...daCamera].filter((c) => permitidas.has(c)));
+}
+
 export type EntradaDeGatilho = {
   /** Tipo do evento recebido (MOTION_DETECTED, OBJECT_DETECTED, ...). */
   tipo: string;
@@ -71,6 +99,8 @@ export type EntradaDeGatilho = {
   zonas?: unknown;
   /** `recordingObjectClasses` da câmera. Vazio = conjunto padrão. */
   classesDaCameraEscolhidas?: unknown;
+  /** `aiObjectClasses` que a CENTRAL liberou. Ausente = não informado. */
+  classesLiberadasNaInstalacao?: unknown;
 };
 
 /**
@@ -143,7 +173,10 @@ export function eventoDeveGravar(entrada: EntradaDeGatilho): boolean {
     // na dúvida, um sistema de segurança guarda a imagem. O contrário —
     // descartar em silêncio — é o defeito que ninguém percebe até precisar.
     if (!rotulo) return true;
-    return classesDaCamera(entrada.classesDaCameraEscolhidas).has(rotulo);
+    return classesEfetivasDeGravacao(
+      entrada.classesDaCameraEscolhidas,
+      entrada.classesLiberadasNaInstalacao,
+    ).has(rotulo);
   }
 
   // Demais modos seguem a regra histórica, intocada.

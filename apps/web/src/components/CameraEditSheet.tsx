@@ -17,6 +17,12 @@ import { toast } from '../hooks/use-toast';
 import { getApiBaseUrl } from '../lib/api-base';
 import { normalizeVideoCodec, normalizePreferredLiveProtocol } from '../lib/camera-format';
 import { SeletorDeClassesDeGravacao } from './SeletorDeClassesDeGravacao';
+import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
+import {
+  rotuloDoGatilhoDeObjeto,
+  descricaoDoGatilhoDeObjeto,
+  podeUsarGatilhoDeObjeto,
+} from '../lib/gatilho-de-objeto';
 
 interface CameraEditSheetProps {
   camera: Camera | null;
@@ -51,7 +57,10 @@ const RECORDING_MODES = [
   // Movimento é um sinal burro: sombra, folha e chuva geram arquivo. Objeto só
   // grava com pessoa/veículo confirmado pela IA — é o que se quer quando o
   // disco enche de nada. Custa YOLO ligado nesta câmera.
-  { value: 'object', label: 'Pessoa ou veículo', desc: 'Só grava com objeto confirmado pela IA' },
+  // Rótulo e descrição do modo objeto NÃO ficam aqui: eles dependem do que a
+  // Central liberou para esta instalação, e escrever "Pessoa ou veículo" fixo
+  // fazia a tela prometer veículo numa instalação só de pessoa (14/08/2026).
+  { value: 'object', label: '', desc: '' },
   { value: 'manual', label: 'Manual', desc: 'Operador inicia / para' },
 ] as const;
 
@@ -97,6 +106,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [form, setForm] = useState<Form | null>(null);
+  const { classes: classesLiberadas } = useClassesLiberadas();
   const [ingest, setIngest] = useState<IngestTarget | null>(null);
   const [ingestBusy, setIngestBusy] = useState(false);
   const [confirmarVoltarRtsp, setConfirmarVoltarRtsp] = useState(false);
@@ -590,25 +600,38 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                     </div>
                   )}
                   <div className="space-y-2">
-                    {RECORDING_MODES.map((m) => (
-                      <button key={m.value} onClick={() => upd('recordingMode', m.value)}
+                    {RECORDING_MODES.map((m) => {
+                      const ehObjeto = m.value === 'object';
+                      const gate = podeUsarGatilhoDeObjeto(classesLiberadas);
+                      const bloqueado = ehObjeto && !gate.pode;
+                      const rotulo = ehObjeto ? rotuloDoGatilhoDeObjeto(classesLiberadas) : m.label;
+                      const descricao = ehObjeto
+                        ? (bloqueado ? gate.motivo! : descricaoDoGatilhoDeObjeto(classesLiberadas))
+                        : m.desc;
+                      return (
+                      <button key={m.value} onClick={() => !bloqueado && upd('recordingMode', m.value)}
+                        disabled={bloqueado}
+                        title={bloqueado ? gate.motivo ?? undefined : undefined}
                         className={cn('w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors',
+                          bloqueado && 'opacity-50 cursor-not-allowed',
                           form.recordingMode === m.value ? 'border-[hsl(var(--primary)_/_0.5)] bg-[hsl(var(--primary)_/_0.06)]' : 'border-border hover:bg-[hsl(var(--accent))]')}>
                         <div className={cn('w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0',
                           form.recordingMode === m.value ? 'border-[hsl(var(--primary))]' : 'border-muted-foreground/40')}>
                           {form.recordingMode === m.value && <div className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--primary))]" />}
                         </div>
                         <div>
-                          <div className="text-[12.5px] font-medium">{m.label}</div>
-                          <div className="text-[10px] text-muted-foreground">{m.desc}</div>
+                          <div className="text-[12.5px] font-medium">{rotulo}</div>
+                          <div className="text-[10px] text-muted-foreground">{descricao}</div>
                         </div>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                   {form.recordingMode === 'object' && (
                     <SeletorDeClassesDeGravacao
                       classes={form.recordingObjectClasses}
                       onChange={(classes) => upd('recordingObjectClasses', classes)}
+                      classesLiberadas={classesLiberadas}
                     />
                   )}
                   <Separator />
