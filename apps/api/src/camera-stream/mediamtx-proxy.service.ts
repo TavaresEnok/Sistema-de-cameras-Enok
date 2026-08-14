@@ -43,6 +43,7 @@ import {
 } from './helpers/live-delivery-profile.helper';
 import { liveViewModeToSourceProfile } from './helpers/source-profile.helper';
 import { decidirFonteDaMaxima } from './helpers/fonte-da-maxima.helper';
+import { decidirCopiaDeVideo } from './helpers/copia-em-vez-de-reencode.helper';
 import { SourceGatewayService } from './source-gateway.service';
 
 type DeliveryUrls = {
@@ -2202,7 +2203,26 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       //
       // A grade segue reencodando porque ali o vídeo muda de verdade (é
       // redimensionado); nos demais modos, H.264 entra e sai intacto.
-      const videoJaServe = !isHevc && deliveryMode !== 'grid';
+      // A GRADE TAMBÉM COPIA quando nada mudaria. O filtro dela é um TETO
+      // (`scale=min(iw,640)`), não um alvo: fonte que já cabe atravessa
+      // intocada. Medido nas 4 câmeras do dono — substream 640×360 @20 H.264,
+      // exatamente o teto — decodificava e reencodava para produzir o mesmo
+      // vídeo. "isso é retrabalho e jogar % da cpu no lixo!!!" (14/08/2026)
+      const copiaNaGrade = deliveryMode === 'grid'
+        ? decidirCopiaDeVideo(
+            {
+              codec: isHevc ? 'h265' : String(camera.streamVideoCodec ?? '').trim().toLowerCase(),
+              largura: camera.streamWidth,
+              altura: camera.streamHeight,
+              fps: camera.streamFps,
+            },
+            { larguraMaxima: GRID_LIVE_MAX_WIDTH, alturaMaxima: GRID_LIVE_MAX_HEIGHT, fpsAlvo: GRID_LIVE_TARGET_FPS },
+          )
+        : { copiar: false, motivo: 'nao-e-grade' as const };
+      if (copiaNaGrade.copiar) {
+        this.logger.log(`Grade de ${cameraId} COPIA o vídeo (${camera.streamWidth}x${camera.streamHeight} H.264 já cabe) — sem reencode.`);
+      }
+      const videoJaServe = !isHevc && (deliveryMode !== 'grid' || copiaNaGrade.copiar);
       const cpuVideoArgs = sanitizeGridSource || videoJaServe
         ? '-c:v copy'
         : deliveryMode === 'grid'
