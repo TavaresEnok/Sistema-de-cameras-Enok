@@ -117,10 +117,21 @@ export function explicarResultadoDoTeste(resultado: {
     };
   }
   if (resultado?.sondou) {
+    // NÃO dizer "a câmera respondeu que não tem PTZ". A sonda tenta vários
+    // endereços e desiste; ela não sabe distinguir "conversei e não há PTZ" de
+    // "nenhuma porta ONVIF respondeu". Afirmar a primeira foi o que o dono viu
+    // com a Mercusys em 14/08/2026, depois de cadastrar uma porta que aceitava
+    // TCP e não falava ONVIF — e o sistema ainda carimbou a câmera no banco.
+    //
+    // A frase honesta é "não encontrei", com as duas causas e o que fazer em
+    // cada uma. A pegadinha do encaminhamento de porta é o caso real dele: 4
+    // câmeras atrás do mesmo IP, e a porta ONVIF não estava encaminhada.
     return {
-      titulo: 'A câmera respondeu que não tem PTZ',
-      detalhe: 'Se você sabe que ela tem, confira usuário, senha e porta ONVIF no cadastro — '
-        + 'ou marque manualmente aqui embaixo.',
+      titulo: 'Não encontrei PTZ nesta câmera',
+      detalhe: 'Pode ser que ela não tenha, ou que o ONVIF não esteja acessível. '
+        + 'Confira a porta ONVIF no cadastro — em câmera atrás de roteador ela precisa ser '
+        + 'encaminhada à parte da porta de vídeo. Algumas exigem um usuário ONVIF próprio. '
+        + 'Se você tem certeza de que tem PTZ, marque à mão no cadastro da câmera.',
       sucesso: false,
     };
   }

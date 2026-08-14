@@ -70,11 +70,18 @@ test('teste bem-sucedido diz que a câmera já entrou na lista', () => {
   assert.match(r.detalhe, /j[áa] aparece na lista/i);
 });
 
-test('respondeu que não tem PTZ oferece os dois caminhos', () => {
+test('a tela NÃO afirma que a câmera disse não ter PTZ', () => {
+  // Ela afirmava. A sonda tenta vários endereços e desiste — não sabe separar
+  // "conversei e não há PTZ" de "nenhuma porta ONVIF respondeu". Foi o que o
+  // dono viu com a Mercusys, depois de cadastrar uma porta que aceitava TCP e
+  // não falava ONVIF.
   const r = explicarResultadoDoTeste({ sondou: true, ptzCapable: false });
   assert.equal(r.sucesso, false);
-  assert.match(r.detalhe, /ONVIF/, 'não sugere conferir a credencial');
-  assert.match(r.detalhe, /manualmente/, 'não oferece a saída manual — a queixa do dono');
+  assert.doesNotMatch(r.titulo, /respondeu que não tem/i, 'afirma algo que ninguém disse');
+  assert.match(r.titulo, /Não encontrei/i);
+  assert.match(r.detalhe, /encaminhada/, 'não explica a pegadinha do roteador — o caso real');
+  assert.match(r.detalhe, /usuário ONVIF próprio/, 'não menciona o usuário ONVIF separado');
+  assert.match(r.detalhe, /à mão/, 'não oferece a saída manual');
 });
 
 test('falha de rede NÃO é "não tem PTZ"', () => {
@@ -100,3 +107,4 @@ test('resposta vazia do servidor não quebra a tela', () => {
   assert.equal(r.sucesso, false);
   assert.ok(r.detalhe.length > 0);
 });
+
