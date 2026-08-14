@@ -119,3 +119,26 @@ export function classesEfetivas(escolhidas: unknown, classesLiberadas: unknown):
   if (!escolha.length) return liberadas;
   return escolha.filter((c) => liberadas.includes(c));
 }
+
+/**
+ * "Nunca procurar objeto" pode ser oferecido nesta câmera?
+ *
+ * Não, quando a GRAVAÇÃO depende do objeto: a câmera está configurada para só
+ * gravar com objeto confirmado, e desligar a busca a deixaria sem gravar NADA.
+ * O backend já ignora o "nunca" nesse caso (`decidirObjetoDaCamera`); a tela
+ * deixa de oferecer para não mostrar uma escolha que o servidor descarta —
+ * a mesma regra do "IA obrigatória aqui" do detector de movimento.
+ */
+export function podeNuncaProcurarObjeto(camera: { recordingMode?: string | null }): {
+  pode: boolean;
+  motivo: string | null;
+} {
+  if (String(camera.recordingMode ?? '') === 'object') {
+    return {
+      pode: false,
+      motivo: 'Esta câmera só grava quando a IA confirma um objeto. Desligar a busca '
+        + 'a deixaria sem gravar nada — mude o modo de gravação primeiro.',
+    };
+  }
+  return { pode: true, motivo: null };
+}

@@ -126,3 +126,56 @@ test('toda decisão tem explicação em português para o operador', () => {
   }
   assert.ok(explicarDecisao(decidirObjetoDaCamera({ id: 'x' }, { politicaLiberaObjeto: false })).length > 10);
 });
+
+// ── A CONTRADIÇÃO "GRAVA POR OBJETO" + "NUNCA PROCURAR OBJETO" ──────────────
+//
+// Achada pelo dono em 14/08/2026, olhando as duas telas:
+//
+//   "se eu ligar o objeto na camera e vir aqui e marcar nunca o que acontece?
+//    isso não é erro de logica?"
+//
+// Era. O ramo `gravacao-por-objeto` existia justamente para impedir a câmera
+// muda, mas ficava DEPOIS do teste de `nunca` e nunca era alcançado nessa
+// combinação. A câmera não gerava evento de objeto e não gravava NADA — em
+// silêncio, com as duas telas dizendo que estava tudo configurado.
+
+test('gravação por objeto VENCE "nunca" — senão a câmera fica muda', () => {
+  const d = decidirObjetoDaCamera(
+    { id: 'c1', objectMode: 'nunca', recordingMode: 'object', detectionZones: [] },
+    LIBERADO,
+  );
+  assert.equal(d.roda, true, 'sem isto a câmera não grava NADA e nada na tela avisa');
+  assert.equal(d.motivo, 'gravacao-por-objeto');
+});
+
+test('"nunca" continua valendo quando a gravação NÃO depende do objeto', () => {
+  // A função original de "Nunca" segue intacta: poupar servidor numa cena
+  // movimentada, sem obrigar a apagar a linha que o operador quer manter.
+  for (const modoDeGravacao of ['motion', 'continuous', 'manual', undefined]) {
+    const d = decidirObjetoDaCamera(
+      { id: 'c1', objectMode: 'nunca', recordingMode: modoDeGravacao, detectionZones: [LINHA] },
+      LIBERADO,
+    );
+    assert.equal(d.roda, false, `"nunca" deixou de valer em recordingMode=${modoDeGravacao}`);
+    assert.equal(d.motivo, 'desligado-pelo-operador');
+  }
+});
+
+test('os portões ACIMA continuam vencendo a gravação por objeto', () => {
+  // Política da Central, câmera desativada e IA desligada são portões duros:
+  // gravação por objeto não pode furá-los. Sem isto, o modo de gravação viraria
+  // um jeito de ampliar sozinho o que foi vendido.
+  const semPolitica = decidirObjetoDaCamera(
+    { id: 'c1', objectMode: 'sempre', recordingMode: 'object', detectionZones: [] },
+    { politicaLiberaObjeto: false },
+  );
+  assert.equal(semPolitica.roda, false);
+  assert.equal(semPolitica.motivo, 'politica-nao-libera');
+
+  const iaDesligada = decidirObjetoDaCamera(
+    { id: 'c1', aiEnabled: false, recordingMode: 'object', detectionZones: [] },
+    LIBERADO,
+  );
+  assert.equal(iaDesligada.roda, false);
+  assert.equal(iaDesligada.motivo, 'ia-desligada-na-camera');
+});

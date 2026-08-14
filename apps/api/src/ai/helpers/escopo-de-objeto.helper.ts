@@ -89,17 +89,29 @@ export function decidirObjetoDaCamera(
   if (camera.aiEnabled === false) return { cameraId, roda: false, motivo: 'ia-desligada-na-camera' };
 
   const modo = normalizarModoDeObjeto(camera.objectMode);
-  if (modo === 'nunca') return { cameraId, roda: false, motivo: 'desligado-pelo-operador' };
-  if (modo === 'sempre') return { cameraId, roda: true, motivo: 'sempre-ligado' };
 
-  // Gravação POR OBJETO manda no escopo. Escolher esse modo na tela é um
-  // pedido inequívoco de "só grave quando for gente ou veículo" — e ele só se
-  // cumpre com o YOLO ligado nesta câmera. Sem este ramo, o operador ligava o
-  // modo, nenhum evento de objeto era gerado e a câmera ficava sem gravar
-  // NADA: o pior desfecho possível para um sistema de segurança.
+  // ── GRAVAÇÃO POR OBJETO VEM ANTES DE "NUNCA", e a ordem é o conserto ──────
+  //
+  // Escolher "grava quando a IA confirmar objeto" é um pedido inequívoco de
+  // "só grave quando for gente ou veículo" — e ele só se cumpre com o YOLO
+  // ligado nesta câmera.
+  //
+  // Este ramo existia, mas ficava DEPOIS do teste de `nunca` e nunca era
+  // alcançado nessa combinação. O resultado era a contradição que o dono achou
+  // em 14/08/2026: câmera com gravação por objeto e escopo em "Nunca" não
+  // gerava evento nenhum e ficava SEM GRAVAR NADA — em silêncio, com as duas
+  // telas dizendo que estava tudo configurado.
+  //
+  // A regra é a mesma já aplicada ao detector de movimento
+  // (`detectorObrigatorio`, em cameras/helpers/motion-detector.helper.ts):
+  // quando a GRAVAÇÃO depende do detector, o detector é obrigatório. A tela
+  // acompanha, deixando de oferecer "Nunca" nessas câmeras.
   if (String(camera.recordingMode ?? '') === 'object') {
     return { cameraId, roda: true, motivo: 'gravacao-por-objeto' };
   }
+
+  if (modo === 'nunca') return { cameraId, roda: false, motivo: 'desligado-pelo-operador' };
+  if (modo === 'sempre') return { cameraId, roda: true, motivo: 'sempre-ligado' };
 
   return temLinhaDePerimetro(camera.detectionZones)
     ? { cameraId, roda: true, motivo: 'linha-de-perimetro' }

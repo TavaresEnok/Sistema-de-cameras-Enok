@@ -6,6 +6,7 @@ import {
   podeUsarGatilhoDeObjeto,
   classesOferecidas,
   classesEfetivas,
+  podeNuncaProcurarObjeto,
 } from '../src/lib/gatilho-de-objeto.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -140,4 +141,34 @@ test('o backend cruza a escolha da câmera com o liberado', () => {
   assert.match(helper, /classesEfetivasDeGravacao/, 'sem o cruzamento, a câmera fica muda esperando classe que a IA não emite');
   const controller = ler('../api/src/cameras/cameras.controller.ts');
   assert.match(controller, /classesLiberadasNaInstalacao/, 'o gatilho não recebe o que a Central liberou');
+});
+
+// ── A contradição que o dono achou olhando as duas telas ────────────────────
+
+test('"Nunca" não é oferecido onde a GRAVAÇÃO depende do objeto', () => {
+  // Marcar "Nunca" numa câmera que só grava com objeto confirmado a deixaria
+  // sem gravar NADA. O backend já ignora a escolha nesse caso; a tela deixa de
+  // oferecer, para não mostrar opção que o servidor descarta.
+  const r = podeNuncaProcurarObjeto({ recordingMode: 'object' });
+  assert.equal(r.pode, false);
+  assert.match(r.motivo!, /sem gravar nada/i, 'não explica a consequência');
+  assert.match(r.motivo!, /modo de gravação/i, 'não diz o que mudar primeiro');
+});
+
+test('"Nunca" continua disponível nos outros modos de gravação', () => {
+  for (const modo of ['motion', 'continuous', 'manual', undefined, null]) {
+    assert.equal(podeNuncaProcurarObjeto({ recordingMode: modo }).pode, true,
+      `"Nunca" sumiu em recordingMode=${modo} — ele existe para poupar servidor`);
+  }
+});
+
+test('a tela consulta a trava, e o backend concorda com ela', () => {
+  const painel = ler('src/components/PainelDeCamerasDaIa.tsx');
+  assert.match(painel, /podeNuncaProcurarObjeto\(/, 'a tela não consulta a trava');
+  const helper = ler('../api/src/cameras/../ai/helpers/escopo-de-objeto.helper.ts');
+  const posObjeto = helper.indexOf("motivo: 'gravacao-por-objeto'");
+  const posNunca = helper.indexOf("motivo: 'desligado-pelo-operador'");
+  assert.ok(posObjeto > 0 && posNunca > 0);
+  assert.ok(posObjeto < posNunca,
+    'gravação por objeto precisa ser avaliada ANTES de "nunca" — senão a câmera fica muda');
 });

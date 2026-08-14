@@ -45,7 +45,10 @@ test('câmera desligada pelo operador NÃO vira erro', () => {
   assert.equal(e.chave, 'desligada');
   assert.equal(e.tom, 'neutro');
   assert.equal(e.ofereceReiniciar, false, 'não oferecer botão que não resolve');
-  assert.match(e.detalhe, /configurações desta câmera/, 'dizer ONDE resolver');
+  // A regra é a mesma — dizer ONDE resolver —, mas o lugar mudou: o botão
+  // "Ligar" passou a existir na PRÓPRIA linha (14/08/2026), então mandar o
+  // operador a outra tela virou conselho errado.
+  assert.match(e.detalhe, /bot[ãa]o Ligar nesta linha/i, 'dizer ONDE resolver');
 });
 
 test('trava do servidor diz a verdade: não dá para resolver na tela', () => {

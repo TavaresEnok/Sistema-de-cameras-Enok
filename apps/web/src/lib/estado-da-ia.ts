@@ -85,7 +85,7 @@ export function resumirErro(erro: string | null | undefined): string | null {
 const MOTIVOS: Record<string, { titulo: string; detalhe: string; tom: TomDoEstado }> = {
   camera_ai_disabled: {
     titulo: 'IA desligada nesta câmera',
-    detalhe: 'Ligue a IA nas configurações desta câmera para ela voltar a analisar.',
+    detalhe: 'Use o botão Ligar nesta linha para ela voltar a analisar.',
     tom: 'neutro',
   },
   filtered_by_ai_env: {

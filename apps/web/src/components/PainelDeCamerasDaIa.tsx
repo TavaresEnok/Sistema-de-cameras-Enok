@@ -17,6 +17,7 @@ import {
   type TomDoEstado,
 } from '../lib/estado-da-ia';
 import { custoTipico, custoTotal, formatarCusto, descreverCusto } from '../lib/custo-da-ia';
+import { podeNuncaProcurarObjeto } from '../lib/gatilho-de-objeto';
 
 // ── CÂMERAS: onde a IA roda, e se está mesmo rodando ────────────────────────
 //
@@ -277,6 +278,7 @@ export function PainelDeCamerasDaIa({
               const atraso = formatarAtrasoDoQuadro(linha?.stream?.frameAgeAvgMs);
               const camera = cameras.find((c) => c.id === cam.cameraId);
               const gravaPorObjeto = camera?.recordingMode === 'object';
+              const travaDoNunca = podeNuncaProcurarObjeto({ recordingMode: camera?.recordingMode });
               return (
                 <div key={cam.cameraId} className="px-4 py-3">
                   <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
@@ -324,7 +326,8 @@ export function PainelDeCamerasDaIa({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
-                      <label className="flex items-center gap-1.5 text-[10px] text-[hsl(var(--muted-foreground))]">
+                      <label className="flex items-center gap-1.5 text-[10px] text-[hsl(var(--muted-foreground))]"
+                        title={travaDoNunca.motivo ?? undefined}>
                         <span className="hidden sm:inline">Procurar objetos</span>
                         <select
                           value={cam.objectMode}
@@ -335,7 +338,13 @@ export function PainelDeCamerasDaIa({
                         >
                           <option value="auto">Com linha desenhada</option>
                           <option value="sempre">Sempre</option>
-                          <option value="nunca">Nunca</option>
+                          {/* "Nunca" some na câmera que GRAVA por objeto: ali o
+                              servidor ignora a escolha (senão a câmera ficaria
+                              sem gravar nada), e mostrar uma opção que o
+                              servidor descarta é pior que não mostrar. */}
+                          <option value="nunca" disabled={!travaDoNunca.pode}>
+                            {travaDoNunca.pode ? 'Nunca' : 'Nunca — indisponível: a gravação depende do objeto'}
+                          </option>
                         </select>
                       </label>
 
