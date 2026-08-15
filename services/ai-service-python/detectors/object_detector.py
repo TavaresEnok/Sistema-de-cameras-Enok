@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from queue import Empty, Queue
 
 import cv2
@@ -109,6 +110,10 @@ class ObjectDetector(Detector):
         self._pool_busy_drops = 0
         self._pool_busy_drops_by_size: dict[int, int] = {}
         self._last_selected_size = self.input_size
+        # Contadores por câmera para o resumo de etapas (ver _contabilizar).
+        self._contagem: dict[str, dict[str, int]] = {}
+        self._ultimo_resumo: dict[str, float] = {}
+        self._intervalo_resumo_s = float(GENERAL_PROFILE.get("stage_summary_seconds", 60))
         # DETECÇÃO POR REGIÃO (derivada do movimento) — PADRÃO DESLIGADO.
         # Com `enabled=False` nada muda: a inferência continua no frame inteiro,
         # mesmo que o chamador passe motion_boxes. Ver detectors/region_proposal.py.
@@ -473,8 +478,48 @@ class ObjectDetector(Detector):
         else:
             detections, _ran = self._detect_raw(frame, runtime)
         if GENERAL_PROFILE["persistent_track_id"] and context_key:
-            return self._track_people(detections, context_key)
+            rastreadas = self._track_people(detections, context_key)
+            self._contabilizar(context_key, len(detections), len(rastreadas))
+            return rastreadas
+        self._contabilizar(context_key, len(detections), len(detections))
         return detections
+
+    def _contabilizar(self, context_key: str | None, brutas: int, publicadas: int) -> None:
+        """Quantas detecções sobrevivem a cada etapa, por câmera.
+
+        Existe para separar três defeitos que produzem o MESMO sintoma na tela
+        ("a pessoa passou e não apareceu caixa") e pedem consertos opostos:
+
+            YOLO não detectou      → modelo, resolução, limiar, iluminação
+            filtro cortou          → altura mínima, classe fora da licença
+            rastreador não publicou→ confirmação, associação, oclusão
+
+        Sem este número, cada hipótese custa uma rodada de tentativa e erro —
+        foi o que aconteceu em 14/08/2026 com "4 detecções perto × 145 longe",
+        onde eu culpei a associação sem saber se o detector tinha produzido
+        alguma coisa.
+
+        Resumo periódico, nunca por quadro: log a cada quadro afogaria o
+        diagnóstico que ele deveria dar.
+        """
+        chave = context_key or "sem-camera"
+        acumulado = self._contagem.setdefault(chave, {"brutas": 0, "publicadas": 0, "quadros": 0})
+        acumulado["brutas"] += brutas
+        acumulado["publicadas"] += publicadas
+        acumulado["quadros"] += 1
+
+        agora = time.monotonic()
+        ultimo = self._ultimo_resumo.get(chave, 0.0)
+        if agora - ultimo < self._intervalo_resumo_s:
+            return
+        self._ultimo_resumo[chave] = agora
+        perdidas = acumulado["brutas"] - acumulado["publicadas"]
+        print(
+            f"[ObjectDetector] etapas {chave[:8]}: {acumulado['quadros']} quadros | "
+            f"YOLO={acumulado['brutas']} | publicadas={acumulado['publicadas']} | "
+            f"retidas_pelo_rastreador={perdidas}"
+        )
+        acumulado.update({"brutas": 0, "publicadas": 0, "quadros": 0})
 
     def _detect_raw(self, frame, runtime) -> tuple[list[Detection], bool]:
         """Inferência + pós-processamento NAS COORDENADAS de `frame`.
