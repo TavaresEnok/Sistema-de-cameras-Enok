@@ -169,6 +169,8 @@ FACE_PROFILE = {
 GENERAL_PROFILE = {
     "mode": _env_str("GENERAL_MODE", "general"),
     "model": _env_str("GENERAL_MODEL", "yolo26n"),
+    # Maior modelo que a CPU serve com dignidade quando não há placa.
+    "cpu_model_ceiling": _env_str("GENERAL_CPU_MODEL_CEILING", "yolo26s"),
     "runtime": _env_str("GENERAL_RUNTIME", "openvino_cpu"),
     "precision": _env_str("GENERAL_PRECISION", "int8"),
     "analysis_width": _env_int("GENERAL_ANALYSIS_WIDTH", 960),

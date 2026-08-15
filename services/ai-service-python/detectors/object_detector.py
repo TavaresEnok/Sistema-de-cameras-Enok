@@ -11,6 +11,7 @@ from .base import Detection, Detector
 from .region_proposal import MotionRegionPlanner, RegionConfig
 from onnxruntime_session import inference_threading_status
 from runtime_profiles import GENERAL_PROFILE
+from detectors.escolha_de_modelo import TETO_DE_CPU_PADRAO, escolher_modelo
 
 
 def _gpu_realmente_presente() -> bool:
@@ -71,7 +72,18 @@ class ObjectDetector(Detector):
 
     def __init__(self, region_config: RegionConfig | None = None):
         self.input_size = int(GENERAL_PROFILE["imgsz"])
-        self.model_name = str(GENERAL_PROFILE.get("model", "yolo26n")).strip().lower()
+        # O MODELO SE AJUSTA À MÁQUINA. Sem placa, modelo grande não entra:
+        # em 15/08/2026 a RTX foi movida de máquina e o `yolo26l` continuou no
+        # ambiente — 38,7 ms por inferência NA PLACA foi parar no processador,
+        # onde é inviável. Nada quebrou (o portão de CUDA cai para CPU), mas
+        # ficou lento demais para servir e ninguém foi avisado.
+        pedido = str(GENERAL_PROFILE.get("model", "yolo26n")).strip().lower()
+        teto_cpu = str(GENERAL_PROFILE.get("cpu_model_ceiling", TETO_DE_CPU_PADRAO)).strip().lower()
+        self.model_name, motivo_do_rebaixamento = escolher_modelo(
+            pedido, tem_gpu=_gpu_realmente_presente(), teto_de_cpu=teto_cpu,
+        )
+        if motivo_do_rebaixamento:
+            print(f"[ObjectDetector] MODELO REBAIXADO: {motivo_do_rebaixamento}")
         self.requested_precision = str(GENERAL_PROFILE.get("precision", "fp32")).strip().lower()
         self.min_conf = float(GENERAL_PROFILE["confidence_person"])
         self.class_confidence = {
