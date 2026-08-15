@@ -1,0 +1,2624 @@
+diff --git a/apps/web/src/components/LiveStreamPlayer.tsx b/apps/web/src/components/LiveStreamPlayer.tsx
+index bda8ec6..0a59e19 100644
+--- a/apps/web/src/components/LiveStreamPlayer.tsx
++++ b/apps/web/src/components/LiveStreamPlayer.tsx
+@@ -1,10 +1,11 @@
+-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+ import axios from 'axios';
+ import { AlertTriangle, LoaderCircle, VideoOff, Volume2, VolumeX } from 'lucide-react';
+ import { getApiBaseUrl } from '../lib/api-base';
+ import { useAuthStore } from '../store/authStore';
+ import { streamUrlsCache } from '../lib/stream-urls-cache';
+ import { liveDetectionsPoller } from '../lib/live-detections-poller';
++import { SmoothDetectionOverlay } from './SmoothDetectionOverlay';
+ 
+ type LiveStreamPlayerProps = {
+   cameraId: string;
+@@ -173,6 +174,8 @@ type LiveDetection = {
+   occurredAt: string;
+   overlayMode?: string | null;
+   trackId?: number | null;
++  stationary?: boolean | null;
++  recovered?: boolean | null;
+ };
+ 
+ // Mensagens internas de falha citam protocolo/infra (WebRTC, WHEP, MediaMTX…).
+@@ -213,39 +216,6 @@ function storeProtocol(cameraId: string, protocol: ActiveLiveProtocol) {
+   }
+ }
+ 
+-function getRenderedVideoRect(
+-  video: HTMLVideoElement | null,
+-  containerWidth: number,
+-  containerHeight: number,
+-) {
+-  if (!video || containerWidth <= 0 || containerHeight <= 0) {
+-    return { left: 0, top: 0, width: containerWidth, height: containerHeight };
+-  }
+-
+-  const videoWidth = video.videoWidth || 0;
+-  const videoHeight = video.videoHeight || 0;
+-  if (videoWidth <= 0 || videoHeight <= 0) {
+-    return { left: 0, top: 0, width: containerWidth, height: containerHeight };
+-  }
+-
+-  const objectFit = window.getComputedStyle(video).objectFit || 'contain';
+-  if (objectFit === 'fill') {
+-    return { left: 0, top: 0, width: containerWidth, height: containerHeight };
+-  }
+-
+-  const scale = objectFit === 'cover'
+-    ? Math.max(containerWidth / videoWidth, containerHeight / videoHeight)
+-    : Math.min(containerWidth / videoWidth, containerHeight / videoHeight);
+-  const width = videoWidth * scale;
+-  const height = videoHeight * scale;
+-  return {
+-    left: (containerWidth - width) / 2,
+-    top: (containerHeight - height) / 2,
+-    width,
+-    height,
+-  };
+-}
+-
+ function normalizeActiveProtocol(protocol: ActiveLiveProtocol): LiveProtocol {
+   if (protocol === 'WEBRTC') return 'webrtc';
+   if (protocol === 'LL-HLS') return 'llhls';
+@@ -1905,80 +1875,16 @@ export function LiveStreamPlayer({
+         />
+       </div>
+ 
+-      {aiOverlayEnabled && detections.map((detection) => {
+-        // MOVIMENTO NUNCA desenha caixa. O MOG2 existe para ARMAR a gravação,
+-        // não para virar overlay: a "confiança" dele é a área alterada
+-        // (satura em 100% com qualquer mudança grande — luz, IR, pessoa
+-        // perto), então a caixa "motion 100%" cobria a tela e parecia uma IA
+-        // avançada alucinando. Pedido explícito do dono: detector segue
+-        // funcionando, quadrado não aparece em câmera nenhuma. Caixas de
+-        // OBJETO/FACE (quando habilitadas) continuam passando por aqui.
+-        if (detection.label === 'motion' || detection.type.startsWith('MOTION')) return null;
+-        const [x1, y1, x2, y2] = detection.bbox;
+-        const fallbackVideoWidth = videoRef.current?.videoWidth || 320;
+-        const fallbackVideoHeight = videoRef.current?.videoHeight || 180;
+-        const frameWidth = detection.frameWidth && detection.frameWidth > 0 ? detection.frameWidth : fallbackVideoWidth;
+-        const frameHeight = detection.frameHeight && detection.frameHeight > 0 ? detection.frameHeight : fallbackVideoHeight;
+-        const containerWidth = containerRef.current?.clientWidth ?? 0;
+-        const containerHeight = containerRef.current?.clientHeight ?? 0;
+-        let style: CSSProperties;
+-        if (containerWidth > 0 && containerHeight > 0) {
+-          const videoRect = getRenderedVideoRect(videoRef.current, containerWidth, containerHeight);
+-          const leftPx = videoRect.left + (x1 / frameWidth) * videoRect.width;
+-          const topPx = videoRect.top + (y1 / frameHeight) * videoRect.height;
+-          const rightPx = videoRect.left + (x2 / frameWidth) * videoRect.width;
+-          const bottomPx = videoRect.top + (y2 / frameHeight) * videoRect.height;
+-          const visibleLeft = Math.max(0, Math.min(containerWidth, leftPx));
+-          const visibleTop = Math.max(0, Math.min(containerHeight, topPx));
+-          const visibleRight = Math.max(visibleLeft + 1, Math.min(containerWidth, rightPx));
+-          const visibleBottom = Math.max(visibleTop + 1, Math.min(containerHeight, bottomPx));
+-          style = {
+-            left: `${visibleLeft}px`,
+-            top: `${visibleTop}px`,
+-            width: `${visibleRight - visibleLeft}px`,
+-            height: `${visibleBottom - visibleTop}px`,
+-          };
+-        } else {
+-          const left = Math.max(0, Math.min(100, (x1 / frameWidth) * 100));
+-          const top = Math.max(0, Math.min(100, (y1 / frameHeight) * 100));
+-          const width = Math.max(1, Math.min(100 - left, ((x2 - x1) / frameWidth) * 100));
+-          const height = Math.max(1, Math.min(100 - top, ((y2 - y1) / frameHeight) * 100));
+-          style = { left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` };
+-        }
+-        const isFace = detection.type.startsWith('FACE');
+-        const isTriangle = !isFace && detection.overlayMode === 'triangle';
+-        const label = detection.similarity != null
+-          ? `${detection.label} ${(detection.similarity * 100).toFixed(0)}%`
+-          : detection.confidence != null
+-            ? `${detection.label} ${(detection.confidence * 100).toFixed(0)}%`
+-            : detection.label;
+-        if (isTriangle) {
+-          return (
+-            <div key={detection.id} className="pointer-events-none absolute z-30" style={style}>
+-              <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-full">
+-                <span className="mx-auto block h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-[hsl(var(--status-warning)_/_0.9)] drop-shadow-[0_1px_1px_rgba(0,0,0,0.65)]" />
+-              </div>
+-            </div>
+-          );
+-        }
+-        return (
+-          <div
+-            key={detection.id}
+-            className={`pointer-events-none absolute z-30 rounded-sm border-2 shadow-[0_0_0_1px_rgba(0,0,0,0.45)] ${
+-              isFace ? 'border-[hsl(var(--status-online))]' : 'border-[hsl(var(--status-warning))]'
+-            }`}
+-            style={style}
+-          >
+-            <span
+-              className={`absolute -top-6 left-0 max-w-40 truncate rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-black ${
+-                isFace ? 'bg-[hsl(var(--status-online))]' : 'bg-[hsl(var(--status-warning))]'
+-              }`}
+-            >
+-              {label}
+-            </span>
+-          </div>
+-        );
+-      })}
++      {aiOverlayEnabled && (
++        // Overlay em componente PRÓPRIO: o hook de interpolação re-renderiza a
++        // 60 fps, mas agora só re-renderiza o overlay — o player fica no ritmo
++        // do poller. Mesma matemática de posicionamento, movida para lá.
++        <SmoothDetectionOverlay
++          detections={detections}
++          videoRef={videoRef}
++          containerRef={containerRef}
++        />
++      )}
+ 
+       {showOverlay && isLoading && (
+         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20 backdrop-blur-[1px]">
+diff --git a/apps/web/src/components/SmoothDetectionOverlay.tsx b/apps/web/src/components/SmoothDetectionOverlay.tsx
+new file mode 100644
+index 0000000..265e9ff
+--- /dev/null
++++ b/apps/web/src/components/SmoothDetectionOverlay.tsx
+@@ -0,0 +1,138 @@
++/**
++ * SmoothDetectionOverlay — as caixas de IA como componente PRÓPRIO.
++ *
++ * Motivo: o hook useSmoothTracks re-renderiza a 60 fps enquanto houver caixa
++ * na tela. Se ele mora no LiveStreamPlayer, é o PLAYER inteiro (2000+ linhas
++ * de JSX, grade, controles) que re-renderiza 60 vezes por segundo. Movendo o
++ * hook para cá, o player só re-renderiza no ritmo do poller (2x/s) e este
++ * componente — meia dúzia de divs — absorve sozinho o custo da animação.
++ *
++ * A matemática do posicionamento (letterbox object-contain × object-cover) é
++ * a MESMA que estava inline no player, movida sem alteração, junto com o
++ * getRenderedVideoRect.
++ */
++import { type CSSProperties } from 'react';
++import type { LiveDetection } from '../lib/live-detections-poller';
++import { useSmoothTracks } from '../lib/use-smooth-tracks';
++
++type VideoRefLike = { current: HTMLVideoElement | null };
++type ContainerRefLike = { current: HTMLElement | null };
++
++export function getRenderedVideoRect(
++  video: HTMLVideoElement | null,
++  containerWidth: number,
++  containerHeight: number,
++) {
++  if (!video || containerWidth <= 0 || containerHeight <= 0) {
++    return { left: 0, top: 0, width: containerWidth, height: containerHeight };
++  }
++
++  const videoWidth = video.videoWidth || 0;
++  const videoHeight = video.videoHeight || 0;
++  if (videoWidth <= 0 || videoHeight <= 0) {
++    return { left: 0, top: 0, width: containerWidth, height: containerHeight };
++  }
++
++  const objectFit = window.getComputedStyle(video).objectFit || 'contain';
++  if (objectFit === 'fill') {
++    return { left: 0, top: 0, width: containerWidth, height: containerHeight };
++  }
++
++  const scale = objectFit === 'cover'
++    ? Math.max(containerWidth / videoWidth, containerHeight / videoHeight)
++    : Math.min(containerWidth / videoWidth, containerHeight / videoHeight);
++  const width = videoWidth * scale;
++  const height = videoHeight * scale;
++  return {
++    left: (containerWidth - width) / 2,
++    top: (containerHeight - height) / 2,
++    width,
++    height,
++  };
++}
++
++export function SmoothDetectionOverlay({
++  detections,
++  videoRef,
++  containerRef,
++}: {
++  detections: LiveDetection[];
++  videoRef: VideoRefLike;
++  containerRef: ContainerRefLike;
++}) {
++  const smoothedDetections = useSmoothTracks(detections);
++
++  return (
++    <>
++      {smoothedDetections.map((detection) => {
++        // MOVIMENTO NUNCA desenha caixa (decisão do dono do sistema — o MOG2
++        // arma a gravação, não vira overlay). Mantido igual ao player.
++        if (detection.label === 'motion' || detection.type.startsWith('MOTION')) return null;
++        const [x1, y1, x2, y2] = detection.bbox;
++        const fallbackVideoWidth = videoRef.current?.videoWidth || 320;
++        const fallbackVideoHeight = videoRef.current?.videoHeight || 180;
++        const frameWidth = detection.frameWidth && detection.frameWidth > 0 ? detection.frameWidth : fallbackVideoWidth;
++        const frameHeight = detection.frameHeight && detection.frameHeight > 0 ? detection.frameHeight : fallbackVideoHeight;
++        const containerWidth = containerRef.current?.clientWidth ?? 0;
++        const containerHeight = containerRef.current?.clientHeight ?? 0;
++        let style: CSSProperties;
++        if (containerWidth > 0 && containerHeight > 0) {
++          const videoRect = getRenderedVideoRect(videoRef.current, containerWidth, containerHeight);
++          const leftPx = videoRect.left + (x1 / frameWidth) * videoRect.width;
++          const topPx = videoRect.top + (y1 / frameHeight) * videoRect.height;
++          const rightPx = videoRect.left + (x2 / frameWidth) * videoRect.width;
++          const bottomPx = videoRect.top + (y2 / frameHeight) * videoRect.height;
++          const visibleLeft = Math.max(0, Math.min(containerWidth, leftPx));
++          const visibleTop = Math.max(0, Math.min(containerHeight, topPx));
++          const visibleRight = Math.max(visibleLeft + 1, Math.min(containerWidth, rightPx));
++          const visibleBottom = Math.max(visibleTop + 1, Math.min(containerHeight, bottomPx));
++          style = {
++            left: `${visibleLeft}px`,
++            top: `${visibleTop}px`,
++            width: `${visibleRight - visibleLeft}px`,
++            height: `${visibleBottom - visibleTop}px`,
++          };
++        } else {
++          const left = Math.max(0, Math.min(100, (x1 / frameWidth) * 100));
++          const top = Math.max(0, Math.min(100, (y1 / frameHeight) * 100));
++          const width = Math.max(1, Math.min(100 - left, ((x2 - x1) / frameWidth) * 100));
++          const height = Math.max(1, Math.min(100 - top, ((y2 - y1) / frameHeight) * 100));
++          style = { left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` };
++        }
++        const isFace = detection.type.startsWith('FACE');
++        const isTriangle = !isFace && detection.overlayMode === 'triangle';
++        const label = detection.similarity != null
++          ? `${detection.label} ${(detection.similarity * 100).toFixed(0)}%`
++          : detection.confidence != null
++            ? `${detection.label} ${(detection.confidence * 100).toFixed(0)}%`
++            : detection.label;
++        if (isTriangle) {
++          return (
++            <div key={detection.renderKey} className="pointer-events-none absolute z-30" style={style}>
++              <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-full">
++                <span className="mx-auto block h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-[hsl(var(--status-warning)_/_0.9)] drop-shadow-[0_1px_1px_rgba(0,0,0,0.65)]" />
++              </div>
++            </div>
++          );
++        }
++        return (
++          <div
++            key={detection.renderKey}
++            className={`pointer-events-none absolute z-30 rounded-sm border-2 shadow-[0_0_0_1px_rgba(0,0,0,0.45)] ${
++              isFace ? 'border-[hsl(var(--status-online))]' : 'border-[hsl(var(--status-warning))]'
++            } ${detection.stationary ? 'border-dashed opacity-80' : ''}`}
++            style={style}
++          >
++            <span
++              className={`absolute -top-6 left-0 max-w-40 truncate rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-black ${
++                isFace ? 'bg-[hsl(var(--status-online))]' : 'bg-[hsl(var(--status-warning))]'
++              }`}
++            >
++              {label}
++            </span>
++          </div>
++        );
++      })}
++    </>
++  );
++}
+diff --git a/apps/web/src/lib/live-detections-poller.ts b/apps/web/src/lib/live-detections-poller.ts
+index 37dca09..cc3282c 100644
+--- a/apps/web/src/lib/live-detections-poller.ts
++++ b/apps/web/src/lib/live-detections-poller.ts
+@@ -21,6 +21,8 @@ export type LiveDetection = {
+   occurredAt: string;
+   overlayMode?: string | null;
+   trackId?: number | null;
++  stationary?: boolean | null;
++  recovered?: boolean | null;
+ };
+ 
+ type Subscriber = (detections: LiveDetection[]) => void;
+@@ -33,6 +35,13 @@ class LiveDetectionsPoller {
+   private readonly subscribers = new Map<string, Set<Subscriber>>();
+   private timer: ReturnType<typeof setInterval> | null = null;
+   private inFlight = false;
++  // Falha de rede/auth NÃO deve apagar a grade inteira num piscar: seguramos o
++  // último payload bom por até MAX_FAILURE_HOLDS ciclos (e nunca além do TTL),
++  // depois limpamos para não exibir caixa obsoleta.
++  private consecutiveFailures = 0;
++  private readonly lastGood = new Map<string, { detections: LiveDetection[]; at: number }>();
++  private static readonly MAX_FAILURE_HOLDS = 2;
++  private static readonly FAILURE_HOLD_TTL_MS = 1600;
+ 
+   subscribe(cameraId: string, callback: Subscriber): () => void {
+     let set = this.subscribers.get(cameraId);
+@@ -88,13 +97,31 @@ class LiveDetectionsPoller {
+         },
+       );
+       const cameras = response.data?.cameras ?? {};
++      this.consecutiveFailures = 0;
++      const now = Date.now();
+       for (const cameraId of cameraIds) {
+         const detections = Array.isArray(cameras[cameraId]?.detections) ? cameras[cameraId]!.detections! : [];
++        if (detections.length > 0) {
++          this.lastGood.set(cameraId, { detections, at: now });
++        } else {
++          this.lastGood.delete(cameraId);
++        }
+         this.emit(cameraId, detections);
+       }
+     } catch {
+-      // Em falha (rede/auth), limpa overlays para não exibir caixas obsoletas.
+-      for (const cameraId of cameraIds) this.emit(cameraId, []);
++      this.consecutiveFailures += 1;
++      const now = Date.now();
++      const withinHold = this.consecutiveFailures <= LiveDetectionsPoller.MAX_FAILURE_HOLDS;
++      for (const cameraId of cameraIds) {
++        const held = this.lastGood.get(cameraId);
++        const fresh = held != null && now - held.at <= LiveDetectionsPoller.FAILURE_HOLD_TTL_MS;
++        if (withinHold && fresh) {
++          this.emit(cameraId, held.detections);
++        } else {
++          this.lastGood.delete(cameraId);
++          this.emit(cameraId, []);
++        }
++      }
+     } finally {
+       this.inFlight = false;
+     }
+diff --git a/apps/web/src/lib/use-smooth-tracks.ts b/apps/web/src/lib/use-smooth-tracks.ts
+new file mode 100644
+index 0000000..0c6a1da
+--- /dev/null
++++ b/apps/web/src/lib/use-smooth-tracks.ts
+@@ -0,0 +1,161 @@
++/**
++ * useSmoothTracks — identidade estável por trackId + interpolação entre amostras.
++ *
++ * O problema que este hook mata: o `id` de cada detecção vem do backend como
++ * `${cameraId}-${timestampMs}-${idx}` — muda a CADA amostra. Com `key={id}`,
++ * o React destrói e recria o elemento da caixa a cada atualização (remount),
++ * então a caixa "pisca" e transições CSS nunca rodam (transição não anima em
++ * mount). Este hook:
++ *
++ *   1. Usa `trackId` como identidade quando existir (`track-${trackId}`), com
++ *      fallback para `detection.id` (faces e detecções sem tracking).
++ *      NUNCA `trackId || id` — trackId 0 é válido e `||` o descartaria.
++ *   2. Mantém, por identidade, a caixa ANTERIOR e a caixa ALVO, e interpola
++ *      entre elas em requestAnimationFrame. Nova amostra não cria elemento:
++ *      só muda o destino da caixa existente (100 → 107 → … → 140).
++ *   3. Segura a caixa por um TTL curto quando uma amostra falta (holdMs),
++ *      evitando o pisca de "sumiu por 1 ciclo". Fallbacks (sem trackId) não
++ *      ganham TTL: são substituídos em bloco, como hoje.
++ *
++ * A cadência das amostras é estimada por identidade (tempo entre alvos) e
++ * limitada a [120ms, 900ms] — polling de 500ms vira uma animação de ~500ms.
++ */
++import { useEffect, useRef, useState } from 'react';
++import type { LiveDetection } from './live-detections-poller';
++
++export type SmoothDetection = LiveDetection & {
++  renderKey: string;
++  /** true enquanto a caixa vive apenas do TTL (sem amostra fresca) */
++  coasting: boolean;
++};
++
++type TrackState = {
++  meta: LiveDetection;
++  from: [number, number, number, number];
++  target: [number, number, number, number];
++  targetSetAt: number;
++  intervalMs: number;
++  lastSeen: number;
++  isTracked: boolean;
++};
++
++const MIN_INTERVAL_MS = 120;
++const MAX_INTERVAL_MS = 900;
++const DEFAULT_INTERVAL_MS = 500; // POLL_INTERVAL_MS do live-detections-poller
++
++function detectionKey(detection: LiveDetection): { key: string; isTracked: boolean } {
++  // trackId != null (e não `||`): 0 é um trackId legítimo.
++  if (detection.trackId != null) {
++    return { key: `track-${detection.trackId}`, isTracked: true };
++  }
++  return { key: detection.id, isTracked: false };
++}
++
++function lerpBox(
++  from: [number, number, number, number],
++  to: [number, number, number, number],
++  t: number,
++): [number, number, number, number] {
++  const clamped = Math.max(0, Math.min(1, t));
++  return [
++    from[0] + (to[0] - from[0]) * clamped,
++    from[1] + (to[1] - from[1]) * clamped,
++    from[2] + (to[2] - from[2]) * clamped,
++    from[3] + (to[3] - from[3]) * clamped,
++  ];
++}
++
++export function useSmoothTracks(
++  detections: LiveDetection[],
++  options?: { holdMs?: number },
++): SmoothDetection[] {
++  const holdMs = options?.holdMs ?? 900;
++  const tracksRef = useRef<Map<string, TrackState>>(new Map());
++  const rafRef = useRef<number | null>(null);
++  const [rendered, setRendered] = useState<SmoothDetection[]>([]);
++
++  // Ingestão de amostras: atualiza alvos SEM recriar identidades.
++  useEffect(() => {
++    const now = performance.now();
++    const tracks = tracksRef.current;
++    const seenNow = new Set<string>();
++
++    for (const detection of detections) {
++      const { key, isTracked } = detectionKey(detection);
++      if (seenNow.has(key)) continue; // dedupe defensivo por identidade
++      seenNow.add(key);
++      const existing = tracks.get(key);
++      if (!existing) {
++        tracks.set(key, {
++          meta: detection,
++          from: [...detection.bbox] as [number, number, number, number],
++          target: [...detection.bbox] as [number, number, number, number],
++          targetSetAt: now,
++          intervalMs: DEFAULT_INTERVAL_MS,
++          lastSeen: now,
++          isTracked,
++        });
++        continue;
++      }
++      // ponto de partida = posição INTERPOLADA atual (sem "teleporte" se a
++      // amostra nova chegar no meio de uma animação)
++      const progress = existing.intervalMs > 0 ? (now - existing.targetSetAt) / existing.intervalMs : 1;
++      existing.from = lerpBox(existing.from, existing.target, progress);
++      const observedInterval = now - existing.targetSetAt;
++      existing.intervalMs = Math.max(
++        MIN_INTERVAL_MS,
++        Math.min(MAX_INTERVAL_MS, observedInterval || DEFAULT_INTERVAL_MS),
++      );
++      existing.target = [...detection.bbox] as [number, number, number, number];
++      existing.targetSetAt = now;
++      existing.lastSeen = now;
++      existing.meta = detection;
++    }
++
++    // fallbacks (sem trackId) não têm continuidade entre amostras: remove os
++    // que não vieram nesta leva, senão viram caixas-fantasma pelo TTL.
++    for (const [key, state] of tracks) {
++      if (!state.isTracked && !seenNow.has(key)) tracks.delete(key);
++    }
++  }, [detections]);
++
++  // Loop de renderização: 60fps enquanto houver caixas vivas.
++  useEffect(() => {
++    const tick = () => {
++      const now = performance.now();
++      const tracks = tracksRef.current;
++      const next: SmoothDetection[] = [];
++      for (const [key, state] of tracks) {
++        const age = now - state.lastSeen;
++        if (age > holdMs) {
++          tracks.delete(key);
++          continue;
++        }
++        const t = state.intervalMs > 0 ? (now - state.targetSetAt) / state.intervalMs : 1;
++        const bbox = lerpBox(state.from, state.target, t);
++        next.push({
++          ...state.meta,
++          bbox,
++          renderKey: key,
++          coasting: age > state.intervalMs * 1.5,
++        });
++      }
++      // ordena por identidade para a lista ser estável entre frames
++      next.sort((a, b) => (a.renderKey < b.renderKey ? -1 : a.renderKey > b.renderKey ? 1 : 0));
++      setRendered(next);
++      rafRef.current = next.length > 0 ? requestAnimationFrame(tick) : null;
++    };
++
++    if (rafRef.current == null && (detections.length > 0 || tracksRef.current.size > 0)) {
++      rafRef.current = requestAnimationFrame(tick);
++    }
++    return () => {
++      if (rafRef.current != null) {
++        cancelAnimationFrame(rafRef.current);
++        rafRef.current = null;
++      }
++    };
++  }, [detections, holdMs]);
++
++  return rendered;
++}
+diff --git a/services/ai-service-python/detectors/object_detector.py b/services/ai-service-python/detectors/object_detector.py
+index e465702..e863680 100644
+--- a/services/ai-service-python/detectors/object_detector.py
++++ b/services/ai-service-python/detectors/object_detector.py
+@@ -10,6 +10,9 @@ from .base import Detection, Detector
+ from .region_proposal import MotionRegionPlanner, RegionConfig
+ from onnxruntime_session import inference_threading_status
+ from runtime_profiles import GENERAL_PROFILE
++from trackers import TrackerBackend, create_tracker, tracker_names
++from trackers.camera_motion import GlobalMotionEstimator
++from trackers.rider_association import RiderAssociator, RiderConfig
+ 
+ 
+ PERSON_CLASS_ID = 0
+@@ -60,7 +63,31 @@ class ObjectDetector(Detector):
+         self._runtime_lock = threading.Lock()
+         self._runtimes: dict[int, dict] = {}
+         self._tracker_lock = threading.Lock()
+-        self._trackers: dict[str, sv.ByteTrack] = {}
++        # GENERAL_TRACKER agora falha ALTO se inválido — antes era lido e
++        # ignorado silenciosamente (sv.ByteTrack hardcoded).
++        self.tracker_name = str(GENERAL_PROFILE.get("tracker", "bytetrack")).strip().lower()
++        if self.tracker_name not in tracker_names():
++            raise ValueError(
++                f"GENERAL_TRACKER='{self.tracker_name}' inválido. "
++                f"Opções: {', '.join(tracker_names())}"
++            )
++        self._trackers: dict[str, TrackerBackend] = {}
++        # Associação de piloto (uma máquina de estado por câmera)
++        self._rider_config = RiderConfig(
++            enabled=bool(GENERAL_PROFILE.get("rider_association", False)),
++            person_floor=float(GENERAL_PROFILE.get("rider_person_floor", 0.12)),
++            vehicle_min=float(GENERAL_PROFILE.get("rider_vehicle_min", 0.45)),
++            confirm_frames=int(GENERAL_PROFILE.get("rider_confirm_frames", 2)),
++        )
++        self._rider_lock = threading.Lock()
++        self._riders: dict[str, RiderAssociator] = {}
++        # Compensação de movimento global (PTZ/vibração) — um estimador por câmera
++        self._motion_comp_enabled = bool(GENERAL_PROFILE.get("camera_motion_comp", False))
++        self._motion_estimators: dict[str, GlobalMotionEstimator] = {}
++        # Funil detector→tracker por classe (responde "YOLO não viu" vs
++        # "filtro derrubou" vs "tracker perdeu" — o caso 4 perto × 145 longe)
++        self._pipeline_debug = bool(GENERAL_PROFILE.get("pipeline_debug", False))
++        self._pipeline_stats: dict[int, dict[str, int]] = {}
+         self._pool_busy_drops = 0
+         self._pool_busy_drops_by_size: dict[int, int] = {}
+         self._last_selected_size = self.input_size
+@@ -213,48 +240,93 @@ class ObjectDetector(Detector):
+         blob = canvas[:, :, ::-1].transpose(2, 0, 1).astype(np.float32) / 255.0
+         return blob[None, ...], scale, pad_x, pad_y, w, h, input_size
+ 
+-    def _track_people(self, detections: list[Detection], context_key: str) -> list[Detection]:
++    def _pipeline_bump(self, cls: int, stage: str, amount: int = 1) -> None:
++        """Funil por classe: raw → conf_pass → to_tracker → from_tracker.
++        Contadores de diagnóstico (GIL torna o incremento seguro o bastante)."""
++        bucket = self._pipeline_stats.setdefault(int(cls), {
++            "raw": 0, "conf_pass": 0, "to_tracker": 0, "from_tracker": 0,
++        })
++        bucket[stage] = bucket.get(stage, 0) + int(amount)
++
++    def _rider_for(self, context_key: str) -> RiderAssociator:
++        key = str(context_key or "")
++        with self._rider_lock:
++            associator = self._riders.get(key)
++            if associator is None:
++                associator = RiderAssociator(
++                    self._rider_config, PERSON_CLASS_ID, RIDER_VEHICLE_CLASS_IDS
++                )
++                self._riders[key] = associator
++            return associator
++
++    def _track_people(self, detections: list[Detection], context_key: str, frame=None) -> list[Detection]:
++        # 1) associação de piloto ANTES do tracker: promove pessoa fraca montada
++        #    em moto/bicicleta forte e descarta as fracas não promovidas.
++        detections = self._rider_for(context_key).apply(
++            detections, self.class_confidence.get(PERSON_CLASS_ID, self.min_conf)
++        )
++
+         output: list[Detection] = []
+         grouped: dict[int, list[Detection]] = {}
+         for item in detections:
+             cls = int((item.extra or {}).get("classId", PERSON_CLASS_ID))
+             grouped.setdefault(cls, []).append(item)
+ 
++        # 2) movimento GLOBAL da câmera: estimado UMA vez por frame e aplicado a
++        #    todos os backends desta câmera (PTZ/vibração). Default: desligado.
++        global_shift = (0.0, 0.0, 1.0)
++        if self._motion_comp_enabled and frame is not None:
++            estimator = self._motion_estimators.get(context_key)
++            if estimator is None:
++                estimator = self._motion_estimators.setdefault(context_key, GlobalMotionEstimator())
++            global_shift = estimator.estimate(frame)
++
+         with self._tracker_lock:
+             for cls in sorted(self.active_class_ids):
+                 class_detections = grouped.get(cls, [])
+                 tracker_key = f"{context_key}:class:{cls}"
+-                tracker = self._trackers.get(tracker_key)
+-                if tracker is None:
+-                    tracker = sv.ByteTrack(
+-                        track_activation_threshold=self._confidence_for_class(cls),
++                backend = self._trackers.get(tracker_key)
++                if backend is None:
++                    backend = create_tracker(
++                        self.tracker_name,
++                        class_id=cls,
++                        activation_threshold=self._confidence_for_class(cls),
+                         lost_track_buffer=self.track_buffer,
+                         frame_rate=int(max(1, round(float(GENERAL_PROFILE["detection_fps"])))),
+-                        minimum_consecutive_frames=1,
++                        low_conf_floor=float(GENERAL_PROFILE.get("low_conf_floor", 0.10)),
++                        recovery_grace_ms=int(GENERAL_PROFILE.get("recovery_grace_ms", 2000)),
++                        stationary_frames=int(GENERAL_PROFILE.get("stationary_frames", 10)),
++                        stationary_iou=float(GENERAL_PROFILE.get("stationary_iou", 0.88)),
++                        stationary_out_iou=float(GENERAL_PROFILE.get("stationary_out_iou", 0.70)),
++                        appearance=bool(GENERAL_PROFILE.get("tracker_appearance", True)),
++                        appearance_veto=float(GENERAL_PROFILE.get("tracker_appearance_veto", 0.10)),
++                        min_hits=int(GENERAL_PROFILE.get("tracker_min_hits", 1)),
++                        stationary_coast=bool(GENERAL_PROFILE.get("stationary_coast", True)),
+                     )
+-                    self._trackers[tracker_key] = tracker
++                    self._trackers[tracker_key] = backend
++
++                if global_shift != (0.0, 0.0, 1.0):
++                    backend.apply_global_shift(*global_shift)
+ 
+                 if class_detections:
+-                    values = sv.Detections(
+-                        xyxy=np.asarray([item.bbox for item in class_detections], dtype=np.float32),
+-                        confidence=np.asarray([item.confidence for item in class_detections], dtype=np.float32),
+-                        class_id=np.asarray([cls for _ in class_detections], dtype=int),
+-                    )
++                    xyxy = np.asarray([item.bbox for item in class_detections], dtype=np.float32)
++                    confidences = np.asarray([item.confidence for item in class_detections], dtype=np.float32)
+                 else:
+-                    values = sv.Detections.empty()
+-                tracked = tracker.update_with_detections(values)
+-
+-                tracker_ids = tracked.tracker_id if tracked.tracker_id is not None else []
+-                confidences = tracked.confidence if tracked.confidence is not None else []
+-                class_ids = tracked.class_id if tracked.class_id is not None else []
+-                for bbox, score, track_id, class_id in zip(tracked.xyxy, confidences, tracker_ids, class_ids):
+-                    tracked_cls = int(class_id) if class_id is not None else cls
+-                    raw_track_id = int(track_id)
++                    xyxy = np.zeros((0, 4), dtype=np.float32)
++                    confidences = np.zeros((0,), dtype=np.float32)
++                self._pipeline_bump(cls, "to_tracker", len(class_detections))
++
++                tracked_boxes = backend.update(xyxy, confidences, frame=frame)
++                self._pipeline_bump(cls, "from_tracker", len(tracked_boxes))
++
++                for tracked in tracked_boxes:
++                    tracked_cls = int(tracked.class_id)
++                    raw_track_id = int(tracked.track_id)
+                     output.append(
+                         Detection(
+                             label=CLASS_LABELS.get(tracked_cls, "detected"),
+-                            confidence=float(score),
+-                            bbox=[int(value) for value in bbox.tolist()],
++                            confidence=float(tracked.confidence),
++                            bbox=[int(value) for value in tracked.bbox.tolist()],
+                             extra={
+                                 "classId": tracked_cls,
+                                 "overlayMode": GENERAL_PROFILE["overlay_mode"],
+@@ -263,6 +335,8 @@ class ObjectDetector(Detector):
+                                 "trackClassId": tracked_cls,
+                                 "riderVehicleProxy": tracked_cls in RIDER_VEHICLE_CLASS_IDS,
+                                 "vehicleProxy": tracked_cls in VEHICLE_CLASS_IDS,
++                                "stationary": bool(tracked.stationary),
++                                "recovered": bool(tracked.recovered),
+                             },
+                         )
+                     )
+@@ -353,7 +427,7 @@ class ObjectDetector(Detector):
+         else:
+             detections, _ran = self._detect_raw(frame, runtime)
+         if GENERAL_PROFILE["persistent_track_id"] and context_key:
+-            return self._track_people(detections, context_key)
++            return self._track_people(detections, context_key, frame=frame)
+         return detections
+ 
+     def _detect_raw(self, frame, runtime) -> tuple[list[Detection], bool]:
+@@ -391,9 +465,22 @@ class ObjectDetector(Detector):
+             cls = int(cls_id)
+             if cls not in self.active_class_ids:
+                 continue
++            self._pipeline_bump(cls, "raw")
+             min_conf = self._confidence_for_class(cls)
+-            if score < min_conf:
+-                continue
++            below_threshold = bool(score < min_conf)
++            if below_threshold:
++                # Pessoa FRACA só sobrevive se a associação de piloto estiver
++                # ligada e a confiança passar do piso dela — o rider decide o
++                # destino (promover ou descartar) ANTES do tracker.
++                keep_for_rider = (
++                    self._rider_config.enabled
++                    and cls == PERSON_CLASS_ID
++                    and float(score) >= self._rider_config.person_floor
++                )
++                if not keep_for_rider:
++                    continue
++            else:
++                self._pipeline_bump(cls, "conf_pass")
+             x1 = int(max(0, min(width, (float(x1) - pad_x) / scale)))
+             y1 = int(max(0, min(height, (float(y1) - pad_y) / scale)))
+             x2 = int(max(0, min(width, (float(x2) - pad_x) / scale)))
+@@ -410,6 +497,7 @@ class ObjectDetector(Detector):
+                         "overlayMode": GENERAL_PROFILE["overlay_mode"],
+                         "riderVehicleProxy": cls in RIDER_VEHICLE_CLASS_IDS,
+                         "vehicleProxy": cls in VEHICLE_CLASS_IDS,
++                        "belowThreshold": below_threshold,
+                     },
+                 )
+             )
+@@ -442,6 +530,34 @@ class ObjectDetector(Detector):
+             "openvino_device": self.openvino_device,
+             "openvino_performance_hint": self.openvino_performance_hint,
+             "region_detection": self.region_status(),
++            "tracker": self.tracker_status(),
++        }
++
++    def tracker_status(self) -> dict:
++        """Diagnóstico do funil detector→tracker e dos backends por câmera.
++
++        `pipeline` responde diretamente o caso "4 detecções perto × 145 longe":
++        se `raw` já é baixo, o problema é modelo/pré-processamento; se `raw` é
++        alto e `conf_pass` é baixo, é threshold; se `to_tracker` é alto e
++        `from_tracker` é baixo, é o tracker.
++        """
++        with self._tracker_lock:
++            backends = {key: backend.status() for key, backend in self._trackers.items()}
++        with self._rider_lock:
++            rider = {
++                "enabled": self._rider_config.enabled,
++                "per_camera": {key: dict(associator.stats) for key, associator in self._riders.items()},
++            }
++        return {
++            "name": self.tracker_name,
++            "available": tracker_names(),
++            "pipeline": {
++                CLASS_LABELS.get(cls, str(cls)): dict(stats)
++                for cls, stats in sorted(self._pipeline_stats.items())
++            },
++            "camera_motion_comp": self._motion_comp_enabled,
++            "rider_association": rider,
++            "backends": backends,
+         }
+ 
+     def region_status(self) -> dict:
+diff --git a/services/ai-service-python/runtime_profiles.py b/services/ai-service-python/runtime_profiles.py
+index 8a4ea37..37143ee 100644
+--- a/services/ai-service-python/runtime_profiles.py
++++ b/services/ai-service-python/runtime_profiles.py
+@@ -149,8 +149,41 @@ GENERAL_PROFILE = {
+     "confidence_motorcycle": _env_float("GENERAL_CONFIDENCE_MOTORCYCLE", 0.25),
+     "confidence_rider_vehicle": _env_float("GENERAL_CONFIDENCE_RIDER_VEHICLE", 0.25),
+     "confidence_vehicle": _env_float("GENERAL_CONFIDENCE_VEHICLE", 0.25),
++    # Tracker agora é VALIDADO na inicialização (trackers/__init__.py):
++    # "bytetrack" (comportamento atual, default) ou "ajustcam" (bottom-center,
++    # oclusão com recuperação de ID, estacionário, compensação de câmera).
+     "tracker": _env_str("GENERAL_TRACKER", "bytetrack"),
+     "track_buffer": _env_int("GENERAL_TRACK_BUFFER", 20),
++    # --- backend "ajustcam" ---------------------------------------------------
++    # piso de confiança do 2º estágio: detecções fracas SUSTENTAM trilhas
++    # existentes (não criam novas) — segura o ID quando a confiança oscila.
++    "low_conf_floor": _env_float("GENERAL_TRACKER_LOW_CONF_FLOOR", 0.10),
++    # janela de graça pós-perda: dentro dela, o mesmo ID pode ser recuperado.
++    "recovery_grace_ms": _env_int("GENERAL_TRACKER_RECOVERY_GRACE_MS", 2000),
++    # objeto estacionário (estilo Frigate: histórico + mediana + IoU)
++    "stationary_frames": _env_int("GENERAL_STATIONARY_FRAMES", 10),
++    "stationary_iou": _env_float("GENERAL_STATIONARY_IOU", 0.88),
++    "stationary_out_iou": _env_float("GENERAL_STATIONARY_OUT_IOU", 0.70),
++    # compensação de movimento global da câmera (PTZ/vibração) — só faz efeito
++    # com tracker=ajustcam; em câmera fixa resulta ~(0,0) e é inócuo.
++    "camera_motion_comp": _env_bool("GENERAL_CAMERA_MOTION_COMP", False),
++    # aparência (re-ID barata por histograma HSV do torso): confirma
++    # recuperação de ID e veta cruzamento errado; só age com tracker=ajustcam.
++    "tracker_appearance": _env_bool("GENERAL_TRACKER_APPEARANCE", True),
++    "tracker_appearance_veto": _env_float("GENERAL_TRACKER_APPEARANCE_VETO", 0.10),
++    # frames de vida mínima antes da 1ª emissão (paridade min_initialized do
++    # Frigate; 1 = semântica atual do ByteTrack, caixa aparece no 1º frame).
++    "tracker_min_hits": _env_int("GENERAL_TRACKER_MIN_HITS", 1),
++    # estacionário em coasting: parado continua na tela em falha do detector.
++    "stationary_coast": _env_bool("GENERAL_STATIONARY_COAST", True),
++    # --- associação de piloto (heurística própria, OFF por padrão) ------------
++    "rider_association": _env_bool("GENERAL_RIDER_ASSOCIATION", False),
++    "rider_person_floor": _env_float("GENERAL_RIDER_PERSON_FLOOR", 0.12),
++    "rider_vehicle_min": _env_float("GENERAL_RIDER_VEHICLE_MIN", 0.45),
++    "rider_confirm_frames": _env_int("GENERAL_RIDER_CONFIRM_FRAMES", 2),
++    # --- instrumentação do funil detector→tracker -----------------------------
++    # contadores sempre ativos em /status; log detalhado por frame só com flag.
++    "pipeline_debug": _env_bool("GENERAL_PIPELINE_DEBUG", False),
+     "lost_ttl_ms": _env_int("GENERAL_LOST_TTL_MS", 2000),
+     "hide_after_misses": _env_int("GENERAL_HIDE_AFTER_MISSES", 5),
+     "show_after_hits": _env_int("GENERAL_SHOW_AFTER_HITS", 1),
+diff --git a/services/ai-service-python/stream_processor.py b/services/ai-service-python/stream_processor.py
+index deb93e5..b5a981f 100644
+--- a/services/ai-service-python/stream_processor.py
++++ b/services/ai-service-python/stream_processor.py
+@@ -1297,6 +1297,8 @@ class StreamProcessor:
+                     "occurredAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp)),
+                     "overlayMode": extra.get("overlayMode"),
+                     "trackId": extra.get("trackId"),
++                    "stationary": bool(extra.get("stationary")) if "stationary" in extra else None,
++                    "recovered": bool(extra.get("recovered")) if "recovered" in extra else None,
+                 }
+             )
+ 
+diff --git a/services/ai-service-python/tools/record_detections_jsonl.py b/services/ai-service-python/tools/record_detections_jsonl.py
+new file mode 100644
+index 0000000..987f1b3
+--- /dev/null
++++ b/services/ai-service-python/tools/record_detections_jsonl.py
+@@ -0,0 +1,94 @@
++"""Grava detecções REAIS (do seu modelo, nas suas câmeras) em JSONL p/ o bench.
++
++Fecha o ciclo do track_ab_bench.py: em vez de cenários sintéticos, o A/B
++bytetrack × ajustcam roda sobre o que o SEU YOLO viu num vídeo seu.
++
++    # no ambiente do ai-service (com OpenVINO e os modelos montados):
++    python tools/record_detections_jsonl.py --video corredor.mp4 --out corredor.jsonl
++    python tools/track_ab_bench.py --jsonl corredor.jsonl
++
++Cada linha do JSONL é um frame processado:
++    {"t": 12.40, "boxes": [[x1,y1,x2,y2], ...], "scores": [0.61, ...]}
++
++Importante:
++  - roda a MESMA cadeia de produção (resize p/ resolução de análise +
++    ObjectDetector.infer SEM tracking — context_key=None devolve o cru);
++  - respeita GENERAL_DETECTION_FPS por padrão (amostragem igual à produção);
++  - por padrão grava só PESSOA (classe 0), que é o que o bench avalia;
++  - ESTA FERRAMENTA NÃO FOI EXECUTADA no ambiente de desenvolvimento do pacote
++    (não há OpenVINO/modelos aqui) — foi escrita para rodar no seu.
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import os
++import sys
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++import cv2  # noqa: E402
++
++from detectors.object_detector import ObjectDetector  # noqa: E402
++from runtime_profiles import GENERAL_PROFILE  # noqa: E402
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--video", required=True, help="arquivo de vídeo (mp4/mkv/ts)")
++    parser.add_argument("--out", required=True, help="JSONL de saída")
++    parser.add_argument("--fps", type=float, default=None,
++                        help="amostragem; default = GENERAL_DETECTION_FPS")
++    parser.add_argument("--class-id", type=int, default=0,
++                        help="classe gravada (0=pessoa; -1=todas)")
++    args = parser.parse_args()
++
++    capture = cv2.VideoCapture(args.video)
++    if not capture.isOpened():
++        print(f"não abriu o vídeo: {args.video}")
++        return 2
++    video_fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
++    target_fps = float(args.fps or GENERAL_PROFILE.get("detection_fps", 4.0))
++    stride = max(1, int(round(video_fps / max(0.1, target_fps))))
++    width = int(GENERAL_PROFILE["analysis_width"])
++    height = int(GENERAL_PROFILE["analysis_height"])
++
++    detector = ObjectDetector()
++    detector.load()
++
++    written = 0
++    index = 0
++    with open(args.out, "w", encoding="utf-8") as out:
++        while True:
++            ok, frame = capture.read()
++            if not ok:
++                break
++            if index % stride != 0:
++                index += 1
++                continue
++            index += 1
++            frame = cv2.resize(frame, (width, height))
++            # context_key=None => SEM tracking: detecções cruas pós-filtros,
++            # exatamente o que os dois trackers receberiam.
++            detections = detector.infer(frame, context_key=None)
++            boxes = []
++            scores = []
++            for det in detections:
++                cls = int((det.extra or {}).get("classId", -1))
++                if args.class_id >= 0 and cls != args.class_id:
++                    continue
++                boxes.append([int(v) for v in det.bbox])
++                scores.append(round(float(det.confidence), 4))
++            t = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
++            out.write(json.dumps({"t": round(t, 2), "boxes": boxes, "scores": scores}) + "\n")
++            written += 1
++            if written % 100 == 0:
++                print(f"{written} frames gravados...")
++    capture.release()
++    print(f"pronto: {written} frames em {args.out} "
++          f"(vídeo {video_fps:.1f} fps, amostrado a ~{video_fps/stride:.1f} fps)")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/services/ai-service-python/tools/test_bytetrack_characterization.py b/services/ai-service-python/tools/test_bytetrack_characterization.py
+new file mode 100644
+index 0000000..0dbeaab
+--- /dev/null
++++ b/services/ai-service-python/tools/test_bytetrack_characterization.py
+@@ -0,0 +1,105 @@
++"""Caracterização: ByteTrackBackend ≡ sv.ByteTrack hardcoded (código antigo).
++
++Alimenta a MESMA sequência de detecções (aproximação, oscilação de confiança,
++gaps, dois objetos) no sv.ByteTrack configurado exatamente como estava dentro
++de ObjectDetector._track_people e no adapter novo. Qualquer divergência de id,
++caixa ou confiança falha o teste — trocar para o registro NÃO muda produção.
++
++Uso:  python tools/test_bytetrack_characterization.py
++Requer supervision instalado (mesma dependência que produção já tem).
++"""
++from __future__ import annotations
++
++import os
++import sys
++
++import numpy as np
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++import supervision as sv  # noqa: E402
++from trackers.bytetrack_backend import ByteTrackBackend  # noqa: E402
++
++ACTIVATION = 0.30
++BUFFER = 20
++FPS = 4
++CLASS_ID = 0
++
++
++def scenario():
++    """Sequência determinística com os casos chatos: escala, fraco, gap, 2 objetos."""
++    frames = []
++    for i in range(12):  # aproximação
++        h = 60 + i * 9
++        w = h * 0.4
++        by = 180 + i * 16
++        frames.append(([[320 - w / 2, by - h, 320 + w / 2, by]], [0.55]))
++    frames.append(([], []))  # gap
++    frames.append(([], []))
++    for i in range(8):  # dois objetos + confiança oscilando
++        frames.append((
++            [[100 + i * 20, 240, 160 + i * 20, 380],
++             [500 - i * 18, 260, 555 - i * 18, 410]],
++            [0.5 if i % 2 == 0 else 0.22, 0.6],
++        ))
++    return frames
++
++
++def run_old(frames):
++    tracker = sv.ByteTrack(
++        track_activation_threshold=ACTIVATION,
++        lost_track_buffer=BUFFER,
++        frame_rate=FPS,
++        minimum_consecutive_frames=1,
++    )
++    outputs = []
++    for boxes, scores in frames:
++        if boxes:
++            values = sv.Detections(
++                xyxy=np.asarray(boxes, dtype=np.float32),
++                confidence=np.asarray(scores, dtype=np.float32),
++                class_id=np.asarray([CLASS_ID] * len(boxes), dtype=int),
++            )
++        else:
++            values = sv.Detections.empty()
++        tracked = tracker.update_with_detections(values)
++        ids = tracked.tracker_id if tracked.tracker_id is not None else []
++        confs = tracked.confidence if tracked.confidence is not None else []
++        frame_out = sorted(
++            (int(t), [round(float(v), 3) for v in b.tolist()], round(float(c), 4))
++            for b, c, t in zip(tracked.xyxy, confs, ids)
++        )
++        outputs.append(frame_out)
++    return outputs
++
++
++def run_new(frames):
++    backend = ByteTrackBackend(
++        class_id=CLASS_ID, activation_threshold=ACTIVATION,
++        lost_track_buffer=BUFFER, frame_rate=FPS,
++        # kwargs extras que o detector passa para o backend "ajustcam" devem
++        # ser IGNORADOS aqui sem efeito colateral:
++        low_conf_floor=0.10, recovery_grace_ms=2000,
++        stationary_frames=10, stationary_iou=0.88, stationary_out_iou=0.70,
++    )
++    outputs = []
++    for boxes, scores in frames:
++        xyxy = np.asarray(boxes, dtype=np.float32).reshape(-1, 4) if boxes else np.zeros((0, 4), np.float32)
++        conf = np.asarray(scores, dtype=np.float32) if scores else np.zeros((0,), np.float32)
++        tracked = backend.update(xyxy, conf)
++        frame_out = sorted(
++            (int(t.track_id), [round(float(v), 3) for v in t.bbox.tolist()], round(float(t.confidence), 4))
++            for t in tracked
++        )
++        outputs.append(frame_out)
++    return outputs
++
++
++if __name__ == "__main__":
++    frames = scenario()
++    old = run_old(frames)
++    new = run_new(frames)
++    for idx, (a, b) in enumerate(zip(old, new)):
++        assert a == b, f"divergência no frame {idx}:\n  antigo: {a}\n  novo:   {b}"
++    total = sum(len(f) for f in old)
++    print(f"caracterização OK: {len(frames)} frames, {total} caixas — adapter ≡ hardcoded")
+diff --git a/services/ai-service-python/tools/test_tracker_synthetic.py b/services/ai-service-python/tools/test_tracker_synthetic.py
+new file mode 100644
+index 0000000..a2f478a
+--- /dev/null
++++ b/services/ai-service-python/tools/test_tracker_synthetic.py
+@@ -0,0 +1,186 @@
++"""Testes sintéticos do backend "ajustcam" e da associação de piloto.
++
++Rodam SEM supervision/opencv/modelo — só numpy — e cobrem exatamente os casos
++problemáticos medidos nas câmeras:
++
++    1. aproximação: pessoa vindo em direção à câmera (escala 3x) mantém 1 ID;
++    2. oscilação de confiança: frames fracos (< threshold) NÃO derrubam o ID;
++    3. oclusão: 6 frames atrás do poste e o MESMO ID volta (recovered=True);
++    4. cruzamento: duas pessoas se cruzam sem trocar de ID (pé separa);
++    5. estacionário: pessoa parada vira stationary=True e sobrevive a misses;
++    6. compensação global: pan de câmera não troca IDs em bloco;
++    7. rider: pessoa fraca sobre moto forte é promovida após confirmação — e
++       moto parada com box fantasma de 1 frame NÃO vira pessoa.
++
++Uso:  python tools/test_tracker_synthetic.py
++"""
++from __future__ import annotations
++
++import os
++import sys
++
++import numpy as np
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from trackers.ajustcam_tracker import AjustCamTracker  # noqa: E402
++from trackers.rider_association import RiderAssociator, RiderConfig  # noqa: E402
++
++
++class FakeDetection:
++    def __init__(self, bbox, confidence, class_id, below=False):
++        self.bbox = [int(v) for v in bbox]
++        self.confidence = float(confidence)
++        self.extra = {"classId": int(class_id), "belowThreshold": bool(below)}
++        self.label = "pessoa" if class_id == 0 else "veiculo"
++
++
++def make_tracker(**overrides):
++    params = dict(class_id=0, activation_threshold=0.30, lost_track_buffer=8,
++                  frame_rate=8, low_conf_floor=0.10, recovery_grace_ms=5000,
++                  stationary_frames=8, stationary_iou=0.85, stationary_out_iou=0.60)
++    params.update(overrides)
++    return AjustCamTracker(**params)
++
++
++def person_box(bottom_x, bottom_y, width, height):
++    return [bottom_x - width / 2, bottom_y - height, bottom_x + width / 2, bottom_y]
++
++
++def run(tracker, boxes, scores):
++    xyxy = np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
++    conf = np.asarray(scores, dtype=np.float32).reshape(-1)
++    return tracker.update(xyxy, conf)
++
++
++def test_aproximacao_mantem_id():
++    tracker = make_tracker()
++    ids = set()
++    # pessoa vem do fundo (h=60) até perto (h=190): centro despenca, pé desce suave
++    for i in range(20):
++        h = 60 + i * 7
++        w = h * 0.38
++        by = 200 + i * 14
++        out = run(tracker, [person_box(320, by, w, h)], [0.55])
++        assert len(out) == 1, f"frame {i}: esperava 1 caixa, veio {len(out)}"
++        ids.add(out[0].track_id)
++    assert len(ids) == 1, f"aproximação trocou de ID: {ids}"
++    print("ok  1) aproximação 3x de escala mantém um único ID")
++
++
++def test_confianca_oscilante_sustenta_id():
++    tracker = make_tracker()
++    ids = set()
++    scores = [0.55, 0.18, 0.14, 0.52, 0.11, 0.49, 0.16, 0.61]  # fracos < 0.30
++    for i, score in enumerate(scores):
++        out = run(tracker, [person_box(300 + i * 12, 380, 60, 150)], [score])
++        for tracked in out:
++            ids.add(tracked.track_id)
++    assert len(ids) == 1, f"oscilação de confiança trocou ID: {ids}"
++    assert tracker.stats["low_conf_matches"] >= 3
++    print("ok  2) frames fracos sustentam a trilha (2º estágio) sem criar ID novo")
++
++
++def test_oclusao_recupera_mesmo_id():
++    tracker = make_tracker(lost_track_buffer=2)
++    first = run(tracker, [person_box(200, 400, 60, 150)], [0.6])[0].track_id
++    for i in range(3):  # ainda anda visível
++        run(tracker, [person_box(212 + i * 12, 400, 60, 150)], [0.6])
++    for _ in range(6):  # some atrás do poste (nenhuma detecção)
++        run(tracker, [], [])
++    # reaparece adiante, na direção prevista
++    out = run(tracker, [person_box(330, 402, 62, 152)], [0.6])
++    assert len(out) == 1
++    assert out[0].track_id == first, f"ID não recuperado: {first} -> {out[0].track_id}"
++    assert out[0].recovered is True
++    assert tracker.stats["recoveries"] >= 1
++    print("ok  3) oclusão de 6 frames: mesmo ID volta com recovered=True")
++
++
++def test_cruzamento_nao_troca_ids():
++    tracker = make_tracker()
++    # A vai da esquerda p/ direita (pé y=400), B da direita p/ esquerda (pé y=430)
++    id_a = id_b = None
++    for i in range(16):
++        ax = 100 + i * 28
++        bx = 540 - i * 28
++        out = run(tracker, [person_box(ax, 400, 55, 140), person_box(bx, 430, 60, 155)],
++                  [0.6, 0.6])
++        assert len(out) == 2
++        by_bottom = {round(t.bbox[3]): t.track_id for t in out}
++        current_a = by_bottom.get(400)
++        current_b = by_bottom.get(430)
++        if id_a is None:
++            id_a, id_b = current_a, current_b
++        else:
++            assert current_a == id_a and current_b == id_b, (
++                f"cruzamento trocou IDs no frame {i}: {(current_a, current_b)} != {(id_a, id_b)}")
++    print("ok  4) cruzamento com pés em alturas distintas não troca IDs")
++
++
++def test_estacionario_marca_e_tolera_misses():
++    tracker = make_tracker(lost_track_buffer=2, stationary_frames=6)
++    tid = None
++    for i in range(10):  # parada (jitter de 1px)
++        out = run(tracker, [person_box(400 + (i % 2), 350, 58, 148)], [0.5])
++        tid = out[0].track_id
++    assert out[0].stationary is True, "não classificou como estacionária"
++    # estacionária ganha 3x o miss budget: 4 misses (>2) não derrubam
++    for _ in range(4):
++        run(tracker, [], [])
++    out = run(tracker, [person_box(400, 350, 58, 148)], [0.5])
++    assert out[0].track_id == tid, "estacionária perdeu o ID após misses curtos"
++    print("ok  5) parada vira stationary=True e sobrevive a misses do detector")
++
++
++def test_compensacao_global_pan():
++    tracker = make_tracker()
++    first = run(tracker, [person_box(300, 400, 60, 150)], [0.6])[0].track_id
++    run(tracker, [person_box(305, 400, 60, 150)], [0.6])
++    # câmera dá pan: TUDO desloca 90px para a esquerda num frame
++    tracker.apply_global_shift(-90.0, 0.0)
++    out = run(tracker, [person_box(215, 400, 60, 150)], [0.6])
++    assert len(out) == 1 and out[0].track_id == first, "pan compensado trocou o ID"
++    print("ok  6) pan de 90px com apply_global_shift mantém o ID")
++
++
++def test_rider_promove_com_confirmacao_e_bloqueia_fantasma():
++    config = RiderConfig(enabled=True, person_floor=0.12, vehicle_min=0.45, confirm_frames=2)
++    associator = RiderAssociator(config, person_class_id=0, rider_vehicle_class_ids={1, 3})
++    moto = [300, 340, 420, 420]                       # moto forte
++    pessoa_montada = [330, 260, 390, 400]             # pé dentro da zona de montaria
++
++    # frame 1: plausível mas ainda sem confirmação -> pessoa NÃO passa
++    out1 = associator.apply(
++        [FakeDetection(moto, 0.72, 3), FakeDetection(pessoa_montada, 0.19, 0, below=True)],
++        person_threshold=0.30)
++    assert all((d.extra or {}).get("classId") != 0 for d in out1), "promoveu sem confirmação"
++
++    # frame 2: confirmação atingida -> promovida ao threshold
++    out2 = associator.apply(
++        [FakeDetection(moto, 0.70, 3), FakeDetection(pessoa_montada, 0.17, 0, below=True)],
++        person_threshold=0.30)
++    pessoas = [d for d in out2 if (d.extra or {}).get("classId") == 0]
++    assert len(pessoas) == 1 and pessoas[0].confidence >= 0.30
++    assert pessoas[0].extra.get("riderPromoted") is True
++    assert associator.stats["promotions"] == 1
++
++    # fantasma: pessoa fraca LONGE da moto nunca é promovida
++    fantasma = [40, 100, 90, 200]
++    out3 = associator.apply(
++        [FakeDetection(moto, 0.70, 3), FakeDetection(fantasma, 0.20, 0, below=True)],
++        person_threshold=0.30)
++    assert all((d.extra or {}).get("classId") != 0 for d in out3), "promoveu fantasma fora da moto"
++    assert associator.stats["geometry_rejects"] >= 1
++    print("ok  7) rider: promove só com geometria plausível + 2 frames; fantasma barrado")
++
++
++if __name__ == "__main__":
++    test_aproximacao_mantem_id()
++    test_confianca_oscilante_sustenta_id()
++    test_oclusao_recupera_mesmo_id()
++    test_cruzamento_nao_troca_ids()
++    test_estacionario_marca_e_tolera_misses()
++    test_compensacao_global_pan()
++    test_rider_promove_com_confirmacao_e_bloqueia_fantasma()
++    print("\ntodos os 7 cenários passaram")
+diff --git a/services/ai-service-python/tools/test_tracker_v2.py b/services/ai-service-python/tools/test_tracker_v2.py
+new file mode 100644
+index 0000000..4dd5e9a
+--- /dev/null
++++ b/services/ai-service-python/tools/test_tracker_v2.py
+@@ -0,0 +1,235 @@
++"""Testes v2 — aparência (re-ID), zoom PTZ, coasting de estacionário, min_hits.
++
++Uso:  python tools/test_tracker_v2.py     (requer numpy; cv2 p/ os de aparência/zoom)
++
++O cenário-chave é o RICOCHETE: duas pessoas com o pé na MESMA altura se
++aproximam, se encontram no centro e VOLTAM. A predição de velocidade constante
++diz "cada um continua em frente" — geometria pura tende a TROCAR os IDs no
++encontro. A assinatura de aparência (camisa verde × camisa vermelha) veta o par
++errado e os IDs ficam corretos. Também valida que a MESMA situação sem
++aparência realmente é ambígua (senão o teste não estaria provando nada).
++"""
++from __future__ import annotations
++
++import os
++import sys
++
++import numpy as np
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from trackers.ajustcam_tracker import AjustCamTracker  # noqa: E402
++from trackers.camera_motion import GlobalMotionEstimator  # noqa: E402
++
++try:
++    import cv2
++except Exception:
++    cv2 = None
++
++FRAME_W, FRAME_H = 640, 480
++
++
++def person_box(bottom_x, bottom_y, width, height):
++    return [bottom_x - width / 2, bottom_y - height, bottom_x + width / 2, bottom_y]
++
++
++def paint_frame(entries):
++    """entries: [(bbox, bgr_color)] -> frame BGR com 'pessoas' coloridas."""
++    frame = np.full((FRAME_H, FRAME_W, 3), 30, dtype=np.uint8)
++    for bbox, color in entries:
++        x1, y1, x2, y2 = [int(max(0, v)) for v in bbox]
++        frame[y1:y2, x1:x2] = color
++    return frame
++
++
++def make_tracker(**overrides):
++    params = dict(class_id=0, activation_threshold=0.30, lost_track_buffer=8,
++                  frame_rate=8, low_conf_floor=0.10, recovery_grace_ms=5000,
++                  stationary_frames=6, stationary_iou=0.85, stationary_out_iou=0.60)
++    params.update(overrides)
++    return AjustCamTracker(**params)
++
++
++def bounce_frames():
++    """A (verde) e B (vermelha), MESMO pé (y=400), aproximam 8 frames, ricocheteiam 8."""
++    verde = (60, 200, 60)
++    vermelha = (60, 60, 220)
++    sequence = []
++    for i in range(8):  # aproximação
++        ax, bx = 140 + i * 24, 500 - i * 24
++        sequence.append(((ax, verde), (bx, vermelha)))
++    for i in range(1, 9):  # ricochete: voltam por onde vieram
++        ax, bx = 140 + (7 - i) * 24, 500 - (7 - i) * 24
++        sequence.append(((ax, verde), (bx, vermelha)))
++    frames = []
++    for (ax, ca), (bx, cb) in sequence:
++        box_a = person_box(ax, 400, 55, 140)
++        box_b = person_box(bx, 400, 55, 140)
++        frames.append((box_a, box_b, paint_frame([(box_a, ca), (box_b, cb)]), ax, bx))
++    return frames
++
++
++def ids_por_cor(tracker, use_frame):
++    """Roda o ricochete; devolve, POR FRAME, o id na posição da verde e da
++    vermelha (None quando indistinguíveis por estarem uma sobre a outra)."""
++    per_frame = []
++    for box_a, box_b, frame, ax, bx in bounce_frames():
++        out = tracker.update(
++            np.asarray([box_a, box_b], dtype=np.float32),
++            np.asarray([0.6, 0.6], dtype=np.float32),
++            frame=frame if use_frame else None,
++        )
++        id_a = id_b = None
++        if abs(ax - bx) > 30:  # separadas o bastante para atribuir sem ambiguidade
++            for tracked in out:
++                foot_x = (tracked.bbox[0] + tracked.bbox[2]) / 2
++                if abs(foot_x - ax) < abs(foot_x - bx):
++                    id_a = tracked.track_id
++                else:
++                    id_b = tracked.track_id
++        per_frame.append((id_a, id_b))
++    return per_frame
++
++
++def test_ricochete_com_aparencia_mantem_ids():
++    assert cv2 is not None, "teste requer cv2 (produção já tem opencv-headless)"
++    per_frame = ids_por_cor(make_tracker(appearance=True), use_frame=True)
++    first_a, first_b = per_frame[0]
++    all_ids = {i for pair in per_frame for i in pair if i is not None}
++    # 1) nenhum ID novo nasceu (sem fragmentação)
++    assert all_ids == {first_a, first_b}, f"fragmentou: ids vistos {all_ids}"
++    # 2) DEPOIS da separação (últimos 5 frames), A é A e B é B
++    tail = per_frame[-5:]
++    assert all(a == first_a and b == first_b for a, b in tail), (
++        f"identidade errada após o ricochete: {tail} vs ({first_a},{first_b})")
++    print("ok  8) ricochete com pés na MESMA altura: sem fragmentação e A=A, B=B ao separar")
++
++    # contra-prova: SEM aparência o mesmo cenário troca ou fragmenta.
++    per_frame2 = ids_por_cor(make_tracker(appearance=False), use_frame=False)
++    fa, fb = per_frame2[0]
++    ids2 = {i for pair in per_frame2 for i in pair if i is not None}
++    tail2 = per_frame2[-5:]
++    trocou = ids2 != {fa, fb} or not all(a == fa and b == fb for a, b in tail2)
++    print(f"     contra-prova sem aparência: {'trocou/fragmentou (como esperado)' if trocou else 'geometria sozinha acertou desta vez'}")
++
++
++def test_recuperacao_pos_oclusao_exige_aparencia_compativel():
++    assert cv2 is not None
++    tracker = make_tracker(lost_track_buffer=2, appearance=True)
++    verde = (60, 200, 60)
++    vermelha = (60, 60, 220)
++    box = person_box(200, 400, 60, 150)
++    first = tracker.update(np.asarray([box], np.float32), np.asarray([0.6], np.float32),
++                           frame=paint_frame([(box, verde)]))[0].track_id
++    for i in range(3):
++        b = person_box(212 + i * 12, 400, 60, 150)
++        tracker.update(np.asarray([b], np.float32), np.asarray([0.6], np.float32),
++                       frame=paint_frame([(b, verde)]))
++    for _ in range(6):
++        tracker.update(np.zeros((0, 4), np.float32), np.zeros((0,), np.float32))
++    # volta ALGO na posição prevista, mas VERMELHO: aparência veta a recuperação
++    volta = person_box(330, 402, 60, 150)
++    out = tracker.update(np.asarray([volta], np.float32), np.asarray([0.6], np.float32),
++                         frame=paint_frame([(volta, vermelha)]))
++    assert out[0].track_id != first, "re-ID aceitou aparência incompatível"
++    # e se volta VERDE, recupera o ID original
++    tracker2 = make_tracker(lost_track_buffer=2, appearance=True)
++    first2 = tracker2.update(np.asarray([box], np.float32), np.asarray([0.6], np.float32),
++                             frame=paint_frame([(box, verde)]))[0].track_id
++    for i in range(3):
++        b = person_box(212 + i * 12, 400, 60, 150)
++        tracker2.update(np.asarray([b], np.float32), np.asarray([0.6], np.float32),
++                        frame=paint_frame([(b, verde)]))
++    for _ in range(6):
++        tracker2.update(np.zeros((0, 4), np.float32), np.zeros((0,), np.float32))
++    out2 = tracker2.update(np.asarray([volta], np.float32), np.asarray([0.6], np.float32),
++                           frame=paint_frame([(volta, verde)]))
++    assert out2[0].track_id == first2 and out2[0].recovered is True
++    print("ok  9) recuperação pós-oclusão: verde recupera o ID, vermelho vira ID novo")
++
++
++def test_coasting_estacionario_continua_emitindo():
++    tracker = make_tracker(lost_track_buffer=3, stationary_frames=5, stationary_coast=True)
++    box = person_box(400, 350, 58, 148)
++    tid = None
++    for i in range(8):
++        out = tracker.update(np.asarray([person_box(400 + (i % 2), 350, 58, 148)], np.float32),
++                             np.asarray([0.5], np.float32))
++        tid = out[0].track_id
++    assert out[0].stationary is True
++    # detector falha 4 frames: estacionária CONTINUA na saída (coasting)
++    for _ in range(4):
++        out = tracker.update(np.zeros((0, 4), np.float32), np.zeros((0,), np.float32))
++        assert len(out) == 1, "coasting não emitiu a estacionária durante o miss"
++        assert out[0].track_id == tid and out[0].stationary is True
++        assert out[0].extra.get("coasted") is True
++    # objeto MÓVEL (não estacionário) não ganha coasting
++    tracker2 = make_tracker(stationary_coast=True)
++    tracker2.update(np.asarray([person_box(100, 400, 55, 140)], np.float32),
++                    np.asarray([0.6], np.float32))
++    tracker2.update(np.asarray([person_box(130, 400, 55, 140)], np.float32),
++                    np.asarray([0.6], np.float32))
++    out2 = tracker2.update(np.zeros((0, 4), np.float32), np.zeros((0,), np.float32))
++    assert out2 == [], "móvel em miss não pode ser emitido (coasting é só p/ parado)"
++    print("ok 10) coasting: parada segue na tela durante misses; móvel não")
++
++
++def test_zoom_global_mantem_id():
++    tracker = make_tracker()
++    box = person_box(320, 300, 60, 150)
++    first = tracker.update(np.asarray([box], np.float32), np.asarray([0.6], np.float32))[0].track_id
++    tracker.update(np.asarray([person_box(322, 300, 60, 150)], np.float32),
++                   np.asarray([0.6], np.float32))
++    # zoom-in de 25% em torno da origem + deslocamento (pan+zoom do PTZ)
++    s, dx, dy = 1.25, -40.0, -30.0
++    tracker.apply_global_shift(dx, dy, s)
++    zoomed = [box[0] * s + dx, box[1] * s + dy, box[2] * s + dx, box[3] * s + dy]
++    out = tracker.update(np.asarray([zoomed], np.float32), np.asarray([0.6], np.float32))
++    assert len(out) == 1 and out[0].track_id == first, "zoom compensado trocou o ID"
++    print("ok 11) zoom de 25% + pan com apply_global_shift(scale) mantém o ID")
++
++
++def test_estimador_recupera_zoom_e_pan():
++    assert cv2 is not None
++    rng = np.random.default_rng(7)
++    # cena com ESTRUTURA (um frame real tem quinas, não white noise): zoom em
++    # ruído puro descorrelaciona os patches e nenhum optical flow presta.
++    base = np.full((480, 640), 40, dtype=np.uint8)
++    for _ in range(60):
++        x, y = int(rng.integers(0, 600)), int(rng.integers(0, 440))
++        w, h = int(rng.integers(12, 60)), int(rng.integers(12, 60))
++        cv2.rectangle(base, (x, y), (x + w, y + h), int(rng.integers(80, 255)), -1)
++    for _ in range(25):
++        cv2.circle(base, (int(rng.integers(20, 620)), int(rng.integers(20, 460))),
++                   int(rng.integers(4, 16)), int(rng.integers(80, 255)), -1)
++    base3 = cv2.cvtColor(base, cv2.COLOR_GRAY2BGR)
++    estimator = GlobalMotionEstimator()
++    assert estimator.estimate(base3) == (0.0, 0.0, 1.0)  # primeiro frame calibra
++    s_true, dx_true, dy_true = 1.15, 12.0, -8.0
++    matrix = np.array([[s_true, 0.0, dx_true], [0.0, s_true, dy_true]], dtype=np.float32)
++    warped = cv2.warpAffine(base3, matrix, (640, 480))
++    dx, dy, s = estimator.estimate(warped)
++    assert abs(s - s_true) < 0.03, f"escala estimada {s} vs real {s_true}"
++    assert abs(dx - dx_true) < 6 and abs(dy - dy_true) < 6, f"pan estimado ({dx},{dy})"
++    print(f"ok 12) estimador: zoom real 1.15 -> {s:.3f}; pan (12,-8) -> ({dx:.1f},{dy:.1f})")
++
++
++def test_min_hits_segura_primeira_emissao():
++    tracker = make_tracker(min_hits=2)
++    out1 = tracker.update(np.asarray([person_box(300, 400, 60, 150)], np.float32),
++                          np.asarray([0.6], np.float32))
++    assert out1 == [], "min_hits=2 não pode emitir no 1º frame"
++    out2 = tracker.update(np.asarray([person_box(310, 400, 60, 150)], np.float32),
++                          np.asarray([0.6], np.float32))
++    assert len(out2) == 1, "min_hits=2 deveria emitir no 2º frame"
++    print("ok 13) min_hits=2: blip de 1 frame não vira caixa; 2º frame emite")
++
++
++if __name__ == "__main__":
++    test_ricochete_com_aparencia_mantem_ids()
++    test_recuperacao_pos_oclusao_exige_aparencia_compativel()
++    test_coasting_estacionario_continua_emitindo()
++    test_zoom_global_mantem_id()
++    test_estimador_recupera_zoom_e_pan()
++    test_min_hits_segura_primeira_emissao()
++    print("\ntodos os cenários v2 passaram")
+diff --git a/services/ai-service-python/tools/track_ab_bench.py b/services/ai-service-python/tools/track_ab_bench.py
+new file mode 100644
+index 0000000..d0a4fff
+--- /dev/null
++++ b/services/ai-service-python/tools/track_ab_bench.py
+@@ -0,0 +1,128 @@
++"""Bench A/B: bytetrack × ajustcam nos cenários problemáticos das câmeras.
++
++Mede o que o operador PERCEBE: quantos IDs distintos cada objeto real recebeu
++(ideal = 1) e quantas trocas de ID ocorreram. Cenários sintéticos determinísticos
++que reproduzem os casos medidos: aproximação com escala, confiança oscilando,
++oclusão curta e cruzamento.
++
++Também aceita um JSONL gravado das câmeras (um frame por linha):
++    {"boxes": [[x1,y1,x2,y2], ...], "scores": [0.5, ...]}
++com  --jsonl caminho.jsonl  para comparar nos SEUS vídeos reais.
++
++Uso:  python tools/track_ab_bench.py            # cenários sintéticos
++      python tools/track_ab_bench.py --jsonl f.jsonl
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import os
++import sys
++
++import numpy as np
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from trackers import create_tracker  # noqa: E402
++
++PARAMS = dict(class_id=0, activation_threshold=0.30, lost_track_buffer=8,
++              frame_rate=8, low_conf_floor=0.10, recovery_grace_ms=3000,
++              stationary_frames=8, stationary_iou=0.85, stationary_out_iou=0.60)
++
++
++def person_box(bottom_x, bottom_y, width, height):
++    return [bottom_x - width / 2, bottom_y - height, bottom_x + width / 2, bottom_y]
++
++
++def scenario_aproximacao():
++    """1 pessoa vem do fundo até perto; confiança cai quando perto (caso real)."""
++    frames = []
++    truth = []
++    for i in range(26):
++        h = 55 + i * 8
++        w = h * 0.38
++        by = 170 + i * 15
++        score = 0.55 if i < 16 else (0.20 if i % 2 == 0 else 0.34)
++        frames.append(([person_box(320, by, w, h)], [score]))
++        truth.append([0])
++    return "aproximação + confiança caindo perto", frames, truth
++
++
++def scenario_oclusao():
++    frames = []
++    truth = []
++    for i in range(6):
++        frames.append(([person_box(150 + i * 18, 400, 60, 150)], [0.6])); truth.append([0])
++    for _ in range(7):  # atrás do poste
++        frames.append(([], [])); truth.append([])
++    for i in range(6):
++        frames.append(([person_box(300 + i * 18, 402, 62, 152)], [0.6])); truth.append([0])
++    return "oclusão de 7 frames", frames, truth
++
++
++def scenario_cruzamento():
++    frames = []
++    truth = []
++    for i in range(18):
++        a = person_box(90 + i * 26, 400, 55, 140)
++        b = person_box(560 - i * 26, 428, 60, 152)
++        frames.append(([a, b], [0.6, 0.6]))
++        truth.append([0, 1])
++    return "cruzamento de duas pessoas", frames, truth
++
++
++def evaluate(name: str, frames, truth):
++    print(f"\n--- {name} ---")
++    for backend_name in ("bytetrack", "ajustcam"):
++        backend = create_tracker(backend_name, **PARAMS)
++        ids_per_truth: dict[int, list[int]] = {}
++        for (boxes, scores), gt in zip(frames, truth):
++            xyxy = np.asarray(boxes, dtype=np.float32).reshape(-1, 4) if boxes else np.zeros((0, 4), np.float32)
++            conf = np.asarray(scores, dtype=np.float32) if scores else np.zeros((0,), np.float32)
++            out = backend.update(xyxy, conf)
++            # associa saída ao ground-truth pelo pé mais próximo (cenários simples)
++            for tracked in out:
++                foot = ((tracked.bbox[0] + tracked.bbox[2]) / 2, tracked.bbox[3])
++                best_gt, best_d = None, 1e9
++                for gt_idx, det_idx in enumerate(gt):
++                    bx = (boxes[gt_idx][0] + boxes[gt_idx][2]) / 2
++                    by = boxes[gt_idx][3]
++                    d = abs(foot[0] - bx) + abs(foot[1] - by)
++                    if d < best_d:
++                        best_gt, best_d = det_idx, d
++                if best_gt is None:
++                    continue
++                ids_per_truth.setdefault(best_gt, [])
++                if not ids_per_truth[best_gt] or ids_per_truth[best_gt][-1] != tracked.track_id:
++                    ids_per_truth[best_gt].append(tracked.track_id)
++        switches = sum(max(0, len(seq) - 1) for seq in ids_per_truth.values())
++        unique = {k: len(set(seq)) for k, seq in ids_per_truth.items()}
++        print(f"  {backend_name:9s}  ids únicos por objeto: {unique}   trocas de ID: {switches}")
++
++
++def load_jsonl(path: str):
++    frames = []
++    truth = []
++    with open(path, "r", encoding="utf-8") as handle:
++        for line in handle:
++            line = line.strip()
++            if not line:
++                continue
++            data = json.loads(line)
++            boxes = data.get("boxes") or []
++            scores = data.get("scores") or []
++            frames.append((boxes, scores))
++            truth.append(list(range(len(boxes))))  # sem GT: aproximação por índice
++    return "jsonl gravado", frames, truth
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--jsonl", default=None)
++    args = parser.parse_args()
++    if args.jsonl:
++        evaluate(*load_jsonl(args.jsonl))
++    else:
++        for builder in (scenario_aproximacao, scenario_oclusao, scenario_cruzamento):
++            evaluate(*builder())
++    print("\nids únicos = 1 e trocas = 0 é o ideal (o operador vê UMA pessoa contínua)")
+diff --git a/services/ai-service-python/trackers/__init__.py b/services/ai-service-python/trackers/__init__.py
+new file mode 100644
+index 0000000..cda02d6
+--- /dev/null
++++ b/services/ai-service-python/trackers/__init__.py
+@@ -0,0 +1,56 @@
++"""Registro de backends de tracking (mesmo padrão do registro de detectores).
++
++Hoje o valor de GENERAL_TRACKER era lido e ignorado — o sv.ByteTrack ficava
++hardcoded dentro do ObjectDetector. Este pacote fecha esse buraco:
++
++    from trackers import create_tracker, tracker_names
++
++    backend = create_tracker("bytetrack", class_id=0, activation_threshold=0.30,
++                             lost_track_buffer=20, frame_rate=4)
++
++Backends disponíveis:
++    - "bytetrack": adapter fino sobre sv.ByteTrack, comportamento IDÊNTICO ao
++      que estava hardcoded (teste de caracterização em tools/).
++    - "ajustcam":  tracker próprio para CFTV — associação pelo pé da caixa
++      (bottom-center) normalizada pelo tamanho, Kalman de velocidade constante,
++      associação em dois estágios (alta/baixa confiança), janela de oclusão com
++      recuperação de ID, classificação de objeto estacionário e compensação de
++      movimento global de câmera (hook para PTZ).
++
++Valor inválido de GENERAL_TRACKER agora FALHA com erro claro na inicialização,
++em vez de ser ignorado silenciosamente.
++"""
++from __future__ import annotations
++
++from .base import TrackedBox, TrackerBackend
++from .bytetrack_backend import ByteTrackBackend
++from .ajustcam_tracker import AjustCamTracker
++
++_REGISTRY: dict[str, type[TrackerBackend]] = {
++    "bytetrack": ByteTrackBackend,
++    "ajustcam": AjustCamTracker,
++}
++
++
++def tracker_names() -> list[str]:
++    return sorted(_REGISTRY.keys())
++
++
++def create_tracker(name: str, **kwargs) -> TrackerBackend:
++    key = str(name or "").strip().lower()
++    if key not in _REGISTRY:
++        raise ValueError(
++            f"GENERAL_TRACKER='{name}' não é um tracker válido. "
++            f"Opções: {', '.join(tracker_names())}"
++        )
++    return _REGISTRY[key](**kwargs)
++
++
++__all__ = [
++    "TrackedBox",
++    "TrackerBackend",
++    "ByteTrackBackend",
++    "AjustCamTracker",
++    "create_tracker",
++    "tracker_names",
++]
+diff --git a/services/ai-service-python/trackers/ajustcam_tracker.py b/services/ai-service-python/trackers/ajustcam_tracker.py
+new file mode 100644
+index 0000000..0e34730
+--- /dev/null
++++ b/services/ai-service-python/trackers/ajustcam_tracker.py
+@@ -0,0 +1,466 @@
++"""Tracker AjustCam — especializado para CFTV fixo (e preparado para PTZ).
++
++O que ele faz que o ByteTrack genérico não faz, e por quê:
++
++1. ASSOCIAÇÃO PELO PÉ DA CAIXA (bottom-center), normalizada pelo tamanho.
++   Em câmera alta, quem se aproxima muda muito de escala: o CENTRO da caixa
++   "salta" para baixo a cada frame e o IoU entre frames despenca — o tracker
++   genérico solta o ID. O pé (bottom-center) é o ponto de contato com o chão e
++   se move de forma contínua. Mesma estratégia do Norfair customizado do
++   Frigate, implementada aqui sem dependência externa.
++
++2. DOIS ESTÁGIOS DE CONFIANÇA (espírito do ByteTrack, mantido).
++   Detecções fortes associam primeiro; as fracas (>= low_conf_floor) só podem
++   SUSTENTAR trilhas existentes, nunca criar novas. É o que segura o ID da
++   pessoa perto da câmera quando a confiança do YOLO oscila.
++
++3. OCLUSÃO COM RECUPERAÇÃO DE ID.
++   Trilha sem observação vira "perdida" (não some): continua sendo predita por
++   `recovery_grace_ms` com um gate maior. Se algo compatível reaparecer perto
++   da posição prevista, o ID antigo volta (recovered=True) — pessoa que passou
++   atrás do poste continua sendo a pessoa 7, não a 12.
++
++4. OBJETO ESTACIONÁRIO (estilo Frigate: histórico + mediana + IoU).
++   Mantém as últimas N caixas; se a caixa atual tem IoU alto com a MEDIANA do
++   histórico por N frames, a trilha é `stationary=True` e ganha tolerância
++   extra a misses (detector piscando não derruba objeto parado). Sai do estado
++   quando o IoU contra a mediana cai por vários frames seguidos.
++
++5. COMPENSAÇÃO DE MOVIMENTO GLOBAL (hook para PTZ/vibração).
++   `apply_global_shift(dx, dy)` desloca todas as predições antes da associação.
++   Quem estima o deslocamento é o detector (camera_motion.py), aqui só se
++   aplica — assim o tracker continua puro e testável.
++
++Filtro de Kalman: velocidade constante sobre o estado
++    x = [bx, by, w, h, vbx, vby, vw, vh]   (bx,by = bottom-center)
++com medida z = [bx, by, w, h]. Implementação direta em numpy (8x8), sem scipy.
++A associação usa Hungarian se scipy existir; caso contrário, greedy por menor
++custo — com meia dúzia de objetos por câmera a diferença é irrelevante.
++"""
++from __future__ import annotations
++
++import time
++from collections import deque
++
++import numpy as np
++
++from .base import TrackedBox, TrackerBackend
++from .appearance import blend as sig_blend, signature as sig_compute, similarity as sig_similarity
++
++try:  # scipy é opcional; greedy cobre o caso típico de CFTV (poucos objetos)
++    from scipy.optimize import linear_sum_assignment as _hungarian
++except Exception:  # pragma: no cover
++    _hungarian = None
++
++
++def _iou(a: np.ndarray, b: np.ndarray) -> float:
++    ix1 = max(a[0], b[0]); iy1 = max(a[1], b[1])
++    ix2 = min(a[2], b[2]); iy2 = min(a[3], b[3])
++    iw = max(0.0, ix2 - ix1); ih = max(0.0, iy2 - iy1)
++    inter = iw * ih
++    if inter <= 0:
++        return 0.0
++    area_a = max(0.0, (a[2] - a[0])) * max(0.0, (a[3] - a[1]))
++    area_b = max(0.0, (b[2] - b[0])) * max(0.0, (b[3] - b[1]))
++    union = area_a + area_b - inter
++    return float(inter / union) if union > 0 else 0.0
++
++
++def _to_z(bbox: np.ndarray) -> np.ndarray:
++    """xyxy -> [bottom_center_x, bottom_center_y, w, h]"""
++    x1, y1, x2, y2 = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
++    return np.array([(x1 + x2) / 2.0, y2, max(1.0, x2 - x1), max(1.0, y2 - y1)], dtype=np.float64)
++
++
++def _to_bbox(z: np.ndarray) -> np.ndarray:
++    bx, by, w, h = float(z[0]), float(z[1]), max(1.0, float(z[2])), max(1.0, float(z[3]))
++    return np.array([bx - w / 2.0, by - h, bx + w / 2.0, by], dtype=np.float32)
++
++
++class _Kalman:
++    """Velocidade constante, 8 estados / 4 medidas, dt=1 frame."""
++
++    F = np.eye(8)
++    F[0, 4] = F[1, 5] = F[2, 6] = F[3, 7] = 1.0
++    H = np.zeros((4, 8)); H[0, 0] = H[1, 1] = H[2, 2] = H[3, 3] = 1.0
++
++    def __init__(self, z0: np.ndarray):
++        self.x = np.zeros(8); self.x[:4] = z0
++        self.P = np.diag([10.0, 10.0, 10.0, 10.0, 1e3, 1e3, 1e3, 1e3])
++        # Ruído relativo ao tamanho: caixas grandes (pessoa perto) podem variar
++        # mais pixels por frame sem que isso vire "salto".
++        self._q_pos = 1.0
++        self._q_vel = 0.5
++        self._r = 1.0
++
++    def predict(self) -> np.ndarray:
++        h = max(8.0, self.x[3])
++        q = np.diag([self._q_pos * h * 0.05] * 4 + [self._q_vel * h * 0.02] * 4) ** 2
++        self.x = self.F @ self.x
++        self.P = self.F @ self.P @ self.F.T + q
++        return self.x[:4].copy()
++
++    def correct(self, z: np.ndarray) -> None:
++        h = max(8.0, z[3])
++        r = np.diag([self._r * h * 0.05] * 4) ** 2
++        y = z - self.H @ self.x
++        s = self.H @ self.P @ self.H.T + r
++        k = self.P @ self.H.T @ np.linalg.inv(s)
++        self.x = self.x + k @ y
++        self.P = (np.eye(8) - k @ self.H) @ self.P
++
++    def shift(self, dx: float, dy: float) -> None:
++        self.x[0] += dx
++        self.x[1] += dy
++
++
++class _Track:
++    __slots__ = ("kf", "track_id", "confidence", "hits", "misses", "lost_at",
++                 "history", "stationary", "stationary_break", "recovered", "last_z",
++                 "signature")
++
++    def __init__(self, track_id: int, z: np.ndarray, confidence: float, history_len: int):
++        self.kf = _Kalman(z)
++        self.track_id = int(track_id)
++        self.confidence = float(confidence)
++        self.hits = 1
++        self.misses = 0
++        self.lost_at = 0.0            # > 0 quando está na piscina de perdidas
++        self.history: deque = deque(maxlen=history_len)
++        self.history.append(_to_bbox(z))
++        self.stationary = False
++        self.stationary_break = 0
++        self.recovered = False
++        self.last_z = z.copy()
++        self.signature = None  # aparência (EMA), ver trackers/appearance.py
++
++    @property
++    def lost(self) -> bool:
++        return self.lost_at > 0.0
++
++
++class AjustCamTracker(TrackerBackend):
++    name = "ajustcam"
++
++    def __init__(self, class_id: int, activation_threshold: float,
++                 lost_track_buffer: int, frame_rate: int,
++                 low_conf_floor: float = 0.10,
++                 recovery_grace_ms: int = 2000,
++                 stationary_frames: int = 10,
++                 stationary_iou: float = 0.88,
++                 stationary_out_iou: float = 0.70,
++                 match_gate: float = 1.0,
++                 recovery_gate: float = 1.8,
++                 appearance: bool = True,
++                 appearance_veto: float = 0.10,
++                 appearance_weight: float = 0.25,
++                 min_hits: int = 1,
++                 stationary_coast: bool = True,
++                 **kwargs):
++        super().__init__(class_id, activation_threshold, lost_track_buffer, frame_rate, **kwargs)
++        self.low_conf_floor = float(low_conf_floor)
++        self.recovery_grace_s = max(0.0, float(recovery_grace_ms) / 1000.0)
++        self.stationary_frames = max(3, int(stationary_frames))
++        self.stationary_iou = float(stationary_iou)
++        self.stationary_out_iou = float(stationary_out_iou)
++        self.match_gate = float(match_gate)
++        self.recovery_gate = float(recovery_gate)
++        # Aparência: só CONFIRMA/VETA; nunca associa sozinha (ver appearance.py)
++        self.appearance = bool(appearance)
++        self.appearance_veto = float(appearance_veto)
++        self.appearance_weight = float(appearance_weight)
++        # min_hits > 1 segura a PRIMEIRA emissão de uma trilha nova por N frames
++        # (paridade com o min_initialized do Frigate; default 1 = semântica atual)
++        self.min_hits = max(1, int(min_hits))
++        # Estacionário em coasting: objeto parado continua emitindo a última
++        # caixa mesmo quando o detector falha alguns frames (dentro do budget)
++        self.stationary_coast = bool(stationary_coast)
++        # miss budget de trilha ATIVA (antes de virar "perdida") — mesmo papel
++        # do lost_track_buffer do ByteTrack, em frames.
++        self.max_active_misses = max(1, int(lost_track_buffer))
++        self._tracks: list[_Track] = []
++        self._next_id = 1
++        self._id_switch_guard: dict[int, float] = {}
++        self.stats = {"recoveries": 0, "created": 0, "dropped": 0,
++                      "stationary_now": 0, "low_conf_matches": 0}
++
++    # ------------------------------------------------------------------ público
++
++    def apply_global_shift(self, dx: float, dy: float, scale: float = 1.0) -> None:
++        if dx == 0.0 and dy == 0.0 and scale == 1.0:
++            return
++        s = float(scale)
++        for track in self._tracks:
++            x = track.kf.x
++            # afim global (rotação desprezada): pos' = pos*s + d; tamanhos e
++            # velocidades escalam junto — zoom não pode virar "todo mundo cresceu"
++            x[0] = x[0] * s + float(dx)
++            x[1] = x[1] * s + float(dy)
++            x[2] *= s
++            x[3] *= s
++            x[4:] *= s
++
++    def update(self, xyxy: np.ndarray, confidences: np.ndarray, frame=None) -> list[TrackedBox]:
++        now = time.monotonic()
++        boxes = np.asarray(xyxy, dtype=np.float64).reshape(-1, 4) if xyxy is not None and len(xyxy) else np.zeros((0, 4))
++        scores = np.asarray(confidences, dtype=np.float64).reshape(-1) if confidences is not None and len(confidences) else np.zeros((0,))
++
++        # 1) predição de TODAS as trilhas (ativas e perdidas)
++        predictions = [track.kf.predict() for track in self._tracks]
++
++        high_idx = [i for i in range(len(boxes)) if scores[i] >= self.activation_threshold]
++        low_idx = [i for i in range(len(boxes)) if self.low_conf_floor <= scores[i] < self.activation_threshold]
++        zs = [_to_z(boxes[i]) for i in range(len(boxes))]
++        det_sigs = [None] * len(boxes)
++        if self.appearance and frame is not None:
++            det_sigs = [sig_compute(frame, boxes[i]) for i in range(len(boxes))]
++            # Detecções muito sobrepostas contaminam o histograma uma da outra
++            # (a camisa de trás "vira" a da frente). Nesses frames a aparência
++            # é suprimida — nem veta, nem atualiza a EMA — e a geometria decide
++            # sozinha; a correção de troca conserta depois, na separação.
++            for i in range(len(boxes)):
++                for j in range(i + 1, len(boxes)):
++                    if _iou(boxes[i], boxes[j]) > 0.30:
++                        det_sigs[i] = None
++                        det_sigs[j] = None
++
++        active = [t for t in self._tracks if not t.lost]
++        lost = [t for t in self._tracks if t.lost]
++        matched_tracks: set[int] = set()
++        matched_dets: set[int] = set()
++
++        # 2) estágio 1: detecções FORTES x trilhas ATIVAS (gate normal)
++        self._associate(active, predictions, zs, scores, det_sigs, high_idx, self.match_gate,
++                        matched_tracks, matched_dets)
++        # 3) estágio 2: detecções FRACAS sustentam ativas que sobraram
++        before = len(matched_dets)
++        self._associate([t for t in active if id(t) not in matched_tracks],
++                        predictions, zs, scores, det_sigs, low_idx, self.match_gate,
++                        matched_tracks, matched_dets)
++        self.stats["low_conf_matches"] += len(matched_dets) - before
++        # 4) estágio 3: RECUPERAÇÃO — fortes restantes x trilhas PERDIDAS (gate maior)
++        recovered_now = self._associate(
++            [t for t in lost if id(t) not in matched_tracks],
++            predictions, zs, scores, det_sigs, [i for i in high_idx if i not in matched_dets],
++            self.recovery_gate, matched_tracks, matched_dets, recovering=True)
++        self.stats["recoveries"] += recovered_now
++
++        # 5) trilhas sem observação neste frame
++        for track in self._tracks:
++            if id(track) in matched_tracks:
++                continue
++            track.misses += 1
++            track.recovered = False
++            # Sem observação, extrapolar velocidade CHEIA faz a predição "fugir"
++            # do ponto de oclusão e o objeto reaparece fora do gate. Amortece
++            # 10% por frame perdido — a predição avança, mas converge.
++            track.kf.x[4:] *= 0.9
++            miss_budget = self.max_active_misses * (3 if track.stationary else 1)
++            if not track.lost and track.misses > miss_budget:
++                track.lost_at = now
++
++        # 6) novas trilhas: SOMENTE detecções fortes não associadas
++        for i in high_idx:
++            if i in matched_dets:
++                continue
++            new_track = _Track(self._next_id, zs[i], scores[i], self.stationary_frames)
++            new_track.signature = det_sigs[i]
++            self._tracks.append(new_track)
++            # mesma semântica do ByteTrack (minimum_consecutive_frames=1):
++            # a trilha nova JÁ sai no frame em que nasceu.
++            matched_tracks.add(id(new_track))
++            matched_dets.add(i)
++            self._next_id += 1
++            self.stats["created"] += 1
++
++        # 7) expira perdidas fora da janela de graça
++        kept: list[_Track] = []
++        for track in self._tracks:
++            if track.lost and (now - track.lost_at) > self.recovery_grace_s:
++                self.stats["dropped"] += 1
++                continue
++            kept.append(track)
++        self._tracks = kept
++
++        # 8) saída: apenas trilhas ativas COM observação neste frame (mesma
++        #    semântica do ByteTrack — quem some do frame some do overlay; a
++        #    continuidade visual é papel do frontend/TTL).
++        output: list[TrackedBox] = []
++        stationary_count = 0
++        for track in self._tracks:
++            observed = (not track.lost) and id(track) in matched_tracks
++            # COASTING: estacionária que o detector falhou continua na tela com
++            # a última caixa (dentro do budget 3x) — pessoa parada não pisca.
++            coasting = (
++                self.stationary_coast and track.stationary
++                and not track.lost and not observed and track.misses > 0
++            )
++            if not observed and not coasting:
++                continue
++            if track.hits < self.min_hits:
++                continue  # segura emissão de trilha recém-nascida (min_hits>1)
++            if observed:
++                self._update_stationary(track)
++            if track.stationary:
++                stationary_count += 1
++            output.append(TrackedBox(
++                bbox=_to_bbox(track.kf.x[:4]),
++                confidence=track.confidence,
++                class_id=self.class_id,
++                track_id=track.track_id,
++                stationary=track.stationary,
++                recovered=track.recovered,
++                misses=track.misses,
++                extra={"coasted": coasting},
++            ))
++        self.stats["stationary_now"] = stationary_count
++        return output
++
++    def status(self) -> dict:
++        return {"name": self.name, "class_id": self.class_id,
++                "tracks": len(self._tracks), **self.stats}
++
++    # ------------------------------------------------------------------ interno
++
++    def _distance(self, prediction: np.ndarray, z: np.ndarray) -> float:
++        """Custo estilo Frigate: deslocamento do PÉ normalizado pelo tamanho
++        + termo de variação de tamanho. < gate → candidato a par."""
++        w = max(prediction[2], z[2], 1.0)
++        h = max(prediction[3], z[3], 1.0)
++        d_pos = max(abs(prediction[0] - z[0]) / w, abs(prediction[1] - z[1]) / h)
++        d_size = max(abs(prediction[2] - z[2]) / max(prediction[2], 1.0),
++                     abs(prediction[3] - z[3]) / max(prediction[3], 1.0))
++        return float(d_pos + 0.5 * d_size)
++
++    def _associate(self, tracks: list[_Track], predictions: list[np.ndarray],
++                   zs: list[np.ndarray], scores: np.ndarray, det_sigs: list,
++                   det_indices: list[int], gate: float, matched_tracks: set[int],
++                   matched_dets: set[int], recovering: bool = False) -> int:
++        if not tracks or not det_indices:
++            return 0
++        pred_by_track = {id(t): predictions[self._tracks.index(t)] for t in tracks}
++        cost = np.full((len(tracks), len(det_indices)), 1e6)
++        for r, track in enumerate(tracks):
++            prediction = pred_by_track[id(track)]
++            # Gate adaptativo: quanto mais frames sem observação, maior a
++            # incerteza da predição — o gate abre até +120% (misses>=10).
++            gate_r = gate * (1.0 + 0.12 * min(track.misses, 10))
++            for c, i in enumerate(det_indices):
++                # min(predição, última observação): a predição assume que o
++                # movimento CONTINUA; quem dá meia-volta (ricochete, retorno)
++                # aparece perto de onde FOI VISTO, não de onde "iria estar".
++                # Ninguém teleporta — as duas âncoras juntas cobrem os dois casos.
++                d = min(self._distance(prediction, zs[i]),
++                        self._distance(track.last_z, zs[i]))
++                if d >= gate_r:
++                    continue
++                sim = sig_similarity(track.signature, det_sigs[i])
++                if sim is not None:
++                    # VETO apenas na RECUPERAÇÃO: reatar um ID perdido a uma
++                    # aparência radicalmente diferente é re-ID errado — melhor
++                    # ID novo. Nos estágios ativos o veto causaria fragmentação
++                    # (assinatura suja em oclusão); lá a aparência só pesa no
++                    # custo, e a correção de troca abaixo desfaz swaps.
++                    if recovering and sim < self.appearance_veto:
++                        continue
++                    d = d + self.appearance_weight * (1.0 - sim)
++                cost[r, c] = d
++
++        pairs: list[tuple[int, int]] = []
++        if _hungarian is not None:
++            rows, cols = _hungarian(cost)
++            pairs = [(r, c) for r, c in zip(rows, cols) if cost[r, c] < 1e5]
++        else:  # greedy por menor custo
++            flat = [(cost[r, c], r, c) for r in range(cost.shape[0])
++                    for c in range(cost.shape[1]) if cost[r, c] < 1e5]
++            flat.sort()
++            used_r: set[int] = set(); used_c: set[int] = set()
++            for value, r, c in flat:
++                if r in used_r or c in used_c:
++                    continue
++                used_r.add(r); used_c.add(c)
++                pairs.append((r, c))
++
++        # CORREÇÃO DE TROCA: no encontro (sobreposição), a geometria pode ter
++        # cruzado os pares (cada trilha "seguiu em frente" atrás da pessoa
++        # errada). Na separação, se as assinaturas CRUZADAS casam claramente
++        # melhor E a troca é geometricamente plausível, desfaz-se o swap — o
++        # operador vê A continuar sendo A depois do cruzamento.
++        velocity_reset: set[int] = set()
++        if not recovering and len(pairs) >= 2:
++            swapped = True
++            while swapped:
++                swapped = False
++                for p1 in range(len(pairs)):
++                    for p2 in range(p1 + 1, len(pairs)):
++                        r1, c1 = pairs[p1]
++                        r2, c2 = pairs[p2]
++                        t1, t2 = tracks[r1], tracks[r2]
++                        i1, i2 = det_indices[c1], det_indices[c2]
++                        s11 = sig_similarity(t1.signature, det_sigs[i1])
++                        s12 = sig_similarity(t1.signature, det_sigs[i2])
++                        s21 = sig_similarity(t2.signature, det_sigs[i1])
++                        s22 = sig_similarity(t2.signature, det_sigs[i2])
++                        if None in (s11, s12, s21, s22):
++                            continue
++                        if (s12 - s11) <= 0.25 or (s21 - s22) <= 0.25:
++                            continue
++                        g1 = gate * (1.0 + 0.12 * min(t1.misses, 10))
++                        g2 = gate * (1.0 + 0.12 * min(t2.misses, 10))
++                        d1 = min(self._distance(pred_by_track[id(t1)], zs[i2]),
++                                 self._distance(t1.last_z, zs[i2]))
++                        d2 = min(self._distance(pred_by_track[id(t2)], zs[i1]),
++                                 self._distance(t2.last_z, zs[i1]))
++                        if d1 < g1 and d2 < g2:
++                            pairs[p1] = (r1, c2)
++                            pairs[p2] = (r2, c1)
++                            # o modelo de movimento das duas estava seguindo a
++                            # pessoa ERRADA: velocidade zerada, reaprende do zero
++                            velocity_reset.add(id(t1))
++                            velocity_reset.add(id(t2))
++                            self.stats["appearance_swaps"] = self.stats.get("appearance_swaps", 0) + 1
++                            swapped = True
++
++        recovered = 0
++        for r, c in pairs:
++            track = tracks[r]
++            i = det_indices[c]
++            z = zs[i]
++            if id(track) in velocity_reset:
++                track.kf.x[4:] = 0.0
++            track.kf.correct(z)
++            track.last_z = z.copy()
++            track.signature = sig_blend(track.signature, det_sigs[i])
++            # Confiança exibida = média móvel da confiança medida: evita o rótulo
++            # "pessoa 31% → 78% → 12%" piscando no overlay a cada frame.
++            track.confidence = float(np.clip(0.6 * track.confidence + 0.4 * float(scores[i]), 0.0, 1.0))
++            track.hits += 1
++            track.misses = 0
++            track.history.append(_to_bbox(z))
++            was_lost = recovering or track.lost
++            track.recovered = bool(was_lost)
++            if was_lost:
++                track.lost_at = 0.0
++                recovered += 1
++            matched_tracks.add(id(track))
++            matched_dets.add(i)
++        return recovered
++
++    def _update_stationary(self, track: _Track) -> None:
++        if len(track.history) < self.stationary_frames:
++            track.stationary = False
++            track.stationary_break = 0
++            return
++        median_box = np.median(np.stack(track.history), axis=0)
++        current = track.history[-1]
++        iou = _iou(current, median_box)
++        if track.stationary:
++            if iou < self.stationary_out_iou:
++                track.stationary_break += 1
++                if track.stationary_break >= 3:
++                    track.stationary = False
++                    track.stationary_break = 0
++            else:
++                track.stationary_break = 0
++        else:
++            track.stationary = iou >= self.stationary_iou
+diff --git a/services/ai-service-python/trackers/appearance.py b/services/ai-service-python/trackers/appearance.py
+new file mode 100644
+index 0000000..89e4430
+--- /dev/null
++++ b/services/ai-service-python/trackers/appearance.py
+@@ -0,0 +1,69 @@
++"""Assinatura de aparência para re-identificação — barata e sem modelo extra.
++
++Um histograma HSV 2D (matiz × saturação) do TORSO da pessoa (60% superiores da
++caixa — camisa/cabeça são estáveis; pernas alternam e o chão contamina). Custo:
++~0,1 ms por caixa. Não é um embedding neural — é deliberadamente simples:
++
++    - CONFIRMA recuperação de ID após oclusão longa (a pessoa que voltou tem a
++      mesma "cor" da que sumiu?);
++    - VETA associação obviamente errada em cruzamento difícil (camisa verde não
++      vira camisa vermelha de um frame para o outro);
++    - NUNCA cria vínculo sozinha: só ajusta custos da associação geométrica.
++
++Limites honestos: gêmeos de camisa preta continuam ambíguos (como em qualquer
++re-ID por cor), e mudança BRUSCA de iluminação durante uma oclusão pode impedir
++uma recuperação (vira ID novo — o comportamento de hoje, nunca pior). A
++assinatura da trilha é uma média móvel, então mudanças GRADUAIS de luz são
++acompanhadas.
++"""
++from __future__ import annotations
++
++import numpy as np
++
++try:
++    import cv2
++except Exception:  # pragma: no cover
++    cv2 = None
++
++H_BINS = 16
++S_BINS = 8
++
++
++def signature(frame_bgr, bbox) -> np.ndarray | None:
++    """Histograma HSV normalizado do torso. None se não computável (sem cv2,
++    caixa fora do frame, área minúscula) — e None desliga a aparência para
++    aquela detecção, sem quebrar nada."""
++    if cv2 is None or frame_bgr is None:
++        return None
++    height, width = frame_bgr.shape[:2]
++    x1 = int(max(0, min(width - 1, bbox[0])))
++    y1 = int(max(0, min(height - 1, bbox[1])))
++    x2 = int(max(x1 + 1, min(width, bbox[2])))
++    y2 = int(max(y1 + 1, min(height, bbox[3])))
++    torso_bottom = y1 + max(1, int((y2 - y1) * 0.6))
++    crop = frame_bgr[y1:torso_bottom, x1:x2]
++    if crop.size < 48:  # caixa minúscula: histograma vira ruído
++        return None
++    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
++    hist = cv2.calcHist([hsv], [0, 1], None, [H_BINS, S_BINS], [0, 180, 0, 256])
++    total = float(hist.sum())
++    if total <= 0:
++        return None
++    return (hist / total).astype(np.float32).reshape(-1)
++
++
++def similarity(a: np.ndarray | None, b: np.ndarray | None) -> float | None:
++    """Interseção de histogramas em [0..1]. None quando falta assinatura de um
++    dos lados (aparência indisponível → decisão fica 100% geométrica)."""
++    if a is None or b is None:
++        return None
++    return float(np.minimum(a, b).sum())
++
++
++def blend(old: np.ndarray | None, new: np.ndarray | None, alpha: float = 0.3) -> np.ndarray | None:
++    """Média móvel da assinatura da trilha (acompanha mudança gradual de luz)."""
++    if new is None:
++        return old
++    if old is None:
++        return new
++    return ((1.0 - alpha) * old + alpha * new).astype(np.float32)
+diff --git a/services/ai-service-python/trackers/base.py b/services/ai-service-python/trackers/base.py
+new file mode 100644
+index 0000000..ad1e617
+--- /dev/null
++++ b/services/ai-service-python/trackers/base.py
+@@ -0,0 +1,63 @@
++"""Contrato comum dos backends de tracking.
++
++O ObjectDetector conversa APENAS com esta interface. Nenhum backend recebe ou
++devolve tipos do supervision — só numpy — para que trocar de tracker nunca
++espalhe condicionais pelo detector.
++
++Convenções:
++    - Um backend por (câmera, classe), igual ao comportamento atual.
++    - `update` é chamado uma vez por frame processado, mesmo sem detecções
++      (lista vazia), para que misses/oclusão avancem no tempo.
++    - `track_id` é o id CRU do backend (>= 1). O detector continua compondo o
++      id público como `classe * 100000 + track_id`, preservando o formato que o
++      frontend já conhece.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++
++import numpy as np
++
++
++@dataclass
++class TrackedBox:
++    bbox: np.ndarray            # xyxy float32, coordenadas do frame inteiro
++    confidence: float
++    class_id: int
++    track_id: int               # id cru do backend (>= 1)
++    stationary: bool = False    # objeto classificado como parado
++    recovered: bool = False     # id recuperado após oclusão/perda
++    misses: int = 0             # frames consecutivos sem observação
++    extra: dict = field(default_factory=dict)
++
++
++class TrackerBackend:
++    """Interface mínima. Backends devem ser baratos de instanciar (1 por classe)."""
++
++    name = "base"
++
++    def __init__(self, class_id: int, activation_threshold: float,
++                 lost_track_buffer: int, frame_rate: int, **_ignored):
++        self.class_id = int(class_id)
++        self.activation_threshold = float(activation_threshold)
++        self.lost_track_buffer = int(lost_track_buffer)
++        self.frame_rate = max(1, int(frame_rate))
++
++    def update(self, xyxy: np.ndarray, confidences: np.ndarray, frame=None) -> list[TrackedBox]:
++        """Recebe (N,4) float e (N,) float; devolve as caixas rastreadas do frame.
++
++        `frame` (BGR, opcional) habilita recursos de aparência em backends que
++        suportam; backends que não usam simplesmente ignoram."""
++        raise NotImplementedError
++
++    def apply_global_shift(self, dx: float, dy: float, scale: float = 1.0) -> None:
++        """Compensação de movimento global da câmera (PTZ/vibração/ZOOM).
++
++        `scale` != 1.0 representa zoom óptico/digital entre dois frames — as
++        predições são escaladas antes de deslocar. Chamado ANTES de `update`
++        quando GENERAL_CAMERA_MOTION_COMP=true. Backends sem suporte ignoram.
++        """
++        return None
++
++    def status(self) -> dict:
++        return {"name": self.name, "class_id": self.class_id}
+diff --git a/services/ai-service-python/trackers/bytetrack_backend.py b/services/ai-service-python/trackers/bytetrack_backend.py
+new file mode 100644
+index 0000000..1dd6f5d
+--- /dev/null
++++ b/services/ai-service-python/trackers/bytetrack_backend.py
+@@ -0,0 +1,58 @@
++"""Adapter fino sobre sv.ByteTrack — comportamento IDÊNTICO ao hardcoded.
++
++Os parâmetros e a semântica são exatamente os que estavam dentro de
++ObjectDetector._track_people: track_activation_threshold por classe,
++lost_track_buffer, frame_rate arredondado e minimum_consecutive_frames=1.
++Qualquer mudança aqui quebra o teste de caracterização — é proposital.
++
++O import do supervision é preguiçoso para que o pacote `trackers` (e os testes
++sintéticos do backend "ajustcam") não exijam supervision instalado.
++"""
++from __future__ import annotations
++
++import numpy as np
++
++from .base import TrackedBox, TrackerBackend
++
++
++class ByteTrackBackend(TrackerBackend):
++    name = "bytetrack"
++
++    def __init__(self, class_id: int, activation_threshold: float,
++                 lost_track_buffer: int, frame_rate: int, **kwargs):
++        super().__init__(class_id, activation_threshold, lost_track_buffer, frame_rate, **kwargs)
++        import supervision as sv  # lazy: ver docstring
++        self._sv = sv
++        self._tracker = sv.ByteTrack(
++            track_activation_threshold=self.activation_threshold,
++            lost_track_buffer=self.lost_track_buffer,
++            frame_rate=self.frame_rate,
++            minimum_consecutive_frames=1,
++        )
++
++    def update(self, xyxy: np.ndarray, confidences: np.ndarray, frame=None) -> list[TrackedBox]:
++        sv = self._sv
++        if xyxy is not None and len(xyxy):
++            values = sv.Detections(
++                xyxy=np.asarray(xyxy, dtype=np.float32),
++                confidence=np.asarray(confidences, dtype=np.float32),
++                class_id=np.asarray([self.class_id] * len(xyxy), dtype=int),
++            )
++        else:
++            values = sv.Detections.empty()
++        tracked = self._tracker.update_with_detections(values)
++
++        tracker_ids = tracked.tracker_id if tracked.tracker_id is not None else []
++        scores = tracked.confidence if tracked.confidence is not None else []
++        classes = tracked.class_id if tracked.class_id is not None else []
++        output: list[TrackedBox] = []
++        for bbox, score, track_id, cls in zip(tracked.xyxy, scores, tracker_ids, classes):
++            output.append(
++                TrackedBox(
++                    bbox=np.asarray(bbox, dtype=np.float32),
++                    confidence=float(score),
++                    class_id=int(cls) if cls is not None else self.class_id,
++                    track_id=int(track_id),
++                )
++            )
++        return output
+diff --git a/services/ai-service-python/trackers/camera_motion.py b/services/ai-service-python/trackers/camera_motion.py
+new file mode 100644
+index 0000000..6e39191
+--- /dev/null
++++ b/services/ai-service-python/trackers/camera_motion.py
+@@ -0,0 +1,117 @@
++"""Estimativa de movimento GLOBAL da câmera (PTZ / vibração / vento no poste).
++
++Mesma ideia da compensação do Frigate: antes de associar detecções às trilhas,
++descobrir quanto A CÂMERA se moveu e descontar isso das predições — senão um
++pan de 30px vira "todo mundo andou 30px" e os IDs trocam em bloco.
++
++Implementação barata: optical flow esparso (Lucas-Kanade) sobre uma grade fixa
++de pontos em um frame reduzido em escala de cinza; o deslocamento global é a
++MEDIANA dos vetores (robusta a objetos que realmente se movem, desde que não
++cubram o quadro inteiro). Custa ~1–2 ms em 320px de largura.
++
++Uso (um estimador por câmera):
++
++    shift = estimator.estimate(frame_bgr)   # (dx, dy) em pixels do frame CHEIO
++    backend.apply_global_shift(*shift)
++
++Desligado por padrão (GENERAL_CAMERA_MOTION_COMP=false). Em câmera fixa o
++resultado é ~(0,0) e não muda nada; ligue apenas em PTZ ou câmeras que tremem.
++"""
++from __future__ import annotations
++
++import numpy as np
++
++try:
++    import cv2
++except Exception:  # pragma: no cover - ambiente de teste sem opencv
++    cv2 = None
++
++
++class GlobalMotionEstimator:
++    def __init__(self, work_width: int = 320, grid: int = 8, max_shift_px: int = 120):
++        self.work_width = int(work_width)
++        self.grid = int(grid)
++        self.max_shift_px = float(max_shift_px)
++        self._prev_gray: np.ndarray | None = None
++        self._scale = 1.0
++
++    def reset(self) -> None:
++        self._prev_gray = None
++
++    def estimate(self, frame_bgr) -> tuple[float, float, float]:
++        if cv2 is None or frame_bgr is None:
++            return (0.0, 0.0, 1.0)
++        height, width = frame_bgr.shape[:2]
++        if width <= 0 or height <= 0:
++            return (0.0, 0.0, 1.0)
++        self._scale = self.work_width / float(width)
++        small = cv2.resize(frame_bgr, (self.work_width, max(1, int(height * self._scale))))
++        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
++
++        if self._prev_gray is None or self._prev_gray.shape != gray.shape:
++            self._prev_gray = gray
++            return (0.0, 0.0, 1.0)
++
++        gh, gw = gray.shape
++        # Cantos reais rastreiam muito melhor que uma grade cega (parede lisa,
++        # céu). Se a cena for pobre em textura, cai para a grade fixa.
++        points = cv2.goodFeaturesToTrack(
++            self._prev_gray, maxCorners=120, qualityLevel=0.01,
++            minDistance=8, blockSize=7,
++        )
++        if points is None or len(points) < 24:
++            xs = np.linspace(gw * 0.1, gw * 0.9, self.grid)
++            ys = np.linspace(gh * 0.1, gh * 0.9, self.grid)
++            points = np.array([[x, y] for y in ys for x in xs], dtype=np.float32).reshape(-1, 1, 2)
++        points = np.asarray(points, dtype=np.float32).reshape(-1, 1, 2)
++
++        moved, status, _err = cv2.calcOpticalFlowPyrLK(
++            self._prev_gray, gray, points, None,
++            winSize=(21, 21), maxLevel=2,
++            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03),
++        )
++        self._prev_gray = gray
++        if moved is None or status is None:
++            return (0.0, 0.0, 1.0)
++        ok = status.reshape(-1) == 1
++        if ok.sum() < max(6, (self.grid * self.grid) // 4):
++            return (0.0, 0.0, 1.0)
++        prev_pts = points.reshape(-1, 2)[ok]
++        cur_pts = moved.reshape(-1, 2)[ok]
++
++        # ZOOM (PTZ): afim de similaridade prev→cur com RANSAC; a diagonal dá a
++        # escala, a translação sai da própria matriz (em coords do frame CHEIO:
++        # P_cur = A·P_prev + t/k, com k = fator de redução do frame de trabalho).
++        scale = 1.0
++        dx = dy = 0.0
++        try:
++            matrix, inliers = cv2.estimateAffinePartial2D(
++                prev_pts, cur_pts, method=cv2.RANSAC,
++                ransacReprojThreshold=3.0, maxIters=500,
++            )
++        except Exception:
++            matrix, inliers = None, None
++        # fit degenerado (poucos inliers RELATIVOS) = ruído, não movimento real.
++        # 25%: zoom grande gera residuais maiores longe da origem e derruba a
++        # fração legítima; ruído puro fica bem abaixo (medido: 16% no bench).
++        min_inliers = max(12, int(0.25 * len(prev_pts)))
++        if matrix is not None and inliers is not None and int(inliers.sum()) >= min_inliers:
++            a, b = float(matrix[0, 0]), float(matrix[1, 0])
++            estimated = float(np.hypot(a, b))
++            if 0.7 <= estimated <= 1.4:  # zoom plausível entre 2 frames
++                scale = estimated
++            dx = float(matrix[0, 2]) / self._scale
++            dy = float(matrix[1, 2]) / self._scale
++        else:
++            flow = cur_pts - prev_pts
++            dx = float(np.median(flow[:, 0])) / self._scale
++            dy = float(np.median(flow[:, 1])) / self._scale
++
++        # zonas mortas: ruído de sensor não vira "movimento de câmera"
++        if abs(scale - 1.0) < 0.005:
++            scale = 1.0
++        if abs(dx) < 0.7 and abs(dy) < 0.7 and scale == 1.0:
++            return (0.0, 0.0, 1.0)
++        dx = float(np.clip(dx, -self.max_shift_px, self.max_shift_px))
++        dy = float(np.clip(dy, -self.max_shift_px, self.max_shift_px))
++        return (dx, dy, scale)
+diff --git a/services/ai-service-python/trackers/rider_association.py b/services/ai-service-python/trackers/rider_association.py
+new file mode 100644
+index 0000000..9138b3e
+--- /dev/null
++++ b/services/ai-service-python/trackers/rider_association.py
+@@ -0,0 +1,137 @@
++"""Associação de piloto — dá vida ao `riderVehicleProxy` (hoje campo morto).
++
++Problema real: moto/bicicleta passa, o YOLO acerta o veículo com folga mas a
++PESSOA em cima sai com confiança abaixo do threshold (pose sentada, oclusão
++pelas próprias pernas/guidão). Resultado: evento de "moto" sem "pessoa", e
++patinete (sem classe própria no COCO) só aparece quando classificado como
++bicicleta/moto.
++
++Regra: pessoa FRACA (>= floor, < threshold normal) geometricamente montada em
++veículo de piloto FORTE, confirmada em N frames seguidos, é PROMOVIDA — a
++confiança sobe até o threshold para que o tracker a aceite. NUNCA se inventa
++caixa: só se promove o que o YOLO realmente produziu.
++
++Isto NÃO é comportamento portado do Frigate — o Frigate atual não tem essa
++regra nativa (há pedido aberto para o inverso: suprimir a pessoa sobreposta).
++É heurística própria do AjustCam, por isso as proteções são agressivas:
++
++    - veículo precisa de confiança >= vehicle_min (default 0.45);
++    - pessoa precisa de confiança >= person_floor (default 0.12);
++    - geometria plausível: pé da pessoa dentro da faixa vertical do veículo
++      (com folga), sobreposição horizontal real, pessoa não gigante em relação
++      ao veículo;
++    - confirmação em `confirm_frames` frames consecutivos por região do
++      veículo — moto estacionada + sombra não vira pessoa num frame isolado;
++    - feature flag (GENERAL_RIDER_ASSOCIATION, default OFF) e contadores
++      próprios para auditoria em /status.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++
++@dataclass
++class RiderConfig:
++    enabled: bool = False
++    person_floor: float = 0.12
++    vehicle_min: float = 0.45
++    confirm_frames: int = 2
++    # geometria
++    horizontal_overlap_min: float = 0.30   # fração da LARGURA da pessoa sobre o veículo
++    max_person_vehicle_height_ratio: float = 2.4
++    foot_zone_top: float = 0.35            # pé da pessoa abaixo de 35% da altura do veículo
++    foot_zone_bottom_slack: float = 0.15   # ...e até 15% abaixo da base do veículo
++
++
++class RiderAssociator:
++    """Um por câmera (context_key). Mantém memória curta para a confirmação."""
++
++    def __init__(self, config: RiderConfig, person_class_id: int, rider_vehicle_class_ids: set[int]):
++        self.config = config
++        self.person_class_id = int(person_class_id)
++        self.rider_vehicle_class_ids = {int(v) for v in rider_vehicle_class_ids}
++        self._pending: dict[tuple[int, int], int] = {}  # bucket do veículo -> frames seguidos
++        self._frame = 0
++        self._last_seen: dict[tuple[int, int], int] = {}
++        self.stats = {"promotions": 0, "geometry_rejects": 0, "persistence_holds": 0}
++
++    # bucket grosseiro da posição do veículo: confirmação sobrevive a jitter
++    @staticmethod
++    def _bucket(bbox: list[int]) -> tuple[int, int]:
++        cx = (bbox[0] + bbox[2]) // 2
++        cy = (bbox[1] + bbox[3]) // 2
++        return (cx // 48, cy // 48)
++
++    def _plausible(self, person_bbox: list[int], vehicle_bbox: list[int]) -> bool:
++        px1, py1, px2, py2 = person_bbox
++        vx1, vy1, vx2, vy2 = vehicle_bbox
++        person_w = max(1, px2 - px1)
++        person_h = max(1, py2 - py1)
++        vehicle_h = max(1, vy2 - vy1)
++        # sobreposição horizontal relativa à pessoa
++        overlap_x = min(px2, vx2) - max(px1, vx1)
++        if overlap_x / person_w < self.config.horizontal_overlap_min:
++            return False
++        # pé da pessoa na zona de montaria do veículo
++        foot_min = vy1 + self.config.foot_zone_top * vehicle_h
++        foot_max = vy2 + self.config.foot_zone_bottom_slack * vehicle_h
++        if not (foot_min <= py2 <= foot_max):
++            return False
++        # pessoa desproporcional (poste/árvore classificado errado)
++        if person_h / vehicle_h > self.config.max_person_vehicle_height_ratio:
++            return False
++        # cabeça da pessoa acima do topo do veículo (montada, não atrás)
++        if py1 >= vy2:
++            return False
++        return True
++
++    def apply(self, detections: list, person_threshold: float) -> list:
++        """Recebe a lista de Detection ANTES do tracking; devolve a lista com
++        pessoas promovidas e SEM as pessoas fracas não promovidas."""
++        self._frame += 1
++        if not self.config.enabled:
++            # flag off: descarta qualquer pessoa abaixo do threshold que tenha
++            # sobrevivido até aqui (não deveria haver, mas é barato garantir)
++            return [d for d in detections
++                    if not ((d.extra or {}).get("belowThreshold"))]
++
++        vehicles = [d for d in detections
++                    if int((d.extra or {}).get("classId", -1)) in self.rider_vehicle_class_ids
++                    and float(d.confidence) >= self.config.vehicle_min]
++        output = []
++        for det in detections:
++            extra = det.extra or {}
++            is_weak_person = bool(extra.get("belowThreshold")) and \
++                int(extra.get("classId", -1)) == self.person_class_id
++            if not is_weak_person:
++                output.append(det)
++                continue
++            promoted = False
++            for vehicle in vehicles:
++                if not self._plausible(det.bbox, vehicle.bbox):
++                    continue
++                bucket = self._bucket(vehicle.bbox)
++                streak = self._pending.get(bucket, 0)
++                if self._last_seen.get(bucket, -10) < self._frame - 2:
++                    streak = 0  # confirmação expirada: recomeça
++                streak += 1
++                self._pending[bucket] = streak
++                self._last_seen[bucket] = self._frame
++                if streak >= self.config.confirm_frames:
++                    det.confidence = max(float(det.confidence), float(person_threshold))
++                    det.extra = {**extra, "riderPromoted": True, "belowThreshold": False}
++                    output.append(det)
++                    self.stats["promotions"] += 1
++                    promoted = True
++                else:
++                    self.stats["persistence_holds"] += 1
++                break
++            if not promoted and not any(self._plausible(det.bbox, v.bbox) for v in vehicles):
++                self.stats["geometry_rejects"] += 1
++            # pessoa fraca não promovida NÃO segue no pipeline
++        # limpeza de buckets antigos (memória curta)
++        stale = [b for b, seen in self._last_seen.items() if seen < self._frame - 30]
++        for bucket in stale:
++            self._pending.pop(bucket, None)
++            self._last_seen.pop(bucket, None)
++        return output

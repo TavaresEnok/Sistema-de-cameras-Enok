@@ -1,14 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { AlertTriangle, LoaderCircle, VideoOff, Volume2, VolumeX } from 'lucide-react';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
-import { useAiPreferencesStore } from '../store/aiPreferencesStore';
 import { streamUrlsCache } from '../lib/stream-urls-cache';
 import { liveDetectionsPoller } from '../lib/live-detections-poller';
 import { SmoothDetectionOverlay } from './SmoothDetectionOverlay';
-import { useRedeStore } from '../store/redeStore';
-import { classificarFalhaDePlayer } from '../lib/qualidade-de-rede';
 
 type LiveStreamPlayerProps = {
   cameraId: string;
@@ -177,6 +174,8 @@ type LiveDetection = {
   occurredAt: string;
   overlayMode?: string | null;
   trackId?: number | null;
+  stationary?: boolean | null;
+  recovered?: boolean | null;
 };
 
 // Mensagens internas de falha citam protocolo/infra (WebRTC, WHEP, MediaMTX…).
@@ -199,36 +198,10 @@ function prefersModernBridge(codec?: string | null) {
   return normalized.includes('h265') || normalized.includes('hevc') || normalized.includes('hvc1') || normalized.includes('265');
 }
 
-// A preferência aprendida VENCE. Sem prazo, uma única falha passageira de WebRTC
-// (queda de link, servidor reiniciando) fixava aquela câmera em HLS naquele
-// navegador PARA SEMPRE: como o HLS funciona, o WebRTC nunca mais era tentado, e
-// o operador ficava com latência alta mesmo depois de a infraestrutura sarar.
-//
-// Doze horas cobrem um turno inteiro — dentro do turno vale o fato observado
-// (nada de repetir tentativa fracassada a cada tile); no turno seguinte, o
-// protocolo principal é reavaliado uma vez.
-const LIVE_PROTOCOL_TTL_MS = 12 * 60 * 60 * 1000;
-
-// Prazo do GET /urls. Generoso o bastante para caber uma abertura fria legítima,
-// curto o bastante para que um tile travado não segure os outros por minutos.
-const LIVE_URLS_TIMEOUT_MS = 20_000;
-// Prazo do DELETE da sessão WHEP na limpeza. É cortesia com o servidor, não
-// pré-requisito: esperar por ela atrasa a PRÓXIMA conexão do operador.
-const WHEP_DELETE_TIMEOUT_MS = 2_000;
-
 function getStoredProtocol(cameraId: string): LiveProtocol | null {
   try {
-    const raw = window.localStorage.getItem(`${LIVE_PROTOCOL_STORAGE_PREFIX}:${cameraId}`);
-    if (!raw) return null;
-    // Formato novo: "<protocolo>|<timestamp>". O antigo (só o protocolo) ainda é
-    // aceito uma vez e migra na primeira gravação — ninguém perde a preferência
-    // ao atualizar, mas também ninguém fica preso ao valor eterno de antes.
-    const [valor, gravadoEm] = raw.split('|');
-    if (gravadoEm) {
-      const idade = Date.now() - Number(gravadoEm);
-      if (!Number.isFinite(idade) || idade < 0 || idade > LIVE_PROTOCOL_TTL_MS) return null;
-    }
-    const normalized = valor === 'll-hls' ? 'llhls' : valor;
+    const stored = window.localStorage.getItem(`${LIVE_PROTOCOL_STORAGE_PREFIX}:${cameraId}`);
+    const normalized = stored === 'll-hls' ? 'llhls' : stored;
     return normalized === 'webrtc' || normalized === 'hls' || normalized === 'llhls' ? normalized : null;
   } catch {
     return null;
@@ -238,10 +211,7 @@ function getStoredProtocol(cameraId: string): LiveProtocol | null {
 function storeProtocol(cameraId: string, protocol: ActiveLiveProtocol) {
   try {
     const normalized = protocol === 'LL-HLS' ? 'llhls' : protocol.toLowerCase();
-    window.localStorage.setItem(
-      `${LIVE_PROTOCOL_STORAGE_PREFIX}:${cameraId}`,
-      `${normalized}|${Date.now()}`,
-    );
+    window.localStorage.setItem(`${LIVE_PROTOCOL_STORAGE_PREFIX}:${cameraId}`, normalized);
   } catch {
   }
 }
@@ -340,12 +310,7 @@ export function LiveStreamPlayer({
   startDelayMs = 0,
   onStatusChange,
 }: LiveStreamPlayerProps) {
-  // "Mostrar quadrado no objeto" (tela de IA). Só afeta o DESENHO — a detecção
-  // continua rodando e os eventos seguem sendo registrados.
-  const mostrarCaixa = useAiPreferencesStore((state) => state.showObjectBox);
-  const carregarPrefsDeIa = useAiPreferencesStore((state) => state.carregar);
-  useEffect(() => { void carregarPrefsDeIa(); }, [carregarPrefsDeIa]);
-  const aiOverlayEnabled = showOverlay && aiEnabled && mostrarCaixa;
+  const aiOverlayEnabled = showOverlay && aiEnabled;
   const accessToken = useAuthStore((state) => state.accessToken);
   const authUserId = useAuthStore((state) => state.user?.id ?? 'anonymous');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -389,8 +354,6 @@ export function LiveStreamPlayer({
   const [activeProtocol, setActiveProtocol] = useState<ActiveLiveProtocol | null>(null);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
   const [hasLiveFrame, setHasLiveFrame] = useState(false);
-  const relatarPlayer = useRedeStore((s) => s.relatarPlayer);
-  const esquecerPlayer = useRedeStore((s) => s.esquecerPlayer);
   const [detections, setDetections] = useState<LiveDetection[]>([]);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [protocolReason, setProtocolReason] = useState<string | null>(null);
@@ -405,55 +368,14 @@ export function LiveStreamPlayer({
   const [displayFps, setDisplayFps] = useState<number | null>(null);
   const [sourceVideoCodec, setSourceVideoCodec] = useState<string | null>(null);
   const [isTranscodedForBrowser, setIsTranscodedForBrowser] = useState(false);
-  // Custo da conversão, medido no servidor. A etiqueta de codec já mostrava
-  // "H265 → H.264", mas sem dizer que isso custa 5× de CPU — o operador não tinha
-  // como saber que o navegador dele é a causa, nem que trocar resolve de graça.
-  const [transcodeCost, setTranscodeCost] = useState<{ cpuMultiplier?: number; reason?: string; hint?: string } | null>(null);
   const [measuredBitrateKbps, setMeasuredBitrateKbps] = useState<number | null>(null);
   const [liveLatencySeconds, setLiveLatencySeconds] = useState<number | null>(null);
   // Suspende a transmissão quando a aba fica oculta por tempo suficiente, para
   // não gastar CPU de transcode nem banda com quem não está vendo.
   const [suspended, setSuspended] = useState(false);
-  // ESCALONAMENTO É COISA DA PRIMEIRA MONTAGEM, NÃO DO CICLO DE VIDA.
-  //
-  // `startDelayMs` vem de streamStartDelay(indice, total) — muda quando o
-  // operador MOVE uma câmera na grade ou troca 3x3 por 4x4. Como era dependência
-  // do efeito de conexão, qualquer rearranjo visual fechava e reabria streams que
-  // continuaram na tela o tempo todo. A grade inteira piscava por mudança de
-  // layout, sem falha nenhuma de câmera ou rede.
-  //
-  // Numa ref, o valor certo continua disponível no boot (que é quando o
-  // escalonamento importa) e deixa de reiniciar vídeo saudável.
-  const startDelayMsRef = useRef(startDelayMs);
-  startDelayMsRef.current = startDelayMs;
-  // Poster que não carregou apenas desaparece. Nunca influencia o transporte.
-  const [posterFailed, setPosterFailed] = useState(false);
   const suspendedRef = useRef(false);
   const suspendTimerRef = useRef<number | null>(null);
   const [zoom, setZoom] = useState(1);
-  // Deslocamento (pan) do vídeo ampliado, em px. Modelo translate+scale com
-  // origem no canto (0 0): permite AMPLIAR no ponto do mouse E ARRASTAR para ver
-  // o resto. Refs espelham o estado para os handlers de janela não pegarem
-  // valores velhos (o closure do addEventListener congela o estado).
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [dragging, setDragging] = useState(false);
-  const zoomRef = useRef(1);
-  const panRef = useRef({ x: 0, y: 0 });
-  const dragRef = useRef<{ mouseX: number; mouseY: number; panX: number; panY: number } | null>(null);
-  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
-  useEffect(() => { panRef.current = pan; }, [pan]);
-
-  // Mantém o vídeo dentro do quadro: com origem no canto, o conteúdo ampliado
-  // tem largura `z×W`, então o pan válido vai de 0 (borda esquerda/topo) até
-  // `-(z-1)×W` (borda direita/baixo). Sem isto, arrastar mostraria fundo preto.
-  const clampPan = useCallback((p: { x: number; y: number }, z: number, rect: DOMRect) => ({
-    x: Math.min(0, Math.max(-(z - 1) * rect.width, p.x)),
-    y: Math.min(0, Math.max(-(z - 1) * rect.height, p.y)),
-  }), []);
-  const resetZoom = useCallback(() => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  }, []);
   // Qualidade da câmera única (1x1): persistida por câmera; na grade é sempre 'grid'.
   const [qualityMode, setQualityMode] = useState<LiveQualityMode>(() => getStoredLiveQuality(cameraId));
   useEffect(() => {
@@ -501,115 +423,22 @@ export function LiveStreamPlayer({
     () => (accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined),
     [accessToken],
   );
-  // PISCADA EM LOTE A CADA 5 MINUTOS — a causa morava aqui.
-  //
-  // A sessão é revalidada de 5 em 5 minutos (App.tsx) e isso ROTACIONA o
-  // accessToken. Como `accessToken` e `tokenHeaders` eram dependências do efeito
-  // de conexão, cada tile via a dependência mudar e REMONTAVA a conexão — as 20
-  // câmeras reconectando no mesmo segundo. MEDIDO: quedas em massa às 16:17,
-  // 16:22, 16:27, 16:32 e 16:37, sempre com "peer connection closed" (fechamento
-  // pelo NAVEGADOR) poucos segundos após a revalidação.
-  //
-  // Token novo não invalida sessão WebRTC já estabelecida: ele é usado no
-  // HANDSHAKE (busca das URLs e POST do WHEP) e depois a mídia flui pelo canal
-  // já negociado. Então o valor vai para uma ref — quem precisa lê o atual na
-  // hora de usar — e o efeito passa a depender apenas de o token EXISTIR.
-  // Login e logout continuam reagindo; rotação não derruba mais nada.
-  const tokenHeadersRef = useRef(tokenHeaders);
-  tokenHeadersRef.current = tokenHeaders;
-  const hasAccessToken = Boolean(accessToken);
 
   useEffect(() => {
     setIsMuted(muted);
   }, [muted]);
 
-  // Zoom por scroll SÓ na câmera única (1x1). Na grade o scroll não deve
-  // sequestrar a rolagem nem dar zoom num tile.
-  //
-  // O listener fica na JANELA, não no container: por cima do vídeo há o botão
-  // "clique para selecionar" (z-15) da página, que NÃO é filho deste container.
-  // Um scroll real do usuário atinge esse botão primeiro, e como ele está fora
-  // do container, o evento nunca chegava ao zoom — o mouse do usuário não fazia
-  // nada (medido no navegador, 10/08/2026). Ouvindo na janela e conferindo se o
-  // cursor está SOBRE este player, o overlay deixa de importar.
   useEffect(() => {
-    if (liveViewMode !== 'selected') return;
-    const dentro = (rect: DOMRect, e: { clientX: number; clientY: number }) =>
-      e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-
+    const container = containerRef.current;
+    if (!container) return;
     const onWheel = (e: WheelEvent) => {
-      const container = containerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0 || !dentro(rect, e)) return;
       e.preventDefault();
-      const z0 = zoomRef.current;
-      const step = e.deltaY > 0 ? -0.2 : 0.2;
-      const z1 = Math.min(4, Math.max(1, parseFloat((z0 + step).toFixed(2))));
-      if (z1 === z0) return;
-      if (z1 === 1) { resetZoom(); return; }
-      // Ponto do cursor DENTRO do container (px). O pan é ajustado para que o que
-      // está sob o mouse continue sob o mouse — é isso que faz o zoom "entrar"
-      // onde se aponta (translate+scale, origem no canto): pan1 = m − (m−pan0)·z1/z0.
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-      const p0 = panRef.current;
-      const p1 = clampPan(
-        { x: mx - (mx - p0.x) * (z1 / z0), y: my - (my - p0.y) * (z1 / z0) },
-        z1,
-        rect,
-      );
-      setZoom(z1);
-      setPan(p1);
+      const step = e.deltaY > 0 ? -0.15 : 0.15;
+      setZoom((prev) => Math.min(4, Math.max(1, parseFloat((prev + step).toFixed(2)))));
     };
-
-    // ARRASTAR (pan) com o mouse quando ampliado. mousedown na JANELA (o botão
-    // de seleção z-15 fica por cima e não é filho do container — mesma razão do
-    // wheel); mousemove/up na janela para o arraste continuar mesmo saindo.
-    const onMouseDown = (e: MouseEvent) => {
-      if (zoomRef.current <= 1 || e.button !== 0) return;
-      const container = containerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      if (!dentro(rect, e)) return;
-      e.preventDefault();
-      dragRef.current = { mouseX: e.clientX, mouseY: e.clientY, panX: panRef.current.x, panY: panRef.current.y };
-      setDragging(true);
-    };
-    const onMouseMove = (e: MouseEvent) => {
-      const d = dragRef.current;
-      const container = containerRef.current;
-      if (!d || !container) return;
-      const rect = container.getBoundingClientRect();
-      setPan(clampPan(
-        { x: d.panX + (e.clientX - d.mouseX), y: d.panY + (e.clientY - d.mouseY) },
-        zoomRef.current,
-        rect,
-      ));
-    };
-    const onMouseUp = () => {
-      if (!dragRef.current) return;
-      dragRef.current = null;
-      setDragging(false);
-    };
-
-    window.addEventListener('wheel', onWheel, { passive: false });
-    window.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    return () => {
-      window.removeEventListener('wheel', onWheel);
-      window.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-  }, [liveViewMode, clampPan, resetZoom]);
-
-  // Sair do 1x1 (voltar à grade) ou trocar de câmera zera o zoom: cada tela
-  // nasce mostrando o quadro inteiro. Sem isto, o zoom "grudava" ao voltar.
-  useEffect(() => {
-    resetZoom();
-  }, [cameraId, liveViewMode, resetZoom]);
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => container.removeEventListener('wheel', onWheel);
+  }, []);
 
   useEffect(() => {
     failedProtocolsRef.current.clear();
@@ -631,19 +460,6 @@ export function LiveStreamPlayer({
       reason: error ?? protocolReason ?? retryMessage,
     });
   }, [activeProtocol, error, isLoading, onStatusChange, protocolReason, retryMessage]);
-
-  // ── RELATO PARA O DIAGNÓSTICO DE REDE ─────────────────────────────────────
-  // O aviso "sua conexão está instável" depende de distinguir DOIS fracassos
-  // que na tela parecem iguais (quadro preto):
-  //   • a sessão nem abriu  → o servidor recusou/não respondeu → problema DELE;
-  //   • a sessão abriu e a imagem não vem → caminho do vídeo → última milha.
-  // Sem esta distinção, o aviso viraria chute — e chutar "é a sua internet"
-  // durante uma falha nossa é pior que não avisar. Ver lib/qualidade-de-rede.ts.
-  useEffect(() => {
-    const chave = `${cameraId}:${liveViewMode}`;
-    relatarPlayer(chave, classificarFalhaDePlayer(error, hasLiveFrame, isLoading));
-    return () => esquecerPlayer(chave);
-  }, [cameraId, liveViewMode, error, hasLiveFrame, isLoading, relatarPlayer, esquecerPlayer]);
 
   const requestFreshLiveBoot = useCallback((
     message = 'Atualizando transmissão ao vivo...',
@@ -685,31 +501,6 @@ export function LiveStreamPlayer({
       setIsLoading(false);
     }
   }, [liveViewMode]);
-
-  // ── VIVACIDADE É QUADRO AVANÇANDO, NÃO BRILHO ─────────────────────────────
-  //
-  // A checagem de imagem preta media a coisa errada. Cena legitimamente escura —
-  // madrugada, lente coberta, transição do infravermelho, ambiente apagado — é
-  // vídeo PERFEITO, e era tratada como falha: o quadro nunca era aceito, o
-  // protocolo estourava o prazo e caía para o próximo, gastando ~30s em cascata
-  // com mídia chegando o tempo todo.
-  //
-  // O sinal honesto é o contador de quadros decodificados do próprio elemento.
-  // Se ele avança, o transporte está vivo, seja a cena branca ou preta.
-  const decodedFramesRef = useRef<{ count: number; at: number } | null>(null);
-  const framesAreProgressing = useCallback((element: HTMLVideoElement) => {
-    const quality = (element as any).getVideoPlaybackQuality?.();
-    const count = Number(
-      quality?.totalVideoFrames ?? (element as any).webkitDecodedFrameCount ?? NaN,
-    );
-    // Navegador que não expõe o contador não pode ser punido por isso: sem sinal,
-    // assume-se vivo (o prazo de conexão continua sendo a rede de proteção).
-    if (!Number.isFinite(count)) return true;
-    const anterior = decodedFramesRef.current;
-    decodedFramesRef.current = { count, at: Date.now() };
-    if (!anterior) return false; // primeira leitura: ainda não dá para comparar
-    return count > anterior.count;
-  }, []);
 
   const isLikelyBlackFrame = useCallback((element: HTMLVideoElement) => {
     if (element.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || element.videoWidth <= 0 || element.videoHeight <= 0) {
@@ -786,7 +577,7 @@ export function LiveStreamPlayer({
 
   useEffect(() => {
     const element = videoRef.current;
-    if (!element || !tokenHeadersRef.current) return;
+    if (!element || !accessToken) return;
 
     let cancelled = false;
     let noFrameTimeout: number | null = null;
@@ -884,17 +675,8 @@ export function LiveStreamPlayer({
           }>(
             `${API_URL}/camera-stream/${cameraId}/urls`,
             {
-              headers: tokenHeadersRef.current,
+              headers: tokenHeaders,
               params: { viewMode: deliveryMode },
-              // PRAZO PRÓPRIO, obrigatório.
-              //
-              // Sem ele, a única barreira era o nginx a 300s. Pior: a promessa
-              // pendente fica registrada como "em voo", e TODA nova montagem da
-              // mesma câmera reaproveita a MESMA requisição travada — um tile
-              // preso prendia os demais, com "Conectando" por minutos e nenhuma
-              // tentativa nova. Estourar rápido e repetir é sempre melhor que
-              // esperar para sempre.
-              timeout: LIVE_URLS_TIMEOUT_MS,
             },
           ).then(res => res.data),
           STREAM_URL_CACHE_TTL_MS,
@@ -914,7 +696,6 @@ export function LiveStreamPlayer({
         mediaAuthTokenRef.current = streamToken;
         setSourceVideoCodec(sourceCodec ?? null);
         setIsTranscodedForBrowser(Boolean(liveDiagnostics?.liveTranscodedForBrowser));
-        setTranscodeCost((liveDiagnostics as { transcodeCost?: typeof transcodeCost } | null)?.transcodeCost ?? null);
         const orderedProtocols = buildProtocolOrder(
           cameraId,
           preferredLiveProtocol,
@@ -968,7 +749,7 @@ export function LiveStreamPlayer({
             const response = await axios.post<{ streamToken: string; expiresAt?: string | null }>(
               `${API_URL}/camera-stream/${cameraId}/token`,
               {},
-              { headers: tokenHeadersRef.current },
+              { headers: tokenHeaders },
             );
             if (cancelled) return;
             mediaAuthTokenRef.current = response.data.streamToken;
@@ -1060,28 +841,15 @@ export function LiveStreamPlayer({
             }
           }
           if (webrtcSessionUrlRef.current) {
-            // ENCERRAR A SESSÃO É CORTESIA, NÃO PRÉ-REQUISITO.
-            //
-            // Aguardar este DELETE sem teto atrasa a PRÓXIMA conexão pelo tempo
-            // que o servidor levar para responder — e o nginx só corta o WHEP em
-            // 3600s. O operador ficava vendo "Conectando" por causa de uma
-            // despedida. Com teto curto a limpeza acontece quase sempre; quando
-            // não acontece, a sessão órfã morre sozinha do lado do servidor.
-            const sessao = webrtcSessionUrlRef.current;
-            webrtcSessionUrlRef.current = null;
-            const abortar = new AbortController();
-            const corte = window.setTimeout(() => abortar.abort(), WHEP_DELETE_TIMEOUT_MS);
             try {
-              await fetch(sessao, {
+              await fetch(webrtcSessionUrlRef.current, {
                 method: 'DELETE',
                 mode: 'cors',
                 headers: { Authorization: `Bearer ${mediaAuthTokenRef.current}` },
-                signal: abortar.signal,
               });
             } catch {
-            } finally {
-              window.clearTimeout(corte);
             }
+            webrtcSessionUrlRef.current = null;
           }
         };
 
@@ -1107,10 +875,7 @@ export function LiveStreamPlayer({
             }
             if (isLikelyBlackFrame(element)) {
               blackFrameObserved = true;
-              // Preto SÓ segura enquanto os quadros NÃO avançam. Câmera em cena
-              // escura entrega quadros normalmente e precisa ser aceita — antes
-              // ela estourava o prazo e caía de protocolo sem falha nenhuma.
-              if (!framesAreProgressing(element)) return;
+              return;
             }
             finish();
           };
@@ -1278,8 +1043,7 @@ export function LiveStreamPlayer({
                 if (element.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || element.videoWidth <= 0 || element.videoHeight <= 0) {
                   return;
                 }
-                // Idem ao caminho comum: preto só adia enquanto não há quadro novo.
-                if (isLikelyBlackFrame(element) && !framesAreProgressing(element)) return;
+                if (isLikelyBlackFrame(element)) return;
                 visibleFrameReceived = true;
                 markHealthy('WEBRTC');
                 finish();
@@ -1403,29 +1167,7 @@ export function LiveStreamPlayer({
                   }
                   throw new Error('Inicialização WebRTC cancelada.');
                 }
-                // A OUTRA METADE DO VAZAMENTO: a ref é ÚNICA por tile, então
-                // guardar a nova URL por cima apagava o endereço da anterior —
-                // e sem endereço não há como dar DELETE nela. A sessão velha
-                // seguia VIVA e transmitindo (medido: 3 sessões da mesma câmera,
-                // 28/25/5 MB, todas em estado `read`), porque o MediaMTX só
-                // encerra quando o cliente deleta ou o ICE cai.
-                //
-                // O bloco acima cobre "esta tentativa ficou obsoleta"; este
-                // cobre o inverso — "esta venceu, mas havia uma anterior". Sem
-                // os dois, cada reconexão somava mais um fluxo do MESMO vídeo:
-                // 17 câmeras viravam 30 sessões, a subida do servidor saturava
-                // e TODOS os tiles caíam juntos, com o servidor ocioso.
-                if (sessionUrl) {
-                  const anterior = webrtcSessionUrlRef.current;
-                  if (anterior && anterior !== sessionUrl) {
-                    void fetch(anterior, {
-                      method: 'DELETE',
-                      mode: 'cors',
-                      headers: { Authorization: `Bearer ${mediaAuthTokenRef.current}` },
-                    }).catch(() => undefined);
-                  }
-                  webrtcSessionUrlRef.current = sessionUrl;
-                }
+                if (sessionUrl) webrtcSessionUrlRef.current = sessionUrl;
 
                 const remoteSdp = await response.text();
                 if (cancelled || webrtcPcRef.current !== pc || abortController.signal.aborted) {
@@ -1446,13 +1188,13 @@ export function LiveStreamPlayer({
         };
 
         const reportProtocolFailure = (protocol: LiveProtocol, reason: string) => {
-          if (!tokenHeadersRef.current) return;
+          if (!tokenHeaders) return;
           void axios.post(`${API_URL}/camera-stream/${cameraId}/live-failure`, {
             protocol,
             stage: 'startup',
             reason,
             state: activeProtocolRef.current ?? 'not-playing',
-          }, { headers: tokenHeadersRef.current, timeout: 5000 }).catch(() => undefined);
+          }, { headers: tokenHeaders, timeout: 5000 }).catch(() => undefined);
         };
 
         const startHls = async (lowLatencyMode: boolean, protocolName: ActiveLiveProtocol) => {
@@ -1591,7 +1333,7 @@ export function LiveStreamPlayer({
     if (!suspended) {
       bootDelayTimeout = window.setTimeout(() => {
         void boot();
-      }, Math.max(0, startDelayMsRef.current));
+      }, Math.max(0, startDelayMs));
     }
 
     return () => {
@@ -1656,7 +1398,7 @@ export function LiveStreamPlayer({
         element.load();
       }
     };
-  }, [hasAccessToken, authUserId, autoPlay, cameraId, deliveryMode, failActiveProtocol, framesAreProgressing, getFastRetryDelay, isLikelyBlackFrame, requestFreshLiveBoot, reloadNonce, suspended]);
+  }, [accessToken, authUserId, autoPlay, cameraId, deliveryMode, failActiveProtocol, getFastRetryDelay, isLikelyBlackFrame, requestFreshLiveBoot, startDelayMs, tokenHeaders, reloadNonce, suspended]);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -1886,11 +1628,6 @@ export function LiveStreamPlayer({
     window.addEventListener('focus', onFocus);
     window.addEventListener('pageshow', onPageShow);
     window.addEventListener('pagehide', onPageHide);
-    // Aba que JÁ nasce em segundo plano (clique-do-meio, "abrir em nova aba"):
-    // nenhuma transição de visibilidade acontece, então a suspensão de 45s —
-    // que existe exatamente para este caso — nunca engatava, e N sessões
-    // WebRTC + transcode rodavam para sempre numa aba que ninguém viu.
-    if (document.hidden) markHidden();
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       document.removeEventListener('freeze', onFreeze);
@@ -1970,16 +1707,11 @@ export function LiveStreamPlayer({
       // watchdog de render (rVFC) acima: se frames novos continuam sendo apresentados,
       // o stream está vivo, com ou sem movimento na cena.
       if (liveViewMode === 'selected') {
-        // Preto NÃO derruba mais o transporte sozinho. Só há falha real quando a
-        // imagem está preta E os quadros pararam de avançar — aí de fato não está
-        // chegando vídeo. Madrugada, lente coberta e infravermelho entregam preto
-        // com quadros correndo normalmente, e trocar de protocolo ali só produzia
-        // piscada numa câmera saudável.
-        if (isLikelyBlackFrame(element) && !framesAreProgressing(element)) {
+        if (isLikelyBlackFrame(element)) {
           if (blackFrameSinceRef.current == null) blackFrameSinceRef.current = now;
           if (now - blackFrameSinceRef.current >= LIVE_BLACK_FRAME_FAILOVER_MS) {
             blackFrameSinceRef.current = null;
-            failActiveProtocol('sem imagem: quadros pararam de avançar');
+            failActiveProtocol('imagem preta persistente');
             return;
           }
         } else {
@@ -2058,10 +1790,10 @@ export function LiveStreamPlayer({
     }, LIVE_STALL_CHECK_INTERVAL_MS);
 
     return () => window.clearInterval(interval);
-  }, [autoPlay, error, failActiveProtocol, framesAreProgressing, isLikelyBlackFrame, isLoading, liveViewMode]);
+  }, [autoPlay, error, failActiveProtocol, isLikelyBlackFrame, isLoading, liveViewMode]);
 
   useEffect(() => {
-    if (!aiOverlayEnabled || !tokenHeadersRef.current) return;
+    if (!aiOverlayEnabled || !accessToken || !tokenHeaders) return;
     const sessionId = liveViewSessionIdRef.current;
 
     const postLease = async (action: 'start' | 'heartbeat' | 'stop') => {
@@ -2069,13 +1801,7 @@ export function LiveStreamPlayer({
         await axios.post(
           `${API_URL}/ai/live-view/${action}/${cameraId}`,
           { sessionId, ttlSeconds: LIVE_VIEW_LEASE_TTL_SECONDS, viewMode: liveViewModeRef.current },
-          // Token via REF, como no efeito principal de conexão (linhas ~517):
-          // com o token nas deps, a rotação de 5 min re-executava o efeito e
-          // disparava stop+start quase simultâneos com o MESMO sessionId — se
-          // o stop chegasse depois, matava o lease recém-criado e a análise
-          // daquela câmera ficava morta até o próximo heartbeat. Numa grade de
-          // 20 câmeras eram 40 requisições inúteis a cada 5 minutos.
-          { headers: tokenHeadersRef.current },
+          { headers: tokenHeaders },
         );
       } catch {
       }
@@ -2090,7 +1816,7 @@ export function LiveStreamPlayer({
       window.clearInterval(heartbeat);
       void postLease('stop');
     };
-  }, [aiOverlayEnabled, cameraId]);
+  }, [accessToken, aiOverlayEnabled, cameraId, tokenHeaders]);
 
   useEffect(() => {
     if (!aiOverlayEnabled || !accessToken || error) {
@@ -2112,28 +1838,21 @@ export function LiveStreamPlayer({
       ref={containerRef}
       className={`relative overflow-hidden bg-black ${className ?? ''}`}
       aria-label={`Live ${cameraName}`}
-      onDoubleClick={resetZoom}
+      onDoubleClick={() => setZoom(1)}
     >
       <div
         className="absolute inset-0 w-full h-full"
         style={{
-          // translate ANTES do scale, origem no canto (0 0): assim o pan é em
-          // pixels de tela e o zoom "entra" onde o mouse aponta. A transição
-          // suave só no repouso (voltar ao 1×) — arrastando tem de ser imediato.
-          transform: zoom !== 1 ? `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` : undefined,
-          transformOrigin: '0 0',
+          transform: zoom !== 1 ? `scale(${zoom})` : undefined,
+          transformOrigin: 'center',
           transition: zoom === 1 ? 'transform 0.2s ease-out' : 'none',
         }}
       >
-        {posterUrl && !hasLiveFrame && !posterFailed && (
+        {posterUrl && !hasLiveFrame && (
           <img
             src={posterUrl}
             alt=""
-            // O poster é uma IMAGEM ESTÁTICA de cortesia, exibida enquanto o vídeo
-            // não chega. Ele falhar não diz NADA sobre a transmissão — e antes
-            // chamava requestFreshLiveBoot: uma miniatura com erro interrompia uma
-            // negociação de vídeo perfeitamente saudável. Agora ele só some.
-            onError={() => setPosterFailed(true)}
+            onError={() => requestFreshLiveBoot('Atualizando amostra da câmera...', false)}
             className={`absolute inset-0 h-full w-full opacity-80 ${liveViewMode === 'grid' ? 'object-cover' : 'object-contain'}`}
             draggable={false}
           />
@@ -2156,29 +1875,10 @@ export function LiveStreamPlayer({
         />
       </div>
 
-      {/* MÃOZINHA — só existe quando ampliado. Fica ACIMA do botão de seleção
-          (z-[15], irmão do player) para (a) mostrar o cursor de arraste e (b)
-          impedir que arrastar o vídeo dispare a seleção/desseleção da câmera. O
-          arraste em si é tratado pelos ouvintes de janela (o botão cobre o
-          player e não é filho dele); aqui só entregamos o cursor certo. */}
-      {liveViewMode === 'selected' && zoom > 1 && (
-        <div
-          // z-[18]: ACIMA do botão de seleção (z-[15], irmão do player) para
-          // pegar o cursor de mão e barrar a desseleção acidental ao arrastar,
-          // mas ABAIXO dos controles (z-30: mudo, qualidade, selos) — que seguem
-          // clicáveis mesmo ampliado.
-          className="absolute inset-0 z-[18]"
-          style={{ cursor: dragging ? 'grabbing' : 'grab' }}
-          aria-hidden
-        />
-      )}
-
       {aiOverlayEnabled && (
         // Overlay em componente PRÓPRIO: o hook de interpolação re-renderiza a
-        // 60 fps, mas só o overlay — o player fica no ritmo do poller. A
-        // identidade por trackId e a matemática de posicionamento foram para
-        // lá; o que eu tinha feito com transição CSS vira interpolação real em
-        // JS (pacote de tracking, 15/08/2026).
+        // 60 fps, mas agora só re-renderiza o overlay — o player fica no ritmo
+        // do poller. Mesma matemática de posicionamento, movida para lá.
         <SmoothDetectionOverlay
           detections={detections}
           videoRef={videoRef}
@@ -2313,22 +2013,8 @@ export function LiveStreamPlayer({
             </span>
           ) : null}
           {!compactLiveOverlay && sourceVideoCodec ? (
-            <span
-              className={`inline-flex h-6 items-center gap-1 rounded border px-2 text-[10px] font-semibold uppercase tracking-wide ${
-                isTranscodedForBrowser
-                  ? 'border-amber-400/50 bg-amber-500/20 text-amber-100'
-                  : 'border-white/15 bg-black/55 text-white/80'
-              }`}
-              title={
-                transcodeCost
-                  ? `${transcodeCost.reason ?? ''} Custa cerca de ${transcodeCost.cpuMultiplier ?? 5}x mais CPU do servidor. ${transcodeCost.hint ?? ''}`.trim()
-                  : undefined
-              }
-            >
+            <span className="inline-flex h-6 items-center rounded border border-white/15 bg-black/55 px-2 text-[10px] font-semibold uppercase tracking-wide text-white/80">
               {sourceVideoCodec}{isTranscodedForBrowser ? ' → H.264' : ''}
-              {isTranscodedForBrowser && transcodeCost?.cpuMultiplier
-                ? ` · ${transcodeCost.cpuMultiplier}x CPU`
-                : ''}
             </span>
           ) : null}
           {!compactLiveOverlay && measuredBitrateKbps != null ? (
