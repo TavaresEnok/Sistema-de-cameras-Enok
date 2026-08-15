@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore';
 import { useAiPreferencesStore } from '../store/aiPreferencesStore';
 import { streamUrlsCache } from '../lib/stream-urls-cache';
 import { liveDetectionsPoller } from '../lib/live-detections-poller';
+import { chaveDaCaixa } from '../lib/identidade-da-caixa';
 import { useRedeStore } from '../store/redeStore';
 import { classificarFalhaDePlayer } from '../lib/qualidade-de-rede';
 
@@ -2245,6 +2246,10 @@ export function LiveStreamPlayer({
           const height = Math.max(1, Math.min(100 - top, ((y2 - y1) / frameHeight) * 100));
           style = { left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` };
         }
+        // MESMO elemento entre amostras: o rastreador diz que é o mesmo
+        // objeto, então o navegador não pode destruir e recriar o retângulo —
+        // elemento recriado não anima, e era isso que fazia a caixa piscar.
+        const chave = chaveDaCaixa(cameraId, detection);
         const isFace = detection.type.startsWith('FACE');
         const isTriangle = !isFace && detection.overlayMode === 'triangle';
         const label = detection.similarity != null
@@ -2254,7 +2259,7 @@ export function LiveStreamPlayer({
             : detection.label;
         if (isTriangle) {
           return (
-            <div key={detection.id} className="pointer-events-none absolute z-30" style={style}>
+            <div key={chave} className="pointer-events-none absolute z-30 transition-[left,top,width,height] duration-150 ease-linear" style={style}>
               <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-full">
                 <span className="mx-auto block h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-[hsl(var(--status-warning)_/_0.9)] drop-shadow-[0_1px_1px_rgba(0,0,0,0.65)]" />
               </div>
@@ -2263,7 +2268,7 @@ export function LiveStreamPlayer({
         }
         return (
           <div
-            key={detection.id}
+            key={chave}
             // Borda FINA (1px) e deslocamento suavizado por transição CSS: a
             // detecção chega a 8/s e o vídeo corre a 20–30, então sem
             // interpolação a caixa "pula" entre posições. A transição cobre o
