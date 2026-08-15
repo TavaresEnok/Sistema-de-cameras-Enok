@@ -171,6 +171,24 @@ GENERAL_PROFILE = {
     "model": _env_str("GENERAL_MODEL", "yolo26n"),
     # Maior modelo que a CPU serve com dignidade quando não há placa.
     "cpu_model_ceiling": _env_str("GENERAL_CPU_MODEL_CEILING", "yolo26s"),
+    # ── Pacote de tracking (15/08/2026) — todas com default SEGURO:
+    # `tracker=bytetrack` mantém o comportamento atual; rider e
+    # compensação de câmera nascem desligados. Rollback do tracking é
+    # variável de ambiente, sem redeploy de código.
+    "low_conf_floor": _env_float("GENERAL_TRACKER_LOW_CONF_FLOOR", 0.10),
+    "recovery_grace_ms": _env_int("GENERAL_TRACKER_RECOVERY_GRACE_MS", 2000),
+    "stationary_frames": _env_int("GENERAL_STATIONARY_FRAMES", 10),
+    "stationary_iou": _env_float("GENERAL_STATIONARY_IOU", 0.88),
+    "stationary_out_iou": _env_float("GENERAL_STATIONARY_OUT_IOU", 0.70),
+    "camera_motion_comp": _env_bool("GENERAL_CAMERA_MOTION_COMP", False),
+    "tracker_appearance": _env_bool("GENERAL_TRACKER_APPEARANCE", True),
+    "tracker_appearance_veto": _env_float("GENERAL_TRACKER_APPEARANCE_VETO", 0.10),
+    "tracker_min_hits": _env_int("GENERAL_TRACKER_MIN_HITS", 1),
+    "stationary_coast": _env_bool("GENERAL_STATIONARY_COAST", True),
+    "rider_association": _env_bool("GENERAL_RIDER_ASSOCIATION", False),
+    "rider_person_floor": _env_float("GENERAL_RIDER_PERSON_FLOOR", 0.12),
+    "rider_vehicle_min": _env_float("GENERAL_RIDER_VEHICLE_MIN", 0.45),
+    "rider_confirm_frames": _env_int("GENERAL_RIDER_CONFIRM_FRAMES", 2),
     "runtime": _env_str("GENERAL_RUNTIME", "openvino_cpu"),
     "precision": _env_str("GENERAL_PRECISION", "int8"),
     "analysis_width": _env_int("GENERAL_ANALYSIS_WIDTH", 960),

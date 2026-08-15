@@ -1362,6 +1362,12 @@ class StreamProcessor:
                     "occurredAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp)),
                     "overlayMode": extra.get("overlayMode"),
                     "trackId": extra.get("trackId"),
+                    # Do pacote de tracking: a tela desenha estacionária
+                    # tracejada e usa `recovered` para saber que o MESMO objeto
+                    # voltou depois de uma oclusão. None quando o tracker não
+                    # informa (bytetrack não classifica estado).
+                    "stationary": bool(extra.get("stationary")) if "stationary" in extra else None,
+                    "recovered": bool(extra.get("recovered")) if "recovered" in extra else None,
                 }
             )
 

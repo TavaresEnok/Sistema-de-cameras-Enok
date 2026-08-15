@@ -1,6 +1,5 @@
 import os
 import threading
-import time
 from queue import Empty, Queue
 
 import cv2
@@ -12,8 +11,18 @@ from .region_proposal import MotionRegionPlanner, RegionConfig
 from onnxruntime_session import inference_threading_status
 from runtime_profiles import GENERAL_PROFILE
 from detectors.escolha_de_modelo import TETO_DE_CPU_PADRAO, escolher_modelo
+from trackers import TrackerBackend, create_tracker, tracker_names
+from trackers.camera_motion import GlobalMotionEstimator
+from trackers.rider_association import RiderAssociator, RiderConfig
 
 
+PERSON_CLASS_ID = 0
+BICYCLE_CLASS_ID = 1
+CAR_CLASS_ID = 2
+MOTORCYCLE_CLASS_ID = 3
+BUS_CLASS_ID = 5
+RIDER_VEHICLE_CLASS_IDS = {BICYCLE_CLASS_ID, MOTORCYCLE_CLASS_ID}
+VEHICLE_CLASS_IDS = {BICYCLE_CLASS_ID, CAR_CLASS_ID, MOTORCYCLE_CLASS_ID, BUS_CLASS_ID}
 def _gpu_realmente_presente() -> bool:
     """A GPU NVIDIA está de fato acessível a este container?
 
@@ -33,23 +42,14 @@ def _gpu_realmente_presente() -> bool:
     return os.path.exists("/dev/nvidia0") or os.path.exists("/dev/nvidiactl")
 
 
-PERSON_CLASS_ID = 0
-BICYCLE_CLASS_ID = 1
-CAR_CLASS_ID = 2
-MOTORCYCLE_CLASS_ID = 3
-BUS_CLASS_ID = 5
-RIDER_VEHICLE_CLASS_IDS = {BICYCLE_CLASS_ID, MOTORCYCLE_CLASS_ID}
-VEHICLE_CLASS_IDS = {BICYCLE_CLASS_ID, CAR_CLASS_ID, MOTORCYCLE_CLASS_ID, BUS_CLASS_ID}
 def classe_liberada(cls: int) -> bool:
     """A licença deste cliente permite MOSTRAR esta classe?
 
-    Escrito em 14/08/2026, depois de o dono ver quadrado em CARRO com a
-    Central liberando só "pessoa". As chaves GENERAL_DETECT_* existiam no
-    perfil e NADA as consumia — chave morta: o publicador emitia toda classe
-    que o modelo enxerga, e a licença virava enfeite.
-
-    Pessoa nunca é filtrada (é a classe base de toda instalação). Moto e
-    bicicleta seguem detectáveis quando veículos estão liberados.
+    Escrito em 14/08/2026, depois de o dono ver quadrado em CARRO com a Central
+    liberando só "pessoa". As chaves GENERAL_DETECT_* existiam no perfil e NADA
+    as consumia — o publicador emitia toda classe que o modelo enxerga, e a
+    licença virava enfeite. Preservado ao mesclar o pacote de tracking, que não
+    o continha.
     """
     if cls == PERSON_CLASS_ID:
         return True
@@ -72,18 +72,18 @@ class ObjectDetector(Detector):
 
     def __init__(self, region_config: RegionConfig | None = None):
         self.input_size = int(GENERAL_PROFILE["imgsz"])
-        # O MODELO SE AJUSTA À MÁQUINA. Sem placa, modelo grande não entra:
-        # em 15/08/2026 a RTX foi movida de máquina e o `yolo26l` continuou no
-        # ambiente — 38,7 ms por inferência NA PLACA foi parar no processador,
-        # onde é inviável. Nada quebrou (o portão de CUDA cai para CPU), mas
-        # ficou lento demais para servir e ninguém foi avisado.
-        pedido = str(GENERAL_PROFILE.get("model", "yolo26n")).strip().lower()
-        teto_cpu = str(GENERAL_PROFILE.get("cpu_model_ceiling", TETO_DE_CPU_PADRAO)).strip().lower()
-        self.model_name, motivo_do_rebaixamento = escolher_modelo(
-            pedido, tem_gpu=_gpu_realmente_presente(), teto_de_cpu=teto_cpu,
+        # O MODELO SE AJUSTA À MÁQUINA. Sem placa, modelo grande não entra: em
+        # 15/08/2026 a RTX foi movida e o `yolo26l` continuou no ambiente —
+        # 38,7 ms por inferência NA PLACA foi parar no processador. Nada
+        # quebrou (o portão de CUDA cai para CPU), mas ficou lento demais para
+        # servir, em silêncio. Preservado ao mesclar o pacote de tracking.
+        _pedido = str(GENERAL_PROFILE.get("model", "yolo26n")).strip().lower()
+        _teto = str(GENERAL_PROFILE.get("cpu_model_ceiling", TETO_DE_CPU_PADRAO)).strip().lower()
+        self.model_name, _motivo_rebaixamento = escolher_modelo(
+            _pedido, tem_gpu=_gpu_realmente_presente(), teto_de_cpu=_teto,
         )
-        if motivo_do_rebaixamento:
-            print(f"[ObjectDetector] MODELO REBAIXADO: {motivo_do_rebaixamento}")
+        if _motivo_rebaixamento:
+            print(f"[ObjectDetector] MODELO REBAIXADO: {_motivo_rebaixamento}")
         self.requested_precision = str(GENERAL_PROFILE.get("precision", "fp32")).strip().lower()
         self.min_conf = float(GENERAL_PROFILE["confidence_person"])
         self.class_confidence = {
@@ -107,25 +107,37 @@ class ObjectDetector(Detector):
         self.explicit_model_path = str(GENERAL_PROFILE.get("model_path", "") or "").strip()
         self.openvino_device = str(GENERAL_PROFILE.get("openvino_device", "CPU") or "CPU").strip() or "CPU"
         self.openvino_performance_hint = str(GENERAL_PROFILE.get("openvino_performance_hint", "LATENCY") or "LATENCY").strip() or "LATENCY"
-        # Backend de inferência. `onnxruntime_cuda` (ou qualquer runtime com
-        # 'onnx'/'cuda') roda o YOLO na GPU NVIDIA via ONNX Runtime; o default
-        # `openvino_cpu` mantém o caminho Intel/CPU intocado. A escolha do
-        # PROVIDER (CUDA→CPU) fica com o onnxruntime — se a GPU faltar, ele cai
-        # para CPU sozinho e a câmera nunca fica cega.
-        runtime_str = str(GENERAL_PROFILE.get("runtime", "openvino_cpu")).strip().lower()
-        self.use_onnx = ("onnx" in runtime_str) or ("cuda" in runtime_str)
-        self._onnx_wants_cuda = "cuda" in runtime_str or "gpu" in runtime_str
         self._runtime_lock = threading.Lock()
         self._runtimes: dict[int, dict] = {}
         self._tracker_lock = threading.Lock()
-        self._trackers: dict[str, sv.ByteTrack] = {}
+        # GENERAL_TRACKER agora falha ALTO se inválido — antes era lido e
+        # ignorado silenciosamente (sv.ByteTrack hardcoded).
+        self.tracker_name = str(GENERAL_PROFILE.get("tracker", "bytetrack")).strip().lower()
+        if self.tracker_name not in tracker_names():
+            raise ValueError(
+                f"GENERAL_TRACKER='{self.tracker_name}' inválido. "
+                f"Opções: {', '.join(tracker_names())}"
+            )
+        self._trackers: dict[str, TrackerBackend] = {}
+        # Associação de piloto (uma máquina de estado por câmera)
+        self._rider_config = RiderConfig(
+            enabled=bool(GENERAL_PROFILE.get("rider_association", False)),
+            person_floor=float(GENERAL_PROFILE.get("rider_person_floor", 0.12)),
+            vehicle_min=float(GENERAL_PROFILE.get("rider_vehicle_min", 0.45)),
+            confirm_frames=int(GENERAL_PROFILE.get("rider_confirm_frames", 2)),
+        )
+        self._rider_lock = threading.Lock()
+        self._riders: dict[str, RiderAssociator] = {}
+        # Compensação de movimento global (PTZ/vibração) — um estimador por câmera
+        self._motion_comp_enabled = bool(GENERAL_PROFILE.get("camera_motion_comp", False))
+        self._motion_estimators: dict[str, GlobalMotionEstimator] = {}
+        # Funil detector→tracker por classe (responde "YOLO não viu" vs
+        # "filtro derrubou" vs "tracker perdeu" — o caso 4 perto × 145 longe)
+        self._pipeline_debug = bool(GENERAL_PROFILE.get("pipeline_debug", False))
+        self._pipeline_stats: dict[int, dict[str, int]] = {}
         self._pool_busy_drops = 0
         self._pool_busy_drops_by_size: dict[int, int] = {}
         self._last_selected_size = self.input_size
-        # Contadores por câmera para o resumo de etapas (ver _contabilizar).
-        self._contagem: dict[str, dict[str, int]] = {}
-        self._ultimo_resumo: dict[str, float] = {}
-        self._intervalo_resumo_s = float(GENERAL_PROFILE.get("stage_summary_seconds", 60))
         # DETECÇÃO POR REGIÃO (derivada do movimento) — PADRÃO DESLIGADO.
         # Com `enabled=False` nada muda: a inferência continua no frame inteiro,
         # mesmo que o chamador passe motion_boxes. Ver detectors/region_proposal.py.
@@ -187,74 +199,7 @@ class ObjectDetector(Detector):
         joined = ", ".join(searched)
         raise RuntimeError(f"Modelo OpenVINO {input_size}px não encontrado. Diretórios testados: {joined}")
 
-    def _resolve_model_onnx(self, input_size: int) -> str:
-        """Caminho do .onnx para o tamanho pedido, com queda para o genérico."""
-        base_dir = "/app/models"
-        nomes = [
-            f"{self.model_name}_{input_size}.onnx",
-            f"{self.model_name}.onnx",
-        ]
-        if self.explicit_model_path.endswith(".onnx") and os.path.isfile(self.explicit_model_path):
-            return self.explicit_model_path
-        for nome in nomes:
-            caminho = os.path.join(base_dir, nome)
-            if os.path.isfile(caminho):
-                return caminho
-        raise RuntimeError(f"Modelo ONNX {input_size}px não encontrado (procurei {nomes} em {base_dir}).")
-
-    def _compile_onnx_runtime(self, input_size: int) -> dict:
-        import onnxruntime as ort
-
-        model_path = self._resolve_model_onnx(input_size)
-        # NÃO confiar em ort.get_available_providers(): ele LISTA CUDA sempre que
-        # os libs estão na imagem, MESMO SEM PLACA. E pedir CUDAExecutionProvider
-        # sem GPU faz o onnxruntime SEGFALTAR (exit 139) — a câmera não cai para
-        # CPU, o worker MORRE. Medido ao simular a placa arrancada (10/08/2026).
-        #
-        # Por isso a checagem é pela PRESENÇA REAL do dispositivo (device node),
-        # que nunca quebra: se a GPU não está acessível ao container, nem se pede
-        # CUDA. Assim, arrancar a placa e reiniciar → volta em CPU, sem crash.
-        # Diagnóstico do portão de CUDA NO MOMENTO da decisão (14/08/2026):
-        # avaliado por fora, cada condição dava True e mesmo assim o provider
-        # saía CPU. O que o processo vê aqui é a única verdade que importa.
-        print(
-            f"[ObjectDetector] portao-cuda: wants={self._onnx_wants_cuda} "
-            f"presente={_gpu_realmente_presente()} "
-            f"env_runtime={os.environ.get('GENERAL_RUNTIME')!r} "
-            f"nvidia0={os.path.exists('/dev/nvidia0')} "
-            f"visible={os.environ.get('NVIDIA_VISIBLE_DEVICES')!r}"
-        )
-        usar_cuda = self._onnx_wants_cuda and _gpu_realmente_presente()
-        providers = (
-            ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            if usar_cuda
-            else ["CPUExecutionProvider"]
-        )
-        opts = ort.SessionOptions()
-        opts.intra_op_num_threads = max(1, self.inference_threads)
-        session = ort.InferenceSession(model_path, sess_options=opts, providers=providers)
-        ativo = session.get_providers()
-        input_name = session.get_inputs()[0].name
-        print(
-            f"[ObjectDetector] ONNX carregado model='{model_path}' input_size={input_size} "
-            f"providers_pedidos={providers} provider_ativo='{ativo[0] if ativo else '?'}' "
-            f"classes='{GENERAL_PROFILE.get('classes')}'"
-        )
-        return {
-            "kind": "onnx",
-            "session": session,
-            "input": input_name,
-            "output": None,
-            "pool": None,  # onnxruntime.run() é thread-safe; não precisa de pool
-            "path": model_path,
-            "precision": "onnx-cuda" if "CUDAExecutionProvider" in ativo else "onnx-cpu",
-            "input_size": input_size,
-            "model": session,
-        }
-
     def _compile_runtime(self, input_size: int) -> dict:
-        if self.use_onnx:
-            return self._compile_onnx_runtime(input_size)
         try:
             import openvino as ov
         except Exception as exc:
@@ -299,19 +244,13 @@ class ObjectDetector(Detector):
         return self._runtimes[input_size]
 
     def _available_input_sizes(self) -> list[int]:
-        resolver = self._resolve_model_onnx if self.use_onnx else self._resolve_model_xml
         available: list[int] = []
         for input_size in (960, 640, 512, 416):
             try:
-                resolver(input_size)
+                self._resolve_model_xml(input_size)
                 available.append(input_size)
             except RuntimeError:
                 continue
-        # O ONNX é exportado num tamanho só (o `.onnx` genérico serve para
-        # qualquer size pedido, via o fallback do resolvedor). Garante ao menos
-        # o tamanho padrão para o planejador de regiões não ficar sem opção.
-        if self.use_onnx and self.input_size not in available:
-            available.append(self.input_size)
         return available
 
     def _runtime_for_hint(self, input_size_hint: int | None) -> dict:
@@ -348,50 +287,93 @@ class ObjectDetector(Detector):
         blob = canvas[:, :, ::-1].transpose(2, 0, 1).astype(np.float32) / 255.0
         return blob[None, ...], scale, pad_x, pad_y, w, h, input_size
 
-    def _track_people(self, detections: list[Detection], context_key: str) -> list[Detection]:
+    def _pipeline_bump(self, cls: int, stage: str, amount: int = 1) -> None:
+        """Funil por classe: raw → conf_pass → to_tracker → from_tracker.
+        Contadores de diagnóstico (GIL torna o incremento seguro o bastante)."""
+        bucket = self._pipeline_stats.setdefault(int(cls), {
+            "raw": 0, "conf_pass": 0, "to_tracker": 0, "from_tracker": 0,
+        })
+        bucket[stage] = bucket.get(stage, 0) + int(amount)
+
+    def _rider_for(self, context_key: str) -> RiderAssociator:
+        key = str(context_key or "")
+        with self._rider_lock:
+            associator = self._riders.get(key)
+            if associator is None:
+                associator = RiderAssociator(
+                    self._rider_config, PERSON_CLASS_ID, RIDER_VEHICLE_CLASS_IDS
+                )
+                self._riders[key] = associator
+            return associator
+
+    def _track_people(self, detections: list[Detection], context_key: str, frame=None) -> list[Detection]:
+        # 1) associação de piloto ANTES do tracker: promove pessoa fraca montada
+        #    em moto/bicicleta forte e descarta as fracas não promovidas.
+        detections = self._rider_for(context_key).apply(
+            detections, self.class_confidence.get(PERSON_CLASS_ID, self.min_conf)
+        )
+
         output: list[Detection] = []
         grouped: dict[int, list[Detection]] = {}
         for item in detections:
             cls = int((item.extra or {}).get("classId", PERSON_CLASS_ID))
             grouped.setdefault(cls, []).append(item)
 
+        # 2) movimento GLOBAL da câmera: estimado UMA vez por frame e aplicado a
+        #    todos os backends desta câmera (PTZ/vibração). Default: desligado.
+        global_shift = (0.0, 0.0, 1.0)
+        if self._motion_comp_enabled and frame is not None:
+            estimator = self._motion_estimators.get(context_key)
+            if estimator is None:
+                estimator = self._motion_estimators.setdefault(context_key, GlobalMotionEstimator())
+            global_shift = estimator.estimate(frame)
+
         with self._tracker_lock:
             for cls in sorted(self.active_class_ids):
                 class_detections = grouped.get(cls, [])
                 tracker_key = f"{context_key}:class:{cls}"
-                tracker = self._trackers.get(tracker_key)
-                if tracker is None:
-                    tracker = sv.ByteTrack(
-                        track_activation_threshold=self._confidence_for_class(cls),
+                backend = self._trackers.get(tracker_key)
+                if backend is None:
+                    backend = create_tracker(
+                        self.tracker_name,
+                        class_id=cls,
+                        activation_threshold=self._confidence_for_class(cls),
                         lost_track_buffer=self.track_buffer,
                         frame_rate=int(max(1, round(float(GENERAL_PROFILE["detection_fps"])))),
-                        minimum_consecutive_frames=1,
+                        low_conf_floor=float(GENERAL_PROFILE.get("low_conf_floor", 0.10)),
+                        recovery_grace_ms=int(GENERAL_PROFILE.get("recovery_grace_ms", 2000)),
+                        stationary_frames=int(GENERAL_PROFILE.get("stationary_frames", 10)),
+                        stationary_iou=float(GENERAL_PROFILE.get("stationary_iou", 0.88)),
+                        stationary_out_iou=float(GENERAL_PROFILE.get("stationary_out_iou", 0.70)),
+                        appearance=bool(GENERAL_PROFILE.get("tracker_appearance", True)),
+                        appearance_veto=float(GENERAL_PROFILE.get("tracker_appearance_veto", 0.10)),
+                        min_hits=int(GENERAL_PROFILE.get("tracker_min_hits", 1)),
+                        stationary_coast=bool(GENERAL_PROFILE.get("stationary_coast", True)),
                     )
-                    self._trackers[tracker_key] = tracker
+                    self._trackers[tracker_key] = backend
+
+                if global_shift != (0.0, 0.0, 1.0):
+                    backend.apply_global_shift(*global_shift)
 
                 if class_detections:
-                    values = sv.Detections(
-                        xyxy=np.asarray([item.bbox for item in class_detections], dtype=np.float32),
-                        confidence=np.asarray([item.confidence for item in class_detections], dtype=np.float32),
-                        class_id=np.asarray([cls for _ in class_detections], dtype=int),
-                    )
+                    xyxy = np.asarray([item.bbox for item in class_detections], dtype=np.float32)
+                    confidences = np.asarray([item.confidence for item in class_detections], dtype=np.float32)
                 else:
-                    values = sv.Detections.empty()
-                tracked = tracker.update_with_detections(values)
+                    xyxy = np.zeros((0, 4), dtype=np.float32)
+                    confidences = np.zeros((0,), dtype=np.float32)
+                self._pipeline_bump(cls, "to_tracker", len(class_detections))
 
-                tracker_ids = tracked.tracker_id if tracked.tracker_id is not None else []
-                confidences = tracked.confidence if tracked.confidence is not None else []
-                class_ids = tracked.class_id if tracked.class_id is not None else []
-                for bbox, score, track_id, class_id in zip(tracked.xyxy, confidences, tracker_ids, class_ids):
-                    tracked_cls = int(class_id) if class_id is not None else cls
-                    if not classe_liberada(tracked_cls):
-                        continue
-                    raw_track_id = int(track_id)
+                tracked_boxes = backend.update(xyxy, confidences, frame=frame)
+                self._pipeline_bump(cls, "from_tracker", len(tracked_boxes))
+
+                for tracked in tracked_boxes:
+                    tracked_cls = int(tracked.class_id)
+                    raw_track_id = int(tracked.track_id)
                     output.append(
                         Detection(
                             label=CLASS_LABELS.get(tracked_cls, "detected"),
-                            confidence=float(score),
-                            bbox=[int(value) for value in bbox.tolist()],
+                            confidence=float(tracked.confidence),
+                            bbox=[int(value) for value in tracked.bbox.tolist()],
                             extra={
                                 "classId": tracked_cls,
                                 "overlayMode": GENERAL_PROFILE["overlay_mode"],
@@ -400,6 +382,8 @@ class ObjectDetector(Detector):
                                 "trackClassId": tracked_cls,
                                 "riderVehicleProxy": tracked_cls in RIDER_VEHICLE_CLASS_IDS,
                                 "vehicleProxy": tracked_cls in VEHICLE_CLASS_IDS,
+                                "stationary": bool(tracked.stationary),
+                                "recovered": bool(tracked.recovered),
                             },
                         )
                     )
@@ -490,48 +474,8 @@ class ObjectDetector(Detector):
         else:
             detections, _ran = self._detect_raw(frame, runtime)
         if GENERAL_PROFILE["persistent_track_id"] and context_key:
-            rastreadas = self._track_people(detections, context_key)
-            self._contabilizar(context_key, len(detections), len(rastreadas))
-            return rastreadas
-        self._contabilizar(context_key, len(detections), len(detections))
+            return self._track_people(detections, context_key, frame=frame)
         return detections
-
-    def _contabilizar(self, context_key: str | None, brutas: int, publicadas: int) -> None:
-        """Quantas detecções sobrevivem a cada etapa, por câmera.
-
-        Existe para separar três defeitos que produzem o MESMO sintoma na tela
-        ("a pessoa passou e não apareceu caixa") e pedem consertos opostos:
-
-            YOLO não detectou      → modelo, resolução, limiar, iluminação
-            filtro cortou          → altura mínima, classe fora da licença
-            rastreador não publicou→ confirmação, associação, oclusão
-
-        Sem este número, cada hipótese custa uma rodada de tentativa e erro —
-        foi o que aconteceu em 14/08/2026 com "4 detecções perto × 145 longe",
-        onde eu culpei a associação sem saber se o detector tinha produzido
-        alguma coisa.
-
-        Resumo periódico, nunca por quadro: log a cada quadro afogaria o
-        diagnóstico que ele deveria dar.
-        """
-        chave = context_key or "sem-camera"
-        acumulado = self._contagem.setdefault(chave, {"brutas": 0, "publicadas": 0, "quadros": 0})
-        acumulado["brutas"] += brutas
-        acumulado["publicadas"] += publicadas
-        acumulado["quadros"] += 1
-
-        agora = time.monotonic()
-        ultimo = self._ultimo_resumo.get(chave, 0.0)
-        if agora - ultimo < self._intervalo_resumo_s:
-            return
-        self._ultimo_resumo[chave] = agora
-        perdidas = acumulado["brutas"] - acumulado["publicadas"]
-        print(
-            f"[ObjectDetector] etapas {chave[:8]}: {acumulado['quadros']} quadros | "
-            f"YOLO={acumulado['brutas']} | publicadas={acumulado['publicadas']} | "
-            f"retidas_pelo_rastreador={perdidas}"
-        )
-        acumulado.update({"brutas": 0, "publicadas": 0, "quadros": 0})
 
     def _detect_raw(self, frame, runtime) -> tuple[list[Detection], bool]:
         """Inferência + pós-processamento NAS COORDENADAS de `frame`.
@@ -542,32 +486,23 @@ class ObjectDetector(Detector):
         """
         selected_size = int(runtime["input_size"])
         blob, scale, pad_x, pad_y, width, height, _ = self._preprocess(frame, selected_size)
-
-        if runtime.get("kind") == "onnx":
-            # ONNX Runtime (CUDA na GPU, com queda para CPU). A sessão é
-            # thread-safe em run(), então não há pool de requests como no
-            # OpenVINO. A SAÍDA é idêntica ([1,300,6] = x1,y1,x2,y2,score,cls),
-            # porque o .onnx é exportado com nms=True igual ao modelo OpenVINO —
-            # por isso o pós-processamento abaixo é EXATAMENTE o mesmo.
-            raw = runtime["session"].run(None, {runtime["input"]: blob})[0]
-        else:
-            pool = runtime["pool"]
-            if pool is None:
-                return [], False
-            # Latest-frame semantics: if no request is available now, drop this
-            # frame and let the next loop consume the newest one from the camera queue.
-            try:
-                infer_request = pool.get_nowait()
-            except Empty:
-                self._pool_busy_drops += 1
-                self._pool_busy_drops_by_size[selected_size] = self._pool_busy_drops_by_size.get(selected_size, 0) + 1
-                return [], False
-            try:
-                infer_request.infer({runtime["input"]: blob})
-                raw = np.array(infer_request.get_output_tensor(0).data, copy=True)
-            finally:
-                pool.put(infer_request)
-        rows = np.squeeze(np.asarray(raw), axis=0)
+        pool = runtime["pool"]
+        if pool is None:
+            return [], False
+        # Latest-frame semantics: if no request is available now, drop this
+        # frame and let the next loop consume the newest one from the camera queue.
+        try:
+            infer_request = pool.get_nowait()
+        except Empty:
+            self._pool_busy_drops += 1
+            self._pool_busy_drops_by_size[selected_size] = self._pool_busy_drops_by_size.get(selected_size, 0) + 1
+            return [], False
+        try:
+            infer_request.infer({runtime["input"]: blob})
+            raw = np.array(infer_request.get_output_tensor(0).data, copy=True)
+        finally:
+            pool.put(infer_request)
+        rows = np.squeeze(raw, axis=0)
 
         detections: list[Detection] = []
         for row in rows:
@@ -577,16 +512,32 @@ class ObjectDetector(Detector):
             cls = int(cls_id)
             if cls not in self.active_class_ids:
                 continue
-            min_conf = self._confidence_for_class(cls)
-            if score < min_conf:
+            # LICENÇA antes de qualquer contagem: classe não liberada pela
+            # Central não vira detecção nem entra no funil — senão o operador
+            # veria "raw" alto de uma classe que jamais aparece na tela.
+            if not classe_liberada(cls):
                 continue
+            self._pipeline_bump(cls, "raw")
+            min_conf = self._confidence_for_class(cls)
+            below_threshold = bool(score < min_conf)
+            if below_threshold:
+                # Pessoa FRACA só sobrevive se a associação de piloto estiver
+                # ligada e a confiança passar do piso dela — o rider decide o
+                # destino (promover ou descartar) ANTES do tracker.
+                keep_for_rider = (
+                    self._rider_config.enabled
+                    and cls == PERSON_CLASS_ID
+                    and float(score) >= self._rider_config.person_floor
+                )
+                if not keep_for_rider:
+                    continue
+            else:
+                self._pipeline_bump(cls, "conf_pass")
             x1 = int(max(0, min(width, (float(x1) - pad_x) / scale)))
             y1 = int(max(0, min(height, (float(y1) - pad_y) / scale)))
             x2 = int(max(0, min(width, (float(x2) - pad_x) / scale)))
             y2 = int(max(0, min(height, (float(y2) - pad_y) / scale)))
             if x2 <= x1 or y2 <= y1 or (y2 - y1) < self.min_object_height:
-                continue
-            if not classe_liberada(cls):
                 continue
             detections.append(
                 Detection(
@@ -598,6 +549,7 @@ class ObjectDetector(Detector):
                         "overlayMode": GENERAL_PROFILE["overlay_mode"],
                         "riderVehicleProxy": cls in RIDER_VEHICLE_CLASS_IDS,
                         "vehicleProxy": cls in VEHICLE_CLASS_IDS,
+                        "belowThreshold": below_threshold,
                     },
                 )
             )
@@ -630,6 +582,34 @@ class ObjectDetector(Detector):
             "openvino_device": self.openvino_device,
             "openvino_performance_hint": self.openvino_performance_hint,
             "region_detection": self.region_status(),
+            "tracker": self.tracker_status(),
+        }
+
+    def tracker_status(self) -> dict:
+        """Diagnóstico do funil detector→tracker e dos backends por câmera.
+
+        `pipeline` responde diretamente o caso "4 detecções perto × 145 longe":
+        se `raw` já é baixo, o problema é modelo/pré-processamento; se `raw` é
+        alto e `conf_pass` é baixo, é threshold; se `to_tracker` é alto e
+        `from_tracker` é baixo, é o tracker.
+        """
+        with self._tracker_lock:
+            backends = {key: backend.status() for key, backend in self._trackers.items()}
+        with self._rider_lock:
+            rider = {
+                "enabled": self._rider_config.enabled,
+                "per_camera": {key: dict(associator.stats) for key, associator in self._riders.items()},
+            }
+        return {
+            "name": self.tracker_name,
+            "available": tracker_names(),
+            "pipeline": {
+                CLASS_LABELS.get(cls, str(cls)): dict(stats)
+                for cls, stats in sorted(self._pipeline_stats.items())
+            },
+            "camera_motion_comp": self._motion_comp_enabled,
+            "rider_association": rider,
+            "backends": backends,
         }
 
     def region_status(self) -> dict:
