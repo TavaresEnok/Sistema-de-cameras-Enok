@@ -658,6 +658,17 @@ services:
       - GENERAL_RIDER_VEHICLE_MIN=${GENERAL_RIDER_VEHICLE_MIN:-0.45}
       - GENERAL_RIDER_CONFIRM_FRAMES=${GENERAL_RIDER_CONFIRM_FRAMES:-2}
       - GENERAL_CPU_MODEL_CEILING=${GENERAL_CPU_MODEL_CEILING:-yolo26s}
+      # INFERÊNCIA POR REGIÕES (seção 10 da análise). O código já existia em
+      # region_proposal.py, desligado. `idle_full_frame` fica LIGADO: sem
+      # movimento o quadro inteiro ainda é varrido, então ligar regiões não
+      # pode cegar a câmera — é a rede que o próprio documento exige para a
+      # migração. Desligar essa rede é passo posterior, e só com medição.
+      - GENERAL_REGION_DETECTION=${GENERAL_REGION_DETECTION:-false}
+      - GENERAL_REGION_IDLE_FULL_FRAME=${GENERAL_REGION_IDLE_FULL_FRAME:-true}
+      - GENERAL_REGION_MIN_SIZE=${GENERAL_REGION_MIN_SIZE:-224}
+      - GENERAL_REGION_MARGIN=${GENERAL_REGION_MARGIN:-1.4}
+      - GENERAL_REGION_MAX=${GENERAL_REGION_MAX:-4}
+      - GENERAL_REGION_SWEEP_EVERY=${GENERAL_REGION_SWEEP_EVERY:-40}
       - GENERAL_TRACK_BUFFER=${GENERAL_TRACK_BUFFER:-20}
       - GENERAL_PERSISTENT_TRACK_ID=${GENERAL_PERSISTENT_TRACK_ID:-true}
       - GENERAL_SHOW_AFTER_HITS=${GENERAL_SHOW_AFTER_HITS:-1}
