@@ -2264,7 +2264,13 @@ export function LiveStreamPlayer({
         return (
           <div
             key={detection.id}
-            className={`pointer-events-none absolute z-30 rounded-sm border-2 shadow-[0_0_0_1px_rgba(0,0,0,0.45)] ${
+            // Borda FINA (1px) e deslocamento suavizado por transição CSS: a
+            // detecção chega a 8/s e o vídeo corre a 20–30, então sem
+            // interpolação a caixa "pula" entre posições. A transição cobre o
+            // intervalo entre amostras e o movimento vira deslize — foi a
+            // diferença que o dono notou contra o marcador da própria câmera,
+            // que roda em todo quadro no chip dela (14/08/2026).
+            className={`pointer-events-none absolute z-30 rounded-sm border shadow-[0_0_0_1px_rgba(0,0,0,0.35)] transition-[left,top,width,height] duration-150 ease-linear ${
               isFace ? 'border-[hsl(var(--status-online))]' : 'border-[hsl(var(--status-warning))]'
             }`}
             style={style}
