@@ -9,15 +9,23 @@ import { CloudConnectorService } from '../src/cloud-connector/cloud-connector.se
 // que ARMA a gravação por movimento: câmeras armadas parariam de gravar EM
 // SILÊNCIO. Estes testes existem para essa regressão nunca acontecer.
 
-function makeService() {
+function makeService(extras: { aiManager?: any } = {}) {
   const svc: any = Object.create(CloudConnectorService.prototype);
   const state = { stopAllCalls: 0, logs: [] as string[] };
   svc.logger = {
     warn: (m: string) => state.logs.push(`warn:${m}`),
     log: (m: string) => state.logs.push(`log:${m}`),
   };
+  // O serviço pede DOIS colaboradores pelo moduleRef: o AiService (stopAll) e o
+  // AiManagerService (rebaixamento). Distinguidos pela forma, não pelo tipo —
+  // o teste roda fora do Nest e não tem os tokens de injeção.
+  const gerente = extras.aiManager ?? {
+    rebaixarParaMovimentoPorPolitica: async () => ({ mudou: false, modoAnterior: 'motion' }),
+  };
   svc.moduleRef = {
-    get: () => ({ stopAll: async () => { state.stopAllCalls += 1; } }),
+    get: (alvo: any) => (String(alvo?.name ?? alvo).includes('Manager')
+      ? gerente
+      : { stopAll: async () => { state.stopAllCalls += 1; } }),
   };
   return { svc, state };
 }
@@ -305,4 +313,45 @@ test('start SEM origem live (watchdog/boot) não é afetado pelo gate', async ()
   // do caminho "espectador abriu um tile".
   await mgr.startCamera('cam-1');
   assert.deepEqual(calls, ['start:cam-1:motion']);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 17/08/2026: o dono desligou a detecção de objeto na Central, a política
+// chegou correta (`aiAdvanced:false, aiObject:false`), o log avisava a cada
+// minuto — e a IA seguia em `general` consumindo ~70% de CPU detectando
+// pessoa. Este ramo só REGISTRAVA e voltava: a decisão comercial não tinha
+// braço.
+//
+// Pior: quando ganhou braço, `updateSettings` recusou a mudança porque exige
+// `aiAdvanced` — e quem estava mandando rebaixar era justamente quem acabara
+// de proibir `aiAdvanced`. O sistema se recusava a obedecer à própria ordem.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('objeto/face proibidos: a IA é REBAIXADA, não só registrada em log', async () => {
+  const chamadas: string[] = [];
+  const { svc, state } = makeService({
+    aiManager: {
+      rebaixarParaMovimentoPorPolitica: async () => {
+        chamadas.push('rebaixou');
+        return { mudou: true, modoAnterior: 'general' };
+      },
+    },
+  });
+  await svc.enforceAiRestrictions({ aiMotion: true, aiObject: false, aiFace: false, aiAdvanced: false });
+  assert.deepEqual(chamadas, ['rebaixou'], 'avisar sem agir foi o defeito original');
+  assert.equal(state.stopAllCalls, 0, 'movimento continua: ele arma a gravação');
+});
+
+test('objeto liberado NÃO rebaixa nada', async () => {
+  const chamadas: string[] = [];
+  const { svc } = makeService({
+    aiManager: {
+      rebaixarParaMovimentoPorPolitica: async () => {
+        chamadas.push('rebaixou');
+        return { mudou: true, modoAnterior: 'general' };
+      },
+    },
+  });
+  await svc.enforceAiRestrictions({ aiMotion: true, aiObject: true, aiFace: false, aiAdvanced: true });
+  assert.deepEqual(chamadas, [], 'rebaixar com objeto liberado tiraria função paga do cliente');
 });

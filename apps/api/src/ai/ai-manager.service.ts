@@ -603,6 +603,34 @@ export class AiManagerService implements OnModuleInit {
     };
   }
 
+  /**
+   * Rebaixar para MOVIMENTO por ordem da Central, sem passar pelo portão
+   * comercial.
+   *
+   * `updateSettings` exige `aiAdvanced` para mudar o modo — correto para um
+   * operador, e ARMADILHA para a política: quem tenta rebaixar é justamente
+   * quem acabou de proibir `aiAdvanced`, então o sistema recusava obedecer à
+   * própria ordem. Medido em 17/08/2026: o dono desligou objeto na Central, o
+   * log dizia "rebaixando a IA de general para movimento", e a exceção
+   * comercial engolia a mudança — a IA seguia detectando pessoa com 70% de
+   * CPU.
+   *
+   * Só rebaixa (para `motion`), nunca eleva: este caminho não pode virar porta
+   * dos fundos para ligar detecção de objeto sem licença.
+   */
+  async rebaixarParaMovimentoPorPolitica() {
+    const atual = await this.getSettings();
+    if (atual.mode === 'motion') return { mudou: false, modoAnterior: atual.mode };
+    await this.prisma.aiSettings.upsert({
+      where: { id: 'global' },
+      update: { mode: 'motion' },
+      create: { id: 'global', enabled: true, mode: 'motion' },
+    });
+    this.logger.warn(`IA rebaixada de "${atual.mode}" para movimento por política da Central.`);
+    await this.syncAll().catch(() => undefined);
+    return { mudou: true, modoAnterior: atual.mode };
+  }
+
   async updateSettings(input: { enabled?: boolean; mode?: string; showObjectBox?: boolean }) {
     // "Mostrar a caixa" é preferência de TELA, não uso de IA avançada: exigir
     // `aiAdvanced` para mudá-la deixaria o operador sem poder desligar uma

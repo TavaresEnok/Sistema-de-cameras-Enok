@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { sanitizeSensitiveText } from '../common/security/sensitive-text.helper';
+import { AiManagerService } from '../ai/ai-manager.service';
 import { AiService } from '../ai/ai.service';
 import { RecordingProcessManagerService } from '../recordings/recording-process-manager.service';
 import { StreamResourceAdvisorService } from '../camera-stream/stream-resource-advisor.service';
@@ -1037,8 +1038,32 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       : restrictions.aiAdvanced === false;
 
     if (!mustStopEverything) {
+      // OBJETO/FACE PROIBIDOS: rebaixar para MOVIMENTO — de verdade.
+      //
+      // Este ramo só REGISTRAVA no log e voltava. O dono desligou a detecção de
+      // objeto na Central (17/08/2026), a política chegou correta
+      // (`aiAdvanced:false, aiObject:false`), o log apareceu a cada minuto — e
+      // a IA seguiu em modo `general`, com 70% de CPU detectando pessoa. A
+      // decisão comercial não tinha braço: quem manda parar não parava nada.
+      //
+      // A checagem que rebaixa o modo existe em `performSyncAll`, mas só roda
+      // quando ALGUÉM dispara uma sincronização. Mudança de política na Central
+      // não disparava nada — então valia só no próximo reinício da API.
       if (hasGranular && restrictions.aiObject !== true && restrictions.aiFace !== true) {
         this.logger.log('Política da Central: somente detecção de MOVIMENTO habilitada (objeto/face desligados).');
+        try {
+          const ai = this.moduleRef.get(AiManagerService, { strict: false });
+          const r = await ai.rebaixarParaMovimentoPorPolitica();
+          if (r.mudou) {
+            this.logger.warn(
+              `Política da Central: objeto/face desligados — IA rebaixada de "${r.modoAnterior}" para movimento.`,
+            );
+          }
+        } catch (error) {
+          this.logger.warn(
+            `Falha ao rebaixar a IA para movimento por política da Central: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
       return;
     }
