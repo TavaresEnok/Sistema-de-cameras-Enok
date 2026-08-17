@@ -1,4 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
+import { PrismaService } from '../common/prisma/prisma.service';
+import { CryptoService } from '../common/crypto/crypto.service';
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import {
@@ -50,7 +52,111 @@ type Assinatura = {
 };
 
 @Injectable()
-export class IntelbrasEventsService {
+export class IntelbrasEventsService implements OnModuleInit, OnModuleDestroy {
+  private relogio: ReturnType<typeof setInterval> | null = null;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cryptoService: CryptoService,
+  ) {}
+
+  /** Desligado por padrão: instalação sem câmera Intelbras não paga por isto. */
+  private habilitado() {
+    return String(process.env.INTELBRAS_EVENTS_ENABLED ?? 'false').trim().toLowerCase() === 'true';
+  }
+
+  async onModuleInit() {
+    if (!this.habilitado()) return;
+    this.logger.log('Fluxo de eventos Intelbras habilitado; sincronizando câmeras...');
+    // Mesmo ritmo do daemon ONVIF: reavalia a cada 60s e sobe com folga.
+    this.relogio = setInterval(() => void this.sincronizar(), 60_000);
+    setTimeout(() => void this.sincronizar(), 8000);
+  }
+
+  onModuleDestroy() {
+    if (this.relogio) clearInterval(this.relogio);
+    for (const id of this.ativas()) this.cancelar(id);
+  }
+
+  /**
+   * Abre o fluxo nas câmeras Intelbras/Dahua que ainda não têm um.
+   *
+   * A marca é reconhecida pelo caminho RTSP `realmonitor`, que é a assinatura
+   * da família — o mesmo sinal que o resto do sistema já usa. Câmera OFFLINE
+   * fica de fora: abrir conexão para quem não responde vira laço de
+   * reconexão, e foi o defeito que o daemon ONVIF já teve.
+   */
+  private async sincronizar() {
+    try {
+      const cameras = await this.prisma.camera.findMany({
+        where: {
+          enabled: true,
+          status: { not: 'OFFLINE' },
+          rtspPath: { contains: 'realmonitor' },
+        },
+        select: { id: true, name: true, ip: true, httpPort: true, onvifPort: true, username: true, passwordEncrypted: true },
+      });
+      const vivas = new Set(this.ativas());
+      for (const cam of cameras) {
+        if (vivas.has(cam.id)) continue;
+        if (!cam.username || !cam.passwordEncrypted) continue;
+        // A porta HTTP cadastrada vem primeiro; sem ela, a do ONVIF costuma
+        // servir o mesmo servidor web nesta família.
+        const porta = cam.httpPort ?? cam.onvifPort;
+        if (!porta) continue;
+        let senha: string;
+        try { senha = this.cryptoService.decrypt(cam.passwordEncrypted); } catch { continue; }
+        this.assinar(
+          { cameraId: cam.id, host: cam.ip, porta, usuario: cam.username, senha },
+          (evento) => void this.persistir(evento, cam.name),
+        );
+      }
+      // Câmera que saiu do escopo (desativada, offline) perde o fluxo.
+      const esperadas = new Set(cameras.map((c) => c.id));
+      for (const id of this.ativas()) if (!esperadas.has(id)) this.cancelar(id);
+    } catch (erro) {
+      this.logger.warn(`Sincronização de eventos Intelbras falhou: ${erro instanceof Error ? erro.message : String(erro)}`);
+    }
+  }
+
+  /**
+   * Grava o evento.
+   *
+   * O payload do fabricante vai INTEIRO no metadata, ao lado da observação já
+   * separada — perder o que ainda não sabemos ler seria jogar fora a
+   * inteligência que o cliente comprou. O relógio da CÂMERA é preservado
+   * quando ela o informa: gravar o nosso como se fosse o dela apagaria a
+   * evidência de uma divergência de horário.
+   */
+  private async persistir(evento: EventoRecebido, nomeDaCamera: string) {
+    const o = evento.observacao;
+    const ocorridoEm = o.ocorridoEm ? new Date(o.ocorridoEm * 1000) : new Date();
+    const descricao = [
+      o.regra,
+      o.tipoDeObjeto,
+      o.direcao,
+      o.placa ? `placa ${o.placa}` : null,
+      o.pessoa ? `${o.pessoa} (${o.similaridade ?? '?'}%)` : null,
+    ].filter(Boolean).join(' · ') || evento.codigoDoFabricante;
+
+    await this.prisma.cameraEvent.create({
+      data: {
+        cameraId: evento.cameraId,
+        type: evento.tipo,
+        severity: 'INFO',
+        message: `${nomeDaCamera}: ${descricao}`,
+        occurredAt: ocorridoEm,
+        metadata: {
+          origem: 'intelbras',
+          codigoDoFabricante: evento.codigoDoFabricante,
+          acao: evento.acao,
+          observacao: o,
+          bruto: evento.bruto,
+        } as never,
+      },
+    }).catch((e) => this.logger.warn(`Falha ao gravar evento Intelbras: ${e.message}`));
+  }
+
   private readonly logger = new Logger(IntelbrasEventsService.name);
   private readonly ativos = new Map<string, Assinatura>();
 

@@ -17,11 +17,13 @@ import { CamerasService } from './cameras.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { PortCheckerService } from '../common/network/port-checker.service';
 import { OnvifEventsService } from './onvif-events.service';
+import { IntelbrasEventsService } from './intelbras-events.service';
+import { RtmpIngestSourceService } from './rtmp-ingest-source.service';
 
 @Module({
   imports: [AuditModule, AccessControlModule, AlarmsModule, forwardRef(() => RecordingsModule)],
   controllers: [CamerasController],
-  providers: [PendingIngestRegistry, CamerasService, CryptoService, PortCheckerService, OnvifEventsService],
-  exports: [PendingIngestRegistry, CamerasService, CryptoService, PortCheckerService, OnvifEventsService],
+  providers: [PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
+  exports: [PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
 })
 export class CamerasModule {}

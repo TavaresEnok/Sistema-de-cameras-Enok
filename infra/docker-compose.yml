@@ -268,9 +268,8 @@ services:
   # câmera conecta, é aceita e desliga em ~150 ms sem um quadro. O SRS responde
   # e repassa; provado em laboratório com a câmera de teste ficando ONLINE.
   #
-  # NÃO é fronteira de segurança: a autorização de publicação continua no
-  # MediaMTX → mediamtx-auth do DRAC. Path não vinculado a uma câmera é recusado
-  # lá e vira tentativa pendente, igual a antes. Aqui é só tradução de protocolo.
+  # O callback on_publish autoriza já no SRS. O MediaMTX repete a autorização
+  # como segunda barreira; path desconhecido não ocupa conexão de forward.
   #
   # Imagem fixada por digest; API/HTTP/DVR do SRS desligados na srs.conf.
   rtmp-ingest:
@@ -286,7 +285,11 @@ services:
     cap_drop:
       - ALL
     pids_limit: 256
-    mem_limit: 256m
+    mem_limit: ${SRS_MEMORY_LIMIT:-512m}
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # O SRS escreve só o pid; read_only + este tmpfs cobre isso.
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=8m
@@ -294,14 +297,62 @@ services:
     command: ["./objs/srs", "-c", "conf/srs.conf"]
     ports:
       - "${MEDIAMTX_RTMP_PORT:-1935}:1935/tcp"
+      - "127.0.0.1:${SRS_EXPORTER_PORT:-9972}:9972/tcp"
     volumes:
       - ./rtmp-ingest/srs.conf:/usr/local/srs/conf/srs.conf:ro
     depends_on:
-      - mediamtx
+      mediamtx:
+        condition: service_healthy
+      rtmp-callback:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/bin/bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9972 && printf 'GET /metrics HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     # SÓ rtmp-net: o tradutor alcança o MediaMTX e nada mais. Sem acesso a
     # postgres/redis/api, um SRS comprometido não tem para onde se mover.
     networks:
       - rtmp-net
+
+  # Ponte mínima entre a rede isolada do parser SRS e um único endpoint da API.
+  # O SRS continua sem acesso direto a postgres/redis/API; este nginx só expõe
+  # /on-publish e injeta o token interno no encaminhamento.
+  rtmp-callback:
+    image: nginx:alpine
+    container_name: vms-rtmp-callback
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "101:101"
+    pids_limit: 64
+    mem_limit: 64m
+    logging: *default-logging
+    environment:
+      - CALLBACK_TOKEN=${MEDIAMTX_AUTH_CALLBACK_TOKEN:?MEDIAMTX_AUTH_CALLBACK_TOKEN is required}
+    volumes:
+      - ./rtmp-ingest/callback-nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    tmpfs:
+      - /etc/nginx/conf.d:rw,noexec,nosuid,nodev,size=1m,uid=101,gid=101
+      - /var/cache/nginx:rw,noexec,nosuid,nodev,size=8m,uid=101,gid=101
+      - /var/run:rw,noexec,nosuid,nodev,size=1m,uid=101,gid=101
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - rtmp-net
+      - vms-net
 
   adminer:
     image: adminer:latest
@@ -336,6 +387,9 @@ services:
       # commit 43aa314). O padrão continua loopback.
       - "${DRAC_API_BIND:-127.0.0.1}:3000:3000"
     environment:
+      # Fluxo de eventos analíticos Intelbras (eventManager.cgi). DESLIGADO
+      # por padrão: instalação sem câmera Intelbras não paga por isto.
+      - INTELBRAS_EVENTS_ENABLED=${INTELBRAS_EVENTS_ENABLED:-false}
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${POSTGRES_USER:-vms}:${POSTGRES_PASSWORD:-change_me_postgres_password}@postgres:5432/${POSTGRES_DB:-vms_db}
       - REDIS_HOST=redis
@@ -402,6 +456,11 @@ services:
       # `-c copy` do bitstream original é invariante de qualidade).
       - CAMERA_SOURCE_GATEWAY_ENABLED=${CAMERA_SOURCE_GATEWAY_ENABLED:-true}
       - FFMPEG_RECORDING_CODEC_MODE=${FFMPEG_RECORDING_CODEC_MODE:-copy}
+      # Gravação contínua é estado DESEJADO no banco e precisa sobreviver a
+      # restart/deploy da API. Sem auto-start, toda manutenção criava um buraco
+      # até alguém clicar em Gravar novamente.
+      - RECORDING_AUTO_START_ENABLED=${RECORDING_AUTO_START_ENABLED:-true}
+      - RECORDING_AUTO_START_DELAY_MS=${RECORDING_AUTO_START_DELAY_MS:-10000}
       - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - RECORDING_RETENTION_DAYS=${RECORDING_RETENTION_DAYS:-7}
       - RETENTION_USE_BULLMQ=${RETENTION_USE_BULLMQ:-true}
@@ -428,6 +487,7 @@ services:
       - MEDIAMTX_SOURCE_ON_DEMAND_CLOSE_AFTER=${MEDIAMTX_SOURCE_ON_DEMAND_CLOSE_AFTER:-5m}
       - MEDIAMTX_RUN_ON_DEMAND_CLOSE_AFTER=${MEDIAMTX_RUN_ON_DEMAND_CLOSE_AFTER:-5m}
       - MEDIAMTX_SELECTED_RUN_ON_DEMAND_CLOSE_AFTER=${MEDIAMTX_SELECTED_RUN_ON_DEMAND_CLOSE_AFTER:-90s}
+      - RTMP_STALL_THRESHOLD_SECONDS=${RTMP_STALL_THRESHOLD_SECONDS:-20}
       - MEDIAMTX_WARM_PATHS_ON_BOOT=${MEDIAMTX_WARM_PATHS_ON_BOOT:-true}
       - MEDIAMTX_WARM_SELECTED_PATHS_ON_BOOT=${MEDIAMTX_WARM_SELECTED_PATHS_ON_BOOT:-false}
       - ALARM_WEBHOOK_ALLOWED_HOSTS=${ALARM_WEBHOOK_ALLOWED_HOSTS:-}
@@ -810,6 +870,10 @@ services:
     # (PID 1) não faz reaping e cada ffmpeg de restream órfão vira zumbi que acumula
     # para sempre (já observado: centenas). Em escala isso esgota a tabela de PIDs.
     init: true
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     logging: *default-logging
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
