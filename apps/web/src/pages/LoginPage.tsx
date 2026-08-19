@@ -184,13 +184,13 @@ export default function LoginPage() {
 
         {/* Marca */}
         <div className="text-center" style={{ marginBottom: 28 }}>
-          <div className="relative mx-auto" style={{ width: 60, height: 60, marginBottom: 16 }}>
+          <div className="relative mx-auto w-fit" style={{ height: 60, minWidth: 60, maxWidth: 236, marginBottom: 16 }}>
             <div style={{ position: 'absolute', inset: -6, borderRadius: 20, background: 'radial-gradient(circle, hsl(var(--primary) / 0.22), transparent 70%)', filter: 'blur(2px)' }} />
             <div
-              className="relative flex h-full w-full items-center justify-center overflow-hidden"
-              style={{ borderRadius: 17, background: 'linear-gradient(150deg, var(--acc-dim), transparent)', border: '1px solid var(--acc-bdr)' }}
+              className="relative flex h-full min-w-[60px] max-w-[236px] items-center justify-center overflow-hidden px-3"
+              style={{ width: 'fit-content', borderRadius: 17, background: 'linear-gradient(150deg, var(--acc-dim), transparent)', border: '1px solid var(--acc-bdr)' }}
             >
-              {logoDataUrl ? <img src={logoDataUrl} alt={facilityName} className="h-[30px] w-[30px] object-contain" /> : <LogoAjustCam size={30} />}
+              {logoDataUrl ? <img src={logoDataUrl} alt={facilityName} className="max-h-[44px] min-h-[30px] w-auto max-w-[210px] object-contain" /> : <LogoAjustCam size={30} />}
             </div>
           </div>
           <h1 className="text-[23px] font-bold" style={{ color: 'var(--tx)', letterSpacing: '-0.01em' }}>{facilityName}</h1>

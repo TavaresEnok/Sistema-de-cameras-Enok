@@ -174,8 +174,8 @@ export function Sidebar({
       {/* ── Brand header ── */}
       <div className="sidebar-brand flex items-center h-14 px-3 shrink-0">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-          <div className="sidebar-mark shrink-0 w-8 h-8 rounded-xl flex items-center justify-center overflow-hidden">
-            {logoDataUrl ? <img src={logoDataUrl} alt={facilityName} className="w-full h-full object-contain" /> : <Shield className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />}
+          <div className={`sidebar-mark shrink-0 h-8 rounded-xl flex items-center justify-center overflow-hidden ${logoDataUrl ? 'w-fit min-w-8 max-w-[108px]' : 'w-8'}`}>
+            {logoDataUrl ? <img src={logoDataUrl} alt={facilityName} className="h-full w-auto max-w-[108px] object-contain" /> : <Shield className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />}
           </div>
           {isExpanded && (
             <motion.div
@@ -202,9 +202,9 @@ export function Sidebar({
       {/* ── Navigation ── */}
       <nav className="flex-1 overflow-y-auto px-2 py-4 space-y-5">
         {visibleSections.map(section => (
-          <div key={section.label} className="space-y-1.5">
+          <div key={section.label} className="sidebar-section space-y-1.5">
             {isExpanded && (
-              <div className="flex items-center gap-2 px-3 pt-1 text-[9px] font-mono uppercase tracking-[0.18em] text-[hsl(var(--muted-foreground)_/_0.7)]">
+              <div className="sidebar-section-label flex items-center gap-2 px-3 text-[9px] font-mono uppercase tracking-[0.18em]">
                 <section.icon className="w-3 h-3" />
                 <span>{section.label}</span>
               </div>

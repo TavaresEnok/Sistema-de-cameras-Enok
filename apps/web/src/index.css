@@ -320,6 +320,26 @@
     border: 1px solid hsl(var(--primary) / 0.20);
   }
 
+  /* Os grupos são arquitetura de navegação, não itens clicáveis. Um trilho
+     discreto e um fundo um pouco mais escuro deixam a hierarquia evidente sem
+     disputar atenção com a página ativa nem depender da marca do cliente. */
+  .sidebar-section + .sidebar-section {
+    border-top: 1px solid hsl(var(--sidebar-border) / 0.72);
+    padding-top: 0.9rem;
+  }
+
+  .sidebar-section-label {
+    min-height: 22px;
+    border-left: 2px solid hsl(var(--sidebar-border));
+    border-radius: 4px;
+    background: color-mix(in srgb, hsl(var(--sidebar)) 88%, black 12%);
+    color: color-mix(in srgb, hsl(var(--sidebar-foreground)) 62%, hsl(var(--sidebar)) 38%);
+  }
+
+  :root:not(.dark) .sidebar-section-label {
+    background: color-mix(in srgb, hsl(var(--sidebar)) 93%, black 7%);
+  }
+
   .sidebar-toggle, .sidebar-item, .sidebar-footer-btn, .sidebar-user {
     border: 1px solid transparent;
   }
