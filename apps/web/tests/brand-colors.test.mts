@@ -50,6 +50,7 @@ test('buildBrandColorCss: mapeia a PALETA completa (fundo/texto/borda/card/secon
   // Fundo + texto do fundo
   assert.match(css!, /:root:not\(\.dark\)\{[^}]*--background:0 0% 100%;/);
   assert.match(css!, new RegExp(`:root:not\\(\\.dark\\)\\{[^}]*--foreground:${hexToHslChannels('#111827')!};`));
+  assert.match(css!, /--bg:#ffffff;/, 'fundo da camada de design também deve seguir a marca');
   // Superfície replicada em card/popover/secondary/muted/accent
   const surface = hexToHslChannels('#f3f5f9')!;
   for (const v of ['--card', '--popover', '--secondary', '--muted', '--accent']) {
@@ -60,11 +61,16 @@ test('buildBrandColorCss: mapeia a PALETA completa (fundo/texto/borda/card/secon
   const mutedFg = hexToHslChannels('#4e5a6c')!;
   assert.match(css!, new RegExp(`:root:not\\(\\.dark\\)\\{[^}]*--card-foreground:${surfFg};`));
   assert.match(css!, new RegExp(`:root:not\\(\\.dark\\)\\{[^}]*--muted-foreground:${mutedFg};`));
+  assert.match(css!, /--surf-1:#f3f5f9;/, 'cards da camada de design também devem seguir a marca');
+  assert.match(css!, new RegExp(`--tx:hsl\\(${surfFg}\\);`), 'texto da camada de design deve seguir a marca');
+  assert.match(css!, new RegExp(`--tx-2:hsl\\(${mutedFg}\\);`), 'subtexto da camada de design deve seguir a marca');
   // Bordas
   const border = hexToHslChannels('#d8dee8')!;
   assert.match(css!, new RegExp(`:root:not\\(\\.dark\\)\\{[^}]*--border:${border};`));
   assert.match(css!, new RegExp(`:root:not\\(\\.dark\\)\\{[^}]*--card-border:${border};`));
   assert.match(css!, new RegExp(`:root:not\\(\\.dark\\)\\{[^}]*--popover-border:${border};`));
+  assert.match(css!, new RegExp(`--sidebar-border:${border};`), 'menu lateral deve receber a borda da marca');
+  assert.match(css!, new RegExp(`--bdr:hsl\\(${border}\\);`), 'borda da camada de design deve seguir a marca');
   // Escuro não foi informado → nenhum bloco .dark
   assert.ok(!/\.dark\{/.test(css!), 'sem cores escuras não deve emitir bloco .dark');
 });

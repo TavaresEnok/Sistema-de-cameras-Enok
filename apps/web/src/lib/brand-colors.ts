@@ -83,7 +83,14 @@ function buildThemeVars(c: ThemeColors, escuro: boolean): string[] {
   const primary = hexToHslChannels(c.primary);
   if (primary) {
     const primaryFg = hexToHslChannels(c.buttonText) ?? readableForegroundChannels(c.primary);
-    decls.push(`--primary:${primary}`, `--ring:${primary}`, `--primary-foreground:${primaryFg}`);
+    decls.push(
+      `--primary:${primary}`,
+      `--ring:${primary}`,
+      `--primary-foreground:${primaryFg}`,
+      `--sidebar-primary:${primary}`,
+      `--sidebar-ring:${primary}`,
+      `--sidebar-primary-foreground:${primaryFg}`,
+    );
 
     // A FAMÍLIA --acc* TAMBÉM É ACENTO, e ficava de fora. O app tem duas famílias
     // de cor em paralelo: os tokens shadcn (--primary, em canais HSL) e os tokens
@@ -114,7 +121,15 @@ function buildThemeVars(c: ThemeColors, escuro: boolean): string[] {
   const background = hexToHslChannels(c.background);
   if (background) {
     const backgroundFg = hexToHslChannels(c.backgroundText) ?? readableForegroundChannels(c.background);
-    decls.push(`--background:${background}`, `--foreground:${backgroundFg}`);
+    decls.push(
+      `--background:${background}`,
+      `--foreground:${backgroundFg}`,
+      // A aplicação ainda possui uma camada de componentes que usa tokens
+      // literais (--bg/--surf/--tx), além dos tokens HSL do Tailwind. Sem este
+      // espelhamento, login, barras e toolbars conservavam a identidade do tema
+      // base mesmo quando a instalação tinha uma paleta própria.
+      `--bg:${String(c.background)}`,
+    );
   }
 
   // Superfícies (card/popover/secondary/muted/accent) + textos legíveis sobre elas.
@@ -133,13 +148,36 @@ function buildThemeVars(c: ThemeColors, escuro: boolean): string[] {
       `--secondary-foreground:${surfaceFg}`,
       `--accent-foreground:${surfaceFg}`,
       `--muted-foreground:${mutedFg}`,
+      `--sidebar:${surface}`,
+      `--sidebar-foreground:${mutedFg}`,
+      `--sidebar-accent:${surface}`,
+      `--sidebar-accent-foreground:${surfaceFg}`,
+      // Tokens da camada de design. As variações preservam hierarquia visual
+      // usando a cor de texto da própria paleta, sem reintroduzir azul/cinza de
+      // outro cliente.
+      `--surf-1:${String(c.surface)}`,
+      `--surf-2:color-mix(in srgb, ${String(c.surface)} 94%, hsl(${surfaceFg}))`,
+      `--surf-3:color-mix(in srgb, ${String(c.surface)} 88%, hsl(${surfaceFg}))`,
+      `--surf-4:color-mix(in srgb, ${String(c.surface)} 80%, hsl(${surfaceFg}))`,
+      `--tx:hsl(${surfaceFg})`,
+      `--tx-2:hsl(${mutedFg})`,
+      `--tx-3:hsl(${mutedFg})`,
+      `--tx-4:hsl(${mutedFg})`,
     );
   }
 
   // Bordas (borda geral + bordas de card/popover).
   const border = hexToHslChannels(c.border);
   if (border) {
-    decls.push(`--border:${border}`, `--card-border:${border}`, `--popover-border:${border}`);
+    decls.push(
+      `--border:${border}`,
+      `--card-border:${border}`,
+      `--popover-border:${border}`,
+      `--sidebar-border:${border}`,
+      `--bdr:hsl(${border})`,
+      `--bdr-lo:hsl(${border} / 0.65)`,
+      `--bdr-hi:hsl(${border} / 1)`,
+    );
   }
 
   return decls;
