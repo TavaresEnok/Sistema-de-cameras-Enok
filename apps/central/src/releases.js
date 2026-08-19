@@ -80,6 +80,11 @@ function validarPromocao(pedido, { historico = [], agora = new Date(), permitirS
     release: {
       commit,
       repositoryUrl: repositoryUrl || null,
+      // SHA-256 do instalador daquele commit. Sem ele a release sabe QUAL
+      // versão foi aprovada e não sabe PROVAR o script que a instala — e o
+      // artefato teria de voltar a confiar no ambiente, que é o que separava
+      // "promover" de "instalar" (19/08/2026).
+      installerSha256: String(pedido?.installerSha256 ?? '').trim().toLowerCase() || null,
       notas: String(pedido?.notas ?? '').trim().slice(0, 2000) || null,
       gate: pedido?.gate ?? null,
       rollback: Boolean(permitirSemGate && jaFoiAprovado),

@@ -609,11 +609,18 @@ function refreshInstallerGrant(
     forceToken = false,
     issueToken = true,
     now = new Date(),
+    release = null,
   } = {},
 ) {
-  const bindConfiguredArtifact = forceArtifact || !item.installerArtifact;
+  // REVINCULA quando a versão aprovada mudou. Antes só vinculava se o artefato
+  // não existisse, então instalação já provisionada ficava presa ao commit
+  // antigo para sempre — promover não mudava o que era instalado (19/08/2026).
+  const desatualizado = Boolean(
+    release?.commit && item.installerArtifact && item.installerArtifact.id !== release.commit,
+  );
+  const bindConfiguredArtifact = forceArtifact || !item.installerArtifact || desatualizado;
   const artifact = bindConfiguredArtifact
-    ? configuredInstallerArtifact(process.env, now)
+    ? configuredInstallerArtifact(process.env, now, release)
     : item.installerArtifact;
   const result = issueInstallerGrant(item, {
     artifact,
@@ -1868,6 +1875,7 @@ async function handleProvision(req, res, db, actor) {
     // Reprovisionar é uma nova aprovação: captura o artefato configurado agora,
     // persiste o vínculo commit+URL+hash e invalida qualquer comando anterior.
     const installerToken = refreshInstallerGrant(item, {
+      release: releaseAtual(db),
       forceArtifact: true,
       forceToken: true,
     });
@@ -1907,7 +1915,7 @@ async function handleGetInstallerCommand(req, res, db, actor, installationId) {
     // Comandos novos para registros legados recebem o artefato aprovado atual.
     // Registros já vinculados preservam o mesmo artefato. Cada nova consulta
     // administrativa rotaciona o token, invalidando o comando anterior.
-    const installerToken = refreshInstallerGrant(item, { forceToken: true });
+    const installerToken = refreshInstallerGrant(item, { forceToken: true, release: releaseAtual(db) });
     installer = buildInstallerResponse(item, centralUrl, installerToken);
   } catch (error) {
     if (error instanceof InstallerConfigurationError) {
@@ -3046,7 +3054,7 @@ async function handleRemoteInstall(req, res, db, actor, installationId) {
   try {
     // Instalações antigas só podem entrar no caminho SSH depois de receber o
     // mesmo vínculo imutável usado pelos comandos manuais.
-    refreshInstallerGrant(item, { issueToken: false });
+    refreshInstallerGrant(item, { issueToken: false, release: releaseAtual(db) });
     command = buildRemoteInstallCommand(item, centralUrl);
   } catch (error) {
     if (error instanceof InstallerConfigurationError) {

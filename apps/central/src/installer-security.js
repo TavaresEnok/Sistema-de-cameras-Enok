@@ -79,9 +79,23 @@ function checkedUrl(value, { allowInsecureLoopback = false } = {}) {
   return parsed;
 }
 
-function configuredInstallerArtifact(env = process.env, now = new Date()) {
-  const commit = fullGitCommit(env.DRAC_CENTRAL_INSTALLER_COMMIT);
-  const sha256 = fullSha256(env.DRAC_CENTRAL_INSTALLER_SHA256);
+/**
+ * O artefato instalador — do RELEASE PROMOVIDO quando existe, do ambiente
+ * quando não.
+ *
+ * Defeito encontrado em 19/08/2026, validando a instalação pela Central:
+ * promover uma versão devolvia HTTP 200, gravava `db.release`… e o comando de
+ * instalação continuava apontando para o commit ANTIGO. O artefato lia só
+ * variáveis de ambiente, então "promover" e "instalar" eram dois sistemas
+ * desligados um do outro — o gate de qualidade não protegia nada, porque o que
+ * a Central mandava instalar nunca passava por ele.
+ *
+ * O ambiente vira semente: serve para a primeira instalação, antes de existir
+ * release. A partir da primeira promoção, quem manda é o release.
+ */
+function configuredInstallerArtifact(env = process.env, now = new Date(), release = null) {
+  const commit = fullGitCommit(release?.commit || env.DRAC_CENTRAL_INSTALLER_COMMIT);
+  const sha256 = fullSha256(release?.installerSha256 || env.DRAC_CENTRAL_INSTALLER_SHA256);
   const template = String(
     env.DRAC_CENTRAL_INSTALLER_URL_TEMPLATE || DEFAULT_INSTALLER_URL_TEMPLATE,
   ).trim();
