@@ -518,10 +518,16 @@ function installerEnvironment(item, centralUrl) {
     DRAC_CENTRAL_URL: centralUrl,
     DRAC_INSTALLER_COMMIT: item.installerArtifact.commit || item.installerArtifact.id,
     DRAC_REPO_URL: item.installerArtifact.repositoryUrl,
-    // A política de egress das câmeras depende da topologia local e não pode
-    // ser inventada pela Central. O instalador perguntará apenas esse dado que
-    // não estiver previamente definido.
-    DRAC_AUTO_YES: 'false',
+    // A política de egress das câmeras depende da topologia local — a Central
+    // não a INVENTA, mas ela pode ser INFORMADA no provisionamento. Sem isso a
+    // instalação remota nunca era desassistida: o script parava perguntando as
+    // redes das câmeras e ficava esperando alguém digitar NO SERVIDOR do
+    // cliente, o que anula o sentido de instalar pelo painel (19/08/2026).
+    ...(item.cameraAllowedCidrs
+      ? { DRAC_CAMERA_ALLOWED_CIDRS: item.cameraAllowedCidrs }
+      : {}),
+    // Só entra em modo automático quando NADA ficou por perguntar.
+    DRAC_AUTO_YES: item.cameraAllowedCidrs ? 'true' : 'false',
   };
 }
 
@@ -1834,6 +1840,9 @@ async function handleProvision(req, res, db, actor) {
   const requestedId = String(body.installationId || '').trim();
   const serverAddress = String(body.serverAddress || '').trim();
   const notes = String(body.notes || '').trim();
+  // Redes das câmeras (CIDR, separadas por vírgula). Opcional: sem elas o
+  // instalador pergunta no servidor, como antes.
+  const cameraAllowedCidrs = String(body.cameraAllowedCidrs || '').trim();
 
   if (!customerName) return json(req, res, 400, { error: 'missing_customer_name', message: 'Informe o nome do cliente.' });
 
@@ -1864,6 +1873,7 @@ async function handleProvision(req, res, db, actor) {
     provisionedBy: actor.email,
     provisionedServerAddress: serverAddress || null,
     provisionNotes: notes || null,
+    cameraAllowedCidrs: cameraAllowedCidrs || existing?.cameraAllowedCidrs || null,
     metrics: existing?.metrics || {},
     alerts: existing?.alerts || [],
     alertHistory: Array.isArray(existing?.alertHistory) ? existing.alertHistory : [],
