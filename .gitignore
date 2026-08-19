@@ -66,6 +66,7 @@ webrtc-implementation-guide/
 
 # === Segredos e binários (nunca commitar) — adicionado 2026-06-30 ===
 infra/build-agent.env
+infra/.credenciais-iniciais
 infra/apk/
 /drac-mobile.apk
 /drac-web.apk
