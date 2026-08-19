@@ -981,12 +981,26 @@ print_summary() {
 Instalacao DRAC concluida.
 
 ${bloco_acesso}
+# O compose de produção publica em 127.0.0.1 por padrão (bom: não expõe o
+# painel do cliente à internet sem TLS). Mas o resumo abaixo anunciava o IP do
+# servidor mesmo assim — um endereço que NUNCA responderia, e o operador
+# concluía que a instalação falhou. Aconteceu na instalação da Vibe
+# (19/08/2026). Dizer a verdade sobre o que foi publicado é o mínimo.
+DRAC_AVISO_BIND=""
+if [ "$(env_get "$DRAC_INSTALL_DIR/infra/.env" DRAC_WEB_BIND)" != "0.0.0.0" ]; then
+  DRAC_AVISO_BIND="
+    ^ acessível SOMENTE deste servidor (publicado em 127.0.0.1).
+      Para abrir à rede: DRAC_WEB_BIND=0.0.0.0 e DRAC_API_BIND=0.0.0.0 em
+      infra/.env, e subir de novo. O recomendado em produção é manter assim e
+      colocar um proxy reverso com HTTPS na frente."
+fi
+
 
 Painel local:
-  http://${DRAC_SERVER_IP}:5173
+  http://${DRAC_SERVER_IP}:5173${DRAC_AVISO_BIND}
 
 API local:
-  http://${DRAC_SERVER_IP}:3000/health
+  http://${DRAC_SERVER_IP}:3000/health${DRAC_AVISO_BIND}
 
 Central configurada:
   ${DRAC_CENTRAL_URL}
