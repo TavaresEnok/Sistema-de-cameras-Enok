@@ -39,3 +39,27 @@ test('payload remoto sem nome é rejeitado e não altera configurações', async
   await assert.rejects(() => service.applyManagedBranding({ brandPrimaryColor: '#112233' }), /sem nome/);
   assert.equal(called, false);
 });
+
+test('snapshot local enviado à Central contém apenas a marca simples', async () => {
+  const service = Object.create(CloudConnectorService.prototype) as any;
+  service.moduleRef = {
+    get: () => ({
+      getBranding: async () => ({
+        facilityName: 'D-GUARDIAN',
+        brandLogoDataUrl: 'data:image/png;base64,AAAA',
+        brandUseDefaultColors: false,
+        brandPrimaryColor: '#FFB407',
+        brandBackgroundColor: '#0E0C08',
+        brandDangerColor: '#ff0000',
+        hiddenNavPaths: '/alarms',
+      }),
+    }),
+  };
+  assert.deepEqual(await service.getManagedBrandingState(), {
+    facilityName: 'D-GUARDIAN',
+    brandLogoDataUrl: 'data:image/png;base64,AAAA',
+    brandUseDefaultColors: false,
+    brandPrimaryColor: '#ffb407',
+    brandBackgroundColor: '#0e0c08',
+  });
+});

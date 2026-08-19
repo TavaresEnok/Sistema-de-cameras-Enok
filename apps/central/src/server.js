@@ -1391,6 +1391,10 @@ function licenseResponse(item) {
     // autenticado do heartbeat; a Central nunca precisa conhecer a senha de um
     // administrador local nem alcançar uma porta atrás de NAT/CGNAT.
     branding: item.branding || null,
+    // Confirma o snapshot de marca reportado pela instalação. Sem este ACK o
+    // cliente continuaria enviando um logo base64 em todo heartbeat; com ele,
+    // só reenvia quando a identidade local realmente mudar.
+    brandingAcceptedHash: item.reportedBrandingHash || null,
     // Storages EXCLUÍDOS aqui. Excluir na Central quer dizer "este destino
     // acabou e o conteúdo dele já foi embora" — a instalação usa esta lista
     // para expurgar do banco tudo que apontava para ele. É LISTA, e não um
@@ -1635,6 +1639,20 @@ async function handleHeartbeat(req, res) {
   const now = new Date().toISOString();
   const metrics = body.summary || body.metrics || {};
 
+  // A instalação pode estar atrás de NAT e não expor /settings/branding para a
+  // Central (caso real: D-GUARDIAN). Ela reporta a marca pelo canal de saída
+  // autenticado somente quando o hash muda. Validamos antes de persistir para
+  // não transformar o heartbeat em armazenamento arbitrário de base64.
+  let reportedBranding = existing.reportedBranding || null;
+  let reportedBrandingHash = existing.reportedBrandingHash || null;
+  if (body.brandingState != null) {
+    const checked = validateManagedBranding(body.brandingState, existing.customerName || existing.name || installationId);
+    if (checked.ok) {
+      reportedBranding = checked.value;
+      reportedBrandingHash = crypto.createHash('sha256').update(JSON.stringify(checked.value)).digest('hex');
+    }
+  }
+
   // ── CONFIRMAÇÃO DE APLICAÇÃO ────────────────────────────────────────────────
   // A instalação reporta o que de fato aplicou. É isto que substitui a
   // inferência por data: antes, `policyPending` só comparava `updatedAt` com o
@@ -1709,6 +1727,8 @@ async function handleHeartbeat(req, res) {
     server: body.server || existing.server || null,
     storage: body.storage || existing.storage || null,
     production: body.production || existing.production || null,
+    reportedBranding,
+    reportedBrandingHash,
     heartbeatHistory,
     lastPayloadHash: crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex'),
     licenseStatus: existing.licenseStatus || LICENSE_ACTIVE,
@@ -2192,7 +2212,9 @@ function validateManagedBranding(raw, fallbackName) {
 
 function managedBrandingFromInstallation(item, remoteBranding = null) {
   if (item.branding) return item.branding;
-  const candidate = remoteBranding && typeof remoteBranding === 'object' ? remoteBranding : {};
+  const candidate = item.reportedBranding && typeof item.reportedBranding === 'object'
+    ? item.reportedBranding
+    : remoteBranding && typeof remoteBranding === 'object' ? remoteBranding : {};
   const fallback = {
     facilityName: effectiveAppName(item),
     brandLogoDataUrl: '',
@@ -2253,7 +2275,7 @@ async function pushAppToBuildAgent(item, actor, req, db, installationId) {
   const slug = deriveAppSlug(item);
   const appName = effectiveAppName(item);
   const packageId = effectiveAppPackageId(item);
-  const remoteBranding = item.branding ? null : await fetchClientBranding(apiUrl);
+  const remoteBranding = item.branding || item.reportedBranding ? null : await fetchClientBranding(apiUrl);
   const branding = managedBrandingFromInstallation(item, remoteBranding);
   const payload = { slug, appName, apiUrl, packageId };
   if (!branding.brandUseDefaultColors && branding.brandPrimaryColor) payload.primaryColor = branding.brandPrimaryColor;
@@ -3033,7 +3055,7 @@ async function handleInstallationApp(req, res, db, installationId) {
   // somar timeouts e deixar o clique em "Editar" parecendo travado.
   const [agentResult, remoteBranding] = await Promise.all([
     agentFetch('/clients').catch(() => null),
-    item.branding ? Promise.resolve(null) : fetchClientBranding(deriveClientApiUrl(item), 3000),
+    item.branding || item.reportedBranding ? Promise.resolve(null) : fetchClientBranding(deriveClientApiUrl(item), 3000),
   ]);
   const client = (agentResult?.data?.clients || []).find((c) => c.slug === slug) || null;
   return json(req, res, 200, {

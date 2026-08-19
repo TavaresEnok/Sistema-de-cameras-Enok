@@ -20,7 +20,7 @@ async function provision(central, id) {
   return db.installations[id].licenseKey;
 }
 
-async function heartbeat(central, id, licenseKey, configState = undefined) {
+async function heartbeat(central, id, licenseKey, configState = undefined, extra = {}) {
   const response = await fetch(`${central.base}/api/agent/heartbeat`, {
     method: 'POST',
     headers: {
@@ -28,7 +28,7 @@ async function heartbeat(central, id, licenseKey, configState = undefined) {
       'x-drac-installation-id': id,
       'x-drac-license-key': licenseKey,
     },
-    body: JSON.stringify({ summary: {}, ...(configState ? { configState } : {}) }),
+    body: JSON.stringify({ summary: {}, ...(configState ? { configState } : {}), ...extra }),
   });
   const body = await response.text();
   assert.equal(response.status, 200, body);
@@ -73,6 +73,26 @@ test('a Central salva a marca simples e a entrega no heartbeat autenticado', asy
   const db = JSON.parse(await fsp.readFile(path.join(central.dir, 'installations.json'), 'utf8'));
   assert.equal(db.installations[id].appliedConfigRevision, result.configRevision);
   assert.ok(db.auditEvents.some((event) => event.type === 'installation.branding_changed'));
+});
+
+test('instalação atrás de NAT reporta a marca uma vez e recebe confirmação por hash', async (t) => {
+  const central = await startCentral();
+  t.after(() => central.stop());
+  const id = 'marca-atras-de-nat';
+  const licenseKey = await provision(central, id);
+  const brandingState = {
+    facilityName: 'D-GUARDIAN',
+    brandLogoDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+    brandUseDefaultColors: false,
+    brandPrimaryColor: '#ffb407',
+    brandBackgroundColor: '#0e0c08',
+  };
+  const response = await heartbeat(central, id, licenseKey, undefined, { brandingState });
+  assert.match(response.brandingAcceptedHash, /^[a-f0-9]{64}$/);
+
+  const db = JSON.parse(await fsp.readFile(path.join(central.dir, 'installations.json'), 'utf8'));
+  assert.deepEqual(db.installations[id].reportedBranding, brandingState);
+  assert.equal(db.installations[id].reportedBrandingHash, response.brandingAcceptedHash);
 });
 
 test('a Central recusa SVG e cor inválida antes de criar uma revisão', async (t) => {

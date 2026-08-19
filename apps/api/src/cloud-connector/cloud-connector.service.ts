@@ -3,7 +3,7 @@ import { ModuleRef } from '@nestjs/core';
 import { AlarmStatus, CameraStatus } from '@prisma/client';
 import axios from 'axios';
 import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as os from 'node:os';
 import { statfs, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -81,6 +81,9 @@ const SETTING_KEYS = [
   'cloud.appliedConfigRevision',
   'cloud.configApplyStatus',
   'cloud.configApplyError',
+  // Hash confirmado pela Central do último snapshot de marca. O logo pode ter
+  // centenas de KB; sem ACK ele viajaria de novo a cada minuto.
+  'cloud.brandingReportedHash',
   'cloud.reactivationArchiveRequestId',
   'cloud.reactivationArchiveStatus',
   'cloud.reactivationArchiveError',
@@ -213,6 +216,11 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
           ? [this.writeSetting('cloud.appliedConfigRevision', String(desiredRevision))]
           : []),
       ]);
+
+      if (payload.brandingStateHash
+        && response.data?.brandingAcceptedHash === payload.brandingStateHash) {
+        await this.writeSetting('cloud.brandingReportedHash', payload.brandingStateHash);
+      }
 
       // Cancelamento/recontratação usa o mesmo canal de saída do heartbeat. A
       // instalação pode estar atrás de NAT/CGNAT; a Central nunca tenta entrar
@@ -670,6 +678,13 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
     // de vida com a Central — deixar de reportar por causa de um setting seria
     // trocar um problema pequeno por perder a visibilidade da instalação.
     const applied = await this.readSettings().catch(() => ({} as Record<string, string>));
+    const brandingState = await this.getManagedBrandingState().catch(() => null);
+    const brandingStateHash = brandingState
+      ? createHash('sha256').update(JSON.stringify(brandingState)).digest('hex')
+      : null;
+    const shouldReportBranding = Boolean(
+      brandingStateHash && brandingStateHash !== applied['cloud.brandingReportedHash'],
+    );
     return {
       installation: {
         id: process.env.CLOUD_INSTALLATION_ID,
@@ -687,6 +702,7 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
         // como "pendente para sempre" uma config que a instalação nem conhece.
         supports: ['licenseStatus', 'restrictions', 'aiPolicy', 'cloudStorage', 'branding'],
       },
+      ...(shouldReportBranding ? { brandingState, brandingStateHash } : {}),
       summary: {
         status: appReadinessStatus === 'blocked' ? 'blocked' : appReadinessStatus === 'attention' ? 'attention' : 'ok',
         productionReadiness: appReadinessStatus,
@@ -1115,6 +1131,19 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       // e suas superfícies continuam nos padrões neutros do produto.
       brandLightPrimaryColor: useDefaultColors ? '#2563eb' : primaryColor,
     });
+  }
+
+  /** Snapshot mínimo da marca local para a Central preencher seu editor. */
+  private async getManagedBrandingState() {
+    const settings = this.moduleRef.get(SettingsService, { strict: false });
+    const branding = await settings.getBranding();
+    return {
+      facilityName: String(branding.facilityName || '').trim(),
+      brandLogoDataUrl: String(branding.brandLogoDataUrl || '').trim(),
+      brandUseDefaultColors: branding.brandUseDefaultColors === true,
+      brandPrimaryColor: String(branding.brandPrimaryColor || '').trim().toLowerCase(),
+      brandBackgroundColor: String(branding.brandBackgroundColor || '').trim().toLowerCase(),
+    };
   }
 
   private parseJsonSetting(value: string | undefined, fallback: unknown) {
