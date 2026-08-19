@@ -86,7 +86,10 @@ while read -r linha; do
       *" $destino "*) continue ;;
     esac
     exposto="$exposto\n    $nome  $mapa"
-  done < <(printf '%s' "$portas" | tr ',' '\n' | sed 's/^ *//')
+  # A quebra final é necessária: sem ela, `read` devolve EOF antes de executar
+  # o corpo para a última porta. Justamente a publicação 0.0.0.0 costuma ser a
+  # última depois de "80/tcp," e desaparecia da auditoria.
+  done < <(printf '%s\n' "$portas" | tr ',' '\n' | sed 's/^ *//')
 done < <(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null)
 
 if [ -z "$exposto" ]; then
@@ -170,6 +173,20 @@ curl -fsS --max-time 10 "$API/health" >/dev/null 2>&1 \
   && ok "API /health" || falha "API /health não respondeu" "$API/health"
 curl -fsS --max-time 10 "$WEB/" >/dev/null 2>&1 \
   && ok "painel web" || falha "painel web não respondeu" "$WEB/"
+
+# Um GET simples era falso-verde quando o CSP da instalação por IP convertia
+# os assets relativos para HTTPS numa porta que só fala HTTP. O HTML dava 200;
+# a tela real ficava sem CSS e JavaScript.
+if [[ "$WEB" == http://* ]]; then
+  WEB_HEADERS="$(curl -fsSI --max-time 10 "$WEB/" 2>/dev/null | tr -d '\r' || true)"
+  if printf '%s\n' "$WEB_HEADERS" | grep -qiE '^Content-Security-Policy:.*upgrade-insecure-requests'; then
+    falha "painel HTTP força assets para HTTPS" "CSP incompatível com $WEB — causará ERR_SSL_PROTOCOL_ERROR"
+  elif printf '%s\n' "$WEB_HEADERS" | grep -qi '^Strict-Transport-Security:'; then
+    falha "painel HTTP emite HSTS" "HSTS deve ficar somente no proxy HTTPS externo"
+  else
+    ok "política de transporte do painel é compatível com HTTP"
+  fi
+fi
 
 if [ -n "$TOKEN" ]; then
   # /role-permissions é a rota que respondia 500 em TODA instalação de cliente

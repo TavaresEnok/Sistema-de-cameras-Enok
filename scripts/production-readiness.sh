@@ -223,6 +223,20 @@ check_endpoints() {
   check_http "API health" "http://127.0.0.1:3000/health"
   check_http "Web local" "http://127.0.0.1:5173/"
 
+  # A porta local 5173 é HTTP puro. Se o próprio frontend mandar o navegador
+  # elevar recursos para HTTPS, o HTML responde 200 mas todos os CSS/JS falham
+  # com ERR_SSL_PROTOCOL_ERROR. Foi exatamente o falso-verde da instalação da
+  # Vibe em 19/08/2026.
+  local web_headers
+  web_headers="$(curl -fsSI --max-time 8 http://127.0.0.1:5173/ 2>/dev/null | tr -d '\r' || true)"
+  if printf '%s\n' "$web_headers" | grep -qiE '^Content-Security-Policy:.*upgrade-insecure-requests'; then
+    fail "Web HTTP força assets para HTTPS; a tela abrirá sem CSS/JavaScript"
+  elif printf '%s\n' "$web_headers" | grep -qi '^Strict-Transport-Security:'; then
+    fail "Web HTTP emite HSTS; essa política pertence somente ao proxy TLS externo"
+  elif [ -n "$web_headers" ]; then
+    ok "Web HTTP não anuncia uma política TLS incompatível com a porta 5173"
+  fi
+
   if [ "${CLOUD_CONNECTOR_ENABLED:-false}" = "true" ] && [ -n "${CLOUD_API_URL:-}" ]; then
     if docker exec vms-api node -e 'fetch(process.env.CLOUD_API_URL.replace(/\/$/,"")+"/api/health",{signal:AbortSignal.timeout(8000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(2))' >/dev/null 2>&1; then
       ok "DRAC Central respondeu: ${CLOUD_API_URL%/}/api/health"

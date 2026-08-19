@@ -72,3 +72,16 @@ test('o arquivo lido não está vazio (guarda contra teste falso-verde)', () => 
   assert.ok(conf.length > 500, `nginx.conf tem ${conf.length} caracteres — leitura suspeita`);
   assert.match(conf, /location\s+\/api\//, 'a rota /api/ sumiu do arquivo');
 });
+
+test('servidor HTTP interno não força recursos para HTTPS', () => {
+  assert.doesNotMatch(
+    conf,
+    /add_header\s+Content-Security-Policy[^;]*upgrade-insecure-requests/i,
+    'a porta 5173 também atende por HTTP; este CSP faria o navegador buscar os assets em HTTPS e quebraria a tela',
+  );
+  assert.doesNotMatch(
+    conf,
+    /add_header\s+Strict-Transport-Security/i,
+    'HSTS deve ser emitido apenas pelo proxy TLS externo, nunca pelo servidor HTTP interno',
+  );
+});

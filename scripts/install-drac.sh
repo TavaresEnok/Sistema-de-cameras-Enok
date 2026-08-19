@@ -525,7 +525,7 @@ env_set() {
 # As chaves que configuram uma máquina a SER um painel Central. Um cliente
 # nunca é central; estas linhas não têm o que fazer no .env dele. `CLOUD_*`
 # NÃO entra aqui — é o canal do cliente REPORTANDO à central, e é legítimo.
-CENTRAL_ONLY_ENV_KEYS="CENTRAL_DATA_DIR CENTRAL_BACKUP_INTERVAL_SECONDS CENTRAL_BACKUP_RETENTION_DAYS DRAC_CENTRAL_STORE_MODE DRAC_CENTRAL_ADMIN_EMAIL DRAC_CENTRAL_ADMIN_PASSWORD_HASH DRAC_CENTRAL_ADMIN_TOKEN DRAC_CENTRAL_ALLOWED_ORIGINS DRAC_CENTRAL_TRUSTED_PROXIES DRAC_CENTRAL_COOKIE_SECURE DRAC_CENTRAL_PUBLIC_URL DRAC_CENTRAL_INSTALLER_COMMIT DRAC_CENTRAL_INSTALLER_SHA256 DRAC_CENTRAL_INSTALLER_URL_TEMPLATE DRAC_CENTRAL_REPOSITORY_URL DRAC_CENTRAL_INSTALLER_TOKEN_TTL_SECONDS DRAC_CENTRAL_INSTALLER_TOKEN_MAX_DOWNLOADS"
+CENTRAL_ONLY_ENV_KEYS="CENTRAL_DATA_DIR CENTRAL_BACKUP_INTERVAL_SECONDS CENTRAL_BACKUP_RETENTION_DAYS DRAC_CENTRAL_ADMIN_EMAIL DRAC_CENTRAL_ADMIN_PASSWORD_HASH DRAC_CENTRAL_ADMIN_TOKEN DRAC_CENTRAL_ALLOWED_ORIGINS DRAC_CENTRAL_ARCHIVE_DIR DRAC_CENTRAL_ARCHIVE_KEY DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS DRAC_CENTRAL_COOKIE_SECURE DRAC_CENTRAL_INSTALLER_COMMIT DRAC_CENTRAL_INSTALLER_SHA256 DRAC_CENTRAL_INSTALLER_TOKEN_MAX_DOWNLOADS DRAC_CENTRAL_INSTALLER_TOKEN_TTL_SECONDS DRAC_CENTRAL_INSTALLER_URL_TEMPLATE DRAC_CENTRAL_PUBLIC_URL DRAC_CENTRAL_REPOSITORY_URL DRAC_CENTRAL_STORE_MODE DRAC_CENTRAL_TRUSTED_PROXIES"
 
 # Remove do arquivo dado as linhas `CHAVE=...` das chaves de central. Idempotente:
 # rodar de novo num arquivo já limpo não muda nada.
@@ -592,7 +592,11 @@ prepare_env() {
   env_set "$env_file" MEDIAMTX_AUTH_CALLBACK_TOKEN "$(random_hex 24)"
   env_set "$env_file" CORS_ALLOWED_ORIGINS "http://${DRAC_SERVER_IP}:5173,http://${DRAC_SERVER_IP}:3002"
   env_set "$env_file" PUBLIC_APP_URL "http://${DRAC_SERVER_IP}:5173"
-  env_set "$env_file" API_PUBLIC_URL "http://${DRAC_SERVER_IP}:3000"
+  # A API crua fica deliberadamente em loopback. O único endereço público é o
+  # gateway do web, que encaminha /api pela mesma origem do painel. Anunciar
+  # :3000 aqui criava URLs inalcançáveis e levava o operador a expor a API sem
+  # TLS para fazer o aplicativo funcionar.
+  env_set "$env_file" API_PUBLIC_URL "http://${DRAC_SERVER_IP}:5173/api"
   env_set "$env_file" VITE_API_URL ""
   env_set "$env_file" CLOUD_CONNECTOR_ENABLED "true"
   env_set "$env_file" CLOUD_API_URL "$DRAC_CENTRAL_URL"
@@ -990,17 +994,17 @@ DRAC_AVISO_BIND=""
 if [ "$(env_get "$DRAC_INSTALL_DIR/infra/.env" DRAC_WEB_BIND)" != "0.0.0.0" ]; then
   DRAC_AVISO_BIND="
     ^ acessível SOMENTE deste servidor (publicado em 127.0.0.1).
-      Para abrir à rede: DRAC_WEB_BIND=0.0.0.0 e DRAC_API_BIND=0.0.0.0 em
-      infra/.env, e subir de novo. O recomendado em produção é manter assim e
-      colocar um proxy reverso com HTTPS na frente."
+      Para um teste por IP, altere somente DRAC_WEB_BIND=0.0.0.0 em infra/.env
+      e suba o web de novo. Nunca exponha DRAC_API_BIND: use /api pelo painel.
+      Em produção, mantenha loopback e coloque um proxy HTTPS na frente."
 fi
 
 
 Painel local:
   http://${DRAC_SERVER_IP}:5173${DRAC_AVISO_BIND}
 
-API local:
-  http://${DRAC_SERVER_IP}:3000/health${DRAC_AVISO_BIND}
+API pelo mesmo gateway do painel:
+  http://${DRAC_SERVER_IP}:5173/api/health${DRAC_AVISO_BIND}
 
 Central configurada:
   ${DRAC_CENTRAL_URL}
