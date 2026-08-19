@@ -21,6 +21,8 @@ const alertas = require('./alertas');
 const releases = require('./releases');
 const { testS3Access, measureS3Performance, diagnosticarConexao, localizarServidor } = require('./s3-probe');
 const { resolverEndpoint } = require('./endpoint-scheme');
+const { ReactivationArchiveStore, expiresAfterMonths } = require('./reactivation-archives');
+const { selecionarVencidos } = require('./expiracao-de-arquivo');
 const scheduler = require('./scheduler');
 const timeseries = require('./datastore/timeseries');
 const {
@@ -82,6 +84,8 @@ const TRUSTED_PROXIES = compileTrustedProxies(
 );
 const loginAttempts = new Map();
 const MAX_REQUEST_BODY_BYTES = Math.max(16 * 1024, Number(process.env.DRAC_CENTRAL_MAX_BODY_BYTES || 1024 * 1024));
+const REACTIVATION_ARCHIVE_DIR = path.resolve(process.cwd(), process.env.DRAC_CENTRAL_ARCHIVE_DIR || './data/reactivation-archives');
+const REACTIVATION_RETENTION_MONTHS = Math.max(1, Number(process.env.DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS || 24));
 const ALLOWED_CENTRAL_PERMISSIONS = new Set([TECHNICAL_DOCUMENTATION_PERMISSION]);
 
 function normalizeCentralPermissions(value) {
@@ -89,6 +93,13 @@ function normalizeCentralPermissions(value) {
   return [...new Set(value
     .map((permission) => String(permission || '').trim())
     .filter((permission) => ALLOWED_CENTRAL_PERMISSIONS.has(permission)))];
+}
+
+function reactivationArchiveStore() {
+  return new ReactivationArchiveStore({
+    directory: REACTIVATION_ARCHIVE_DIR,
+    secret: process.env.DRAC_CENTRAL_ARCHIVE_KEY,
+  });
 }
 
 function hasCentralPermission(actor, permission) {
@@ -1065,6 +1076,8 @@ function publicInstallation(item, release = null) {
     // `alertasPublicos` NUNCA devolve o token do bot, nem cifrado.
     alertas: alertas.alertasPublicos(item.alertChannels),
     cloudStorage: describeCloudStorage(item.cloudStorage),
+    reactivationArchive: item.reactivationArchive ? { ...item.reactivationArchive } : null,
+    reactivationRestore: item.reactivationRestore ? { ...item.reactivationRestore } : null,
     // Estado de entrega da configuração, para a tela dizer a verdade em vez de
     // "pendente/não pendente" sem explicação.
     configDelivery: {
@@ -1369,7 +1382,184 @@ function licenseResponse(item) {
     cloudStorageRemovals: Array.isArray(item.cloudStorageRemovals) ? item.cloudStorageRemovals : [],
     // Revisão DESEJADA. A instalação devolve a que aplicou no próximo heartbeat.
     configRevision: Number(item.configRevision || 0) || 0,
+    reactivationArchive: item.reactivationRestore?.state === 'REQUESTED'
+      ? { action: 'RESTORE', requestId: item.reactivationRestore.requestId }
+      : item.reactivationArchive?.state === 'REQUESTED'
+        ? { action: 'CREATE', requestId: item.reactivationArchive.requestId }
+        : null,
   };
+}
+
+async function handleUploadReactivationArchive(req, res) {
+  const installationId = String(req.headers['x-drac-installation-id'] || '').trim();
+  const licenseKey = String(req.headers['x-drac-license-key'] || '').trim();
+  const db = await loadDb();
+  const item = db.installations[installationId];
+  if (!item || !licenseKey || !timingSafeTextEquals(item.licenseKey || '', licenseKey)) {
+    return json(req, res, 403, { error: 'invalid_installation_credentials' });
+  }
+  const body = await readBody(req);
+  const requestId = String(body.requestId || '').trim();
+  const pending = item.reactivationArchive;
+  if (!pending || pending.state !== 'REQUESTED' || !requestId || requestId !== pending.requestId) {
+    return json(req, res, 409, { error: 'archive_request_not_active' });
+  }
+  try {
+    const metadata = await reactivationArchiveStore().write(installationId, requestId, body.snapshot, pending.expiresAt);
+    item.reactivationArchive = metadata;
+    item.updatedAt = new Date().toISOString();
+    addAuditEvent(db, req, { type: 'installation.archive_created', actor: installationId, result: 'accepted', installationId });
+    await saveDb(db);
+    return json(req, res, 201, { ok: true, archive: metadata });
+  } catch (error) {
+    return json(req, res, 503, { error: 'archive_unavailable', message: error instanceof Error ? error.message : 'Falha ao cifrar arquivo.' });
+  }
+}
+
+async function handleDownloadReactivationArchive(req, res, requestId) {
+  const installationId = String(req.headers['x-drac-installation-id'] || '').trim();
+  const licenseKey = String(req.headers['x-drac-license-key'] || '').trim();
+  const db = await loadDb();
+  const item = db.installations[installationId];
+  if (!item || !licenseKey || !timingSafeTextEquals(item.licenseKey || '', licenseKey)) {
+    return json(req, res, 403, { error: 'invalid_installation_credentials' });
+  }
+  if (item.reactivationArchive?.state !== 'AVAILABLE'
+      || item.reactivationRestore?.state !== 'REQUESTED'
+      || requestId !== item.reactivationRestore.requestId) {
+    return json(req, res, 409, { error: 'restore_request_not_active' });
+  }
+  try {
+    const payload = await reactivationArchiveStore().read(installationId);
+    if (payload.installationId !== installationId) return json(req, res, 409, { error: 'archive_installation_mismatch' });
+    return json(req, res, 200, { ok: true, requestId, snapshot: payload.snapshot });
+  } catch (error) {
+    return json(req, res, 503, { error: 'archive_unavailable', message: error instanceof Error ? error.message : 'Falha ao abrir arquivo.' });
+  }
+}
+
+async function handleConfirmReactivationRestore(req, res, requestId) {
+  const installationId = String(req.headers['x-drac-installation-id'] || '').trim();
+  const licenseKey = String(req.headers['x-drac-license-key'] || '').trim();
+  const db = await loadDb();
+  const item = db.installations[installationId];
+  if (!item || !licenseKey || !timingSafeTextEquals(item.licenseKey || '', licenseKey)) {
+    return json(req, res, 403, { error: 'invalid_installation_credentials' });
+  }
+  if (item.reactivationRestore?.state !== 'REQUESTED' || requestId !== item.reactivationRestore.requestId) {
+    return json(req, res, 409, { error: 'restore_request_not_active' });
+  }
+  const body = await readBody(req);
+  const status = String(body.status || '').toUpperCase();
+  if (!['RESTORED', 'PRESERVED_EXISTING'].includes(status)) return json(req, res, 400, { error: 'invalid_restore_status' });
+  const now = new Date().toISOString();
+  item.reactivationRestore = {
+    ...item.reactivationRestore,
+    state: status,
+    completedAt: now,
+    summary: body.summary && typeof body.summary === 'object' ? body.summary : null,
+  };
+  item.updatedAt = now;
+  addAuditEvent(db, req, {
+    type: 'installation.archive_restore_completed', actor: installationId, result: 'accepted', installationId, status,
+  });
+  await saveDb(db);
+  return json(req, res, 200, { ok: true, restore: item.reactivationRestore });
+}
+
+async function handleRequestReactivationArchive(req, res, db, actor, installationId) {
+  const item = db.installations[installationId];
+  if (!item) return json(req, res, 404, { error: 'installation_not_found' });
+  if (!process.env.DRAC_CENTRAL_ARCHIVE_KEY || String(process.env.DRAC_CENTRAL_ARCHIVE_KEY).trim().length < 32) {
+    return json(req, res, 503, { error: 'archive_key_not_configured', message: 'Configure a chave separada dos arquivos de reativação antes de cancelar.' });
+  }
+  const now = new Date();
+  const requestId = crypto.randomUUID();
+  item.reactivationArchive = {
+    state: 'REQUESTED', requestId, requestedAt: now.toISOString(),
+    expiresAt: expiresAfterMonths(now, REACTIVATION_RETENTION_MONTHS),
+  };
+  const previousStatus = item.licenseStatus || LICENSE_ACTIVE;
+  item.licenseStatus = 'SUSPENDED';
+  item.licenseMessage = 'Contrato cancelado; aguardando arquivo final de reativação.';
+  item.updatedAt = now.toISOString();
+  item.configRevision = Number(item.configRevision || 0) + 1;
+  const history = Array.isArray(item.licenseHistory) ? item.licenseHistory : [];
+  history.push({ at: now.toISOString(), from: previousStatus, to: 'SUSPENDED', by: actor.email, message: item.licenseMessage });
+  item.licenseHistory = history.slice(-30);
+  addAuditEvent(db, req, { type: 'installation.archive_requested', actor: actor.email, result: 'accepted', installationId, expiresAt: item.reactivationArchive.expiresAt });
+  await saveDb(db);
+  return json(req, res, 202, { ok: true, archive: item.reactivationArchive });
+}
+
+async function handleDeleteReactivationArchive(req, res, db, actor, installationId) {
+  const item = db.installations[installationId];
+  if (!item) return json(req, res, 404, { error: 'installation_not_found' });
+  try { await reactivationArchiveStore().delete(installationId); } catch (error) {
+    return json(req, res, 503, { error: 'archive_delete_failed', message: error instanceof Error ? error.message : 'Falha ao excluir arquivo.' });
+  }
+  item.reactivationArchive = { state: 'DELETED', deletedAt: new Date().toISOString(), deletedBy: actor.email };
+  addAuditEvent(db, req, { type: 'installation.archive_deleted', actor: actor.email, result: 'accepted', installationId });
+  await saveDb(db);
+  return json(req, res, 200, { ok: true, archive: item.reactivationArchive });
+}
+
+async function handleReactivateInstallation(req, res, db, actor, installationId) {
+  const item = db.installations[installationId];
+  if (!item) return json(req, res, 404, { error: 'installation_not_found' });
+  if (item.reactivationArchive?.state !== 'AVAILABLE') return json(req, res, 409, { error: 'archive_not_available' });
+  const now = new Date().toISOString();
+  const previousStatus = item.licenseStatus || 'SUSPENDED';
+  item.licenseStatus = LICENSE_ACTIVE;
+  item.licenseMessage = 'Instalação reativada; confirme novamente as credenciais das câmeras.';
+  item.configRevision = Number(item.configRevision || 0) + 1;
+  item.updatedAt = now;
+  item.reactivationArchive = { ...item.reactivationArchive, lastReactivatedAt: now, lastReactivatedBy: actor.email };
+  item.reactivationRestore = {
+    state: 'REQUESTED',
+    requestId: crypto.randomUUID(),
+    requestedAt: now,
+    requestedBy: actor.email,
+  };
+  const history = Array.isArray(item.licenseHistory) ? item.licenseHistory : [];
+  history.push({ at: now, from: previousStatus, to: LICENSE_ACTIVE, by: actor.email, message: item.licenseMessage });
+  item.licenseHistory = history.slice(-30);
+  addAuditEvent(db, req, { type: 'installation.archive_reactivated', actor: actor.email, result: 'accepted', installationId });
+  await saveDb(db);
+  return json(req, res, 200, { ok: true, installation: publicInstallation(item) });
+}
+
+async function expireReactivationArchives() {
+  const db = await loadDb();
+  let changed = false;
+  const now = new Date();
+  for (const [installationId, item] of Object.entries(db.installations || {})) {
+    const archive = item?.reactivationArchive;
+    if (!archive || archive.state !== 'AVAILABLE' || !archive.expiresAt || new Date(archive.expiresAt) > now) continue;
+    await reactivationArchiveStore().delete(installationId).catch(() => undefined);
+    item.reactivationArchive = {
+      ...archive,
+      state: 'EXPIRED',
+      expiredAt: now.toISOString(),
+      // checksum e tamanho permanecem como certificado do que foi eliminado.
+    };
+    addAuditEvent(db, { headers: {}, socket: {} }, {
+      type: 'installation.archive_expired', actor: 'system', result: 'accepted', installationId,
+    });
+    changed = true;
+  }
+  if (changed) await saveDb(db);
+  return changed;
+}
+
+function startReactivationArchiveMaintenance() {
+  const run = () => runSerialized(expireReactivationArchives).catch((error) => {
+    console.error('[central] falha ao expirar arquivos de reativação:', error.message);
+  });
+  const timer = setInterval(run, 24 * 60 * 60 * 1000);
+  if (typeof timer.unref === 'function') timer.unref();
+  run();
+  return timer;
 }
 
 /**
@@ -3104,6 +3294,17 @@ async function route(req, res) {
     if (req.method === 'POST' && url.pathname === '/api/agent/heartbeat') {
       return handleHeartbeat(req, res);
     }
+    if (req.method === 'POST' && url.pathname === '/api/agent/reactivation-archive') {
+      return handleUploadReactivationArchive(req, res);
+    }
+    const agentArchiveMatch = url.pathname.match(/^\/api\/agent\/reactivation-archive\/([^/]+)$/);
+    if (req.method === 'GET' && agentArchiveMatch) {
+      return handleDownloadReactivationArchive(req, res, decodeURIComponent(agentArchiveMatch[1]));
+    }
+    const agentArchiveConfirmMatch = url.pathname.match(/^\/api\/agent\/reactivation-archive\/([^/]+)\/restored$/);
+    if (req.method === 'POST' && agentArchiveConfirmMatch) {
+      return handleConfirmReactivationRestore(req, res, decodeURIComponent(agentArchiveConfirmMatch[1]));
+    }
     if (req.method === 'GET' && url.pathname === '/api/agent/status') {
       return handleAgentStatus(req, res);
     }
@@ -3340,6 +3541,18 @@ async function route(req, res) {
         return handlePatchAiPolicy(req, res, db, actor, decodeURIComponent(aiPolicyMatch[1]));
       }
 
+      const archiveMatch = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/reactivation-archive$/);
+      if (req.method === 'POST' && archiveMatch) {
+        return handleRequestReactivationArchive(req, res, db, actor, decodeURIComponent(archiveMatch[1]));
+      }
+      if (req.method === 'DELETE' && archiveMatch) {
+        return handleDeleteReactivationArchive(req, res, db, actor, decodeURIComponent(archiveMatch[1]));
+      }
+      const reactivateMatch = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/reactivation-archive\/reactivate$/);
+      if (req.method === 'POST' && reactivateMatch) {
+        return handleReactivateInstallation(req, res, db, actor, decodeURIComponent(reactivateMatch[1]));
+      }
+
       const computeNodesMatch = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/compute-nodes$/);
       if (req.method === 'PATCH' && computeNodesMatch) {
         return handlePatchComputeNodes(req, res, db, actor, decodeURIComponent(computeNodesMatch[1]));
@@ -3530,6 +3743,79 @@ function startTimeseriesMaintenance() {
   return timer;
 }
 
+/**
+ * VARREDURA DOS ARQUIVOS DE REATIVAÇÃO VENCIDOS.
+ *
+ * A política de privacidade publicada promete apagar o arquivo do cliente
+ * cancelado em 24 meses. Até 17/08/2026 essa promessa NÃO era cumprida: o
+ * vencimento era calculado e gravado, e nada varria o diretório — o arquivo
+ * cifrado ficaria no disco para sempre. Promessa de privacidade escrita e não
+ * cumprida é pior que promessa não feita.
+ *
+ * O registro na auditoria PERMANECE depois da exclusão: quem apagou o quê e
+ * quando é justamente o que se apresenta numa fiscalização. Some o dado, fica
+ * a prova de que ele foi eliminado no prazo.
+ *
+ * A decisão de "venceu" mora em expiracao-de-arquivo.js, com teste — errar
+ * essa conta apaga o arquivo de quem ainda podia recontratar.
+ */
+async function varrerArquivosVencidos() {
+  const db = await loadDb();
+  const instalacoes = Object.entries(db.installations || {}).map(([id, item]) => ({ id, ...item }));
+  const vencidos = selecionarVencidos(instalacoes, new Date());
+  if (!vencidos.length) return { apagados: 0 };
+
+  let apagados = 0;
+  for (const alvo of vencidos) {
+    const item = db.installations[alvo.installationId];
+    if (!item) continue;
+    try {
+      await reactivationArchiveStore().delete(alvo.installationId);
+    } catch (erro) {
+      // Arquivo já ausente do disco não impede fechar o registro: o objetivo é
+      // que ele não exista, e ele não existe.
+      console.warn(`[central] arquivo de ${alvo.installationId} já não estava no disco: ${erro && erro.message}`);
+    }
+    item.reactivationArchive = {
+      ...item.reactivationArchive,
+      state: 'DELETED',
+      deletedAt: new Date().toISOString(),
+      deletedReason: 'RETENTION_EXPIRED',
+    };
+    item.updatedAt = new Date().toISOString();
+    addAuditEvent(db, null, {
+      type: 'installation.reactivation_archive_expired',
+      actor: 'sistema',
+      result: 'deleted',
+      installationId: alvo.installationId,
+      expiresAt: alvo.expiresAt,
+    });
+    apagados += 1;
+  }
+  await saveDb(db);
+  console.log(`[central] retenção: ${apagados} arquivo(s) de reativação vencido(s) apagado(s).`);
+  return { apagados };
+}
+
+/** Roda de hora em hora. `unref()` para o timer nunca segurar o processo. */
+function startArquivoRetentionSweep() {
+  const intervalMs = Math.max(
+    5 * 60 * 1000,
+    Number(process.env.DRAC_CENTRAL_ARCHIVE_SWEEP_MS) || 60 * 60 * 1000,
+  );
+  const run = () => {
+    varrerArquivosVencidos().catch((erro) => {
+      // Falha aqui NÃO pode derrubar a Central: é limpeza, e a próxima volta
+      // tenta de novo.
+      console.warn(`[central] varredura de arquivos vencidos falhou: ${erro && erro.message}`);
+    });
+  };
+  const timer = setInterval(run, intervalMs);
+  if (typeof timer.unref === 'function') timer.unref();
+  run();
+  return timer;
+}
+
 function startServer() {
   const server = http.createServer((req, res) => {
   // route() é async; sem este .catch, uma rejeição (ex.: loadDb) escapava como
@@ -3569,6 +3855,8 @@ function startServer() {
   Promise.resolve(datastore.acquireInstanceLock())
     .then(() => {
       startTimeseriesMaintenance();
+  startArquivoRetentionSweep();
+      startReactivationArchiveMaintenance();
       startConnectivityMonitor();
       server.listen(PORT, HOST, () => {
         console.log(`DRAC Central ouvindo em http://${HOST}:${PORT}`);
