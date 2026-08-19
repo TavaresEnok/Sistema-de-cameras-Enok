@@ -35,6 +35,40 @@ test('android security: build bloqueia permissões e backup inseguros', () => {
   assert(plugin.includes("android:requestLegacyExternalStorage'] = 'false'"), 'storage legado deve ser desativado');
 });
 
+test('cadastro de câmera: porta RTSP é automática e o preenchimento manual só aparece após falha', () => {
+  const source = readFileSync('src/components/AddCameraSheet.tsx', 'utf8');
+  assert(!source.includes('Configuração avançada'), 'não deve esconder dados necessários em Configuração avançada');
+  assert(source.includes("const RTSP_PORT_DEFAULT = '';"), 'porta deve iniciar em modo automático, sem fingir que 554 já foi detectada');
+  assert(source.includes('Porta e vídeo automáticos'), 'a tela deve explicar a detecção automática');
+  assert(source.includes('manualConnectionNeeded ?'), 'falha automática deve revelar a correção manual');
+  assert(source.includes('Porta RTSP'), 'a correção manual deve permitir informar a porta RTSP');
+  assert(source.includes('Caminho do vídeo (se houver)'), 'a correção manual deve permitir informar o caminho do stream');
+});
+
+test('cadastro de câmera: Voltar preserva a jornada e não fecha o fluxo inteiro', () => {
+  const source = readFileSync('src/components/AddCameraSheet.tsx', 'utf8');
+  assert(source.includes('const historyRef = useRef<Screen[]>([]);'), 'o cadastro deve manter histórico das etapas visitadas');
+  assert(source.includes("const previous = historyRef.current.pop() ?? 'home';"), 'Voltar deve recuperar a etapa anterior');
+  assert(source.includes('onRequestClose={handleSystemBack}'), 'o botão físico do Android deve usar a mesma navegação');
+  assert(!source.includes('onRequestClose={onClose}'), 'o botão físico não pode fechar o cadastro a partir de QR/detalhes');
+  assert(source.includes('operationRef.current += 1;'), 'voltar/fechar deve invalidar respostas assíncronas atrasadas');
+});
+
+test('stream WHEP: Location externo nunca recebe token de reprodução', () => {
+  const source = readFileSync('src/components/WebRtcVideo.tsx', 'utf8');
+  assert(source.includes('resolved.origin !== original.origin'), 'sessão WHEP deve permanecer na origem autorizada');
+  assert(source.includes("throw new Error('WHEP devolveu sessão em origem diferente')"), 'origem diferente deve abortar a conexão');
+});
+
+test('release mobile: iOS tem identidade e builds de loja incrementam versão', () => {
+  const base = JSON.parse(readFileSync('app.base.json', 'utf8')).expo;
+  const eas = JSON.parse(readFileSync('eas.json', 'utf8'));
+  assert(Boolean(base.ios?.bundleIdentifier), 'iOS precisa de bundleIdentifier para distribuição');
+  assert(base.ios?.infoPlist?.ITSAppUsesNonExemptEncryption === false, 'declaração de criptografia da App Store deve ser explícita');
+  assert(eas.build?.production?.distribution === 'store', 'release deve gerar artefato para loja');
+  assert(eas.build?.production?.autoIncrement === true, 'release deve evitar colisão de buildNumber/versionCode');
+});
+
 test('white-label build: senha da keystore nunca em texto claro (invariante 1.2.ii)', () => {
   // build-client.sh roda no HOST (fora do container) com acesso às keystores de
   // assinatura. A senha de cada cliente vive num arquivo 0600 ao lado da keystore
@@ -141,6 +175,9 @@ test('normalizeServerUrl: troca localhost pelo host da API', () => {
   const normalized = normalizeServerUrl('http://localhost:3002/camera-stream/1/poster', 'http://168.194.13.70:3002');
   assert(normalized === 'http://168.194.13.70:3002/camera-stream/1/poster', 'localhost deve ser substituído');
   assert(normalizeServerUrl(null, 'http://api.local') === null, 'null deve retornar null');
+  assert(normalizeServerUrl('javascript:alert(1)', 'https://api.local') === null, 'esquema não HTTP deve ser rejeitado');
+  assert(normalizeServerUrl('https://user:senha@media.local/live', 'https://api.local') === null, 'URL de mídia não pode carregar credencial embutida');
+  assert(normalizeServerUrl('http://localhost:8888/live', 'https://api.local') === 'https://api.local/live', 'URL interna deve herdar TLS e origem pública da API');
 });
 
 test('media URL: preserva query e adiciona streamToken curto', () => {

@@ -128,6 +128,43 @@ export class CamerasController {
     return camera;
   }
 
+  /** Diagnóstico guiado usado pelo app antes de cadastrar a câmera privada. */
+  @Roles(UserRole.VIEWER)
+  @Throttle({ default: { limit: 6, ttl: 60000 } })
+  @Post('mine/test-connection')
+  async testMyCameraConnection(@CurrentUser() user: AuthUser, @Body() dto: TestCameraConnectionDto, @Req() req: Request) {
+    await this.commercialPolicy.assertFeature('addCameras', user);
+    const result = await this.camerasService.testConnectionDraft(dto);
+    await this.auditService.log(user.id, 'camera.test_private_connection', 'Camera', null, {
+      ip: dto.ip,
+      status: result.status,
+      rtspAuthOk: result.rtspAuthOk,
+      onvifReachable: result.onvifReachable,
+    }, req);
+    return result;
+  }
+
+  /** Um frame para o cliente confirmar que escolheu a câmera certa. */
+  @Roles(UserRole.VIEWER)
+  @Throttle({ default: { limit: 6, ttl: 60000 } })
+  @Post('mine/preview-frame')
+  async previewMyCamera(@CurrentUser() user: AuthUser, @Body() dto: TestCameraConnectionDto, @Req() req: Request) {
+    await this.commercialPolicy.assertFeature('addCameras', user);
+    const result = await this.camerasService.capturePreviewFrame({
+      ip: dto.ip,
+      rtspPort: dto.rtspPort,
+      username: dto.username ?? '',
+      password: dto.password ?? '',
+      rtspPath: dto.rtspPath,
+      channel: dto.channel,
+      subtype: dto.subtype,
+    });
+    await this.auditService.log(user.id, 'camera.preview_private_draft', 'Camera', null, {
+      ip: dto.ip, ok: result.ok, source: result.source, bytes: result.bytes,
+    }, req);
+    return result;
+  }
+
   @Roles(UserRole.ADMIN)
   @Throttle({ default: { limit: 6, ttl: 60000 } })
   @Post('test-connection-draft')

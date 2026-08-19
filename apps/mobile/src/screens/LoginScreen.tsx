@@ -5,8 +5,8 @@ import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, Text
 import { BRANDING, BRAND_LOGO } from '../branding';
 import { Icon } from '../components/Icon';
 import { useTheme } from '../theme/ThemeProvider';
-import Constants from 'expo-constants';
 import { withAlpha } from '../services/branding';
+import { ALLOW_CLEARTEXT_TRAFFIC } from '../config';
 
 interface LoginScreenProps {
   apiUrl: string;
@@ -38,7 +38,7 @@ export function LoginScreen({
   // Servidor sem TLS num build que bloqueia tráfego em claro: o Android recusa
   // no nível do SISTEMA e o usuário só veria "erro de rede", sem pista da causa.
   const avisoDeCleartext = /^http:\/\//i.test((apiUrl ?? '').trim())
-    && (Constants.expoConfig?.android as { usesCleartextTraffic?: boolean } | undefined)?.usesCleartextTraffic !== true;
+    && !ALLOW_CLEARTEXT_TRAFFIC;
 
   // A logo configurada em Aparência pertence exclusivamente ao aplicativo.
   const logoSource = branding.logoDataUrl ? { uri: branding.logoDataUrl } : BRAND_LOGO;
@@ -59,6 +59,7 @@ export function LoginScreen({
         pointerEvents="none"
       />
 
+      <View style={styles.shell}>
       <View style={styles.hero}>
         <Image source={logoSource} style={styles.logo} resizeMode="contain" />
         <Text style={[styles.brand, { color: theme.bgText }]}>{appName}</Text>
@@ -81,6 +82,9 @@ export function LoginScreen({
               accessibilityLabel="E-mail"
               textContentType="emailAddress"
               autoComplete="email"
+              returnKeyType="next"
+              editable={!loading}
+              maxLength={254}
               style={[styles.input, { color: theme.text }]}
             />
           </View>
@@ -100,6 +104,9 @@ export function LoginScreen({
               accessibilityLabel="Senha"
               textContentType="password"
               autoComplete="current-password"
+              returnKeyType="go"
+              editable={!loading}
+              maxLength={256}
               style={[styles.input, { color: theme.text }]}
             />
           </View>
@@ -126,6 +133,11 @@ export function LoginScreen({
                 keyboardType="url"
                 placeholder="https://drac.local/api"
                 placeholderTextColor={theme.textMuted}
+                accessibilityLabel="Endereço do servidor"
+                textContentType="URL"
+                autoComplete="url"
+                editable={!loading}
+                maxLength={2048}
                 style={[styles.input, { color: theme.text }]}
               />
             </View>
@@ -190,12 +202,14 @@ export function LoginScreen({
           </View>
         ) : null}
       </View>
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flexGrow: 1, paddingHorizontal: 30, justifyContent: 'center', paddingVertical: 40 },
+  shell: { width: '100%', maxWidth: 520, alignSelf: 'center' },
   glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 360 },
   hero: { alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 40 },
   logo: { width: 84, height: 84, borderRadius: 23 },

@@ -13,6 +13,7 @@ while true; do
   tar -C /central-data -czf "$tmp" .
   tar -tzf "$tmp" >/dev/null
   mv "$tmp" "$out"
+  chmod 600 "$out"
   find /backups -type f -name 'drac-central-*.tar.gz' -mtime "+$retention_days" -delete
   echo "$(date -u +%FT%TZ) central_backup=ok file=$(basename "$out")"
   sleep "$interval"

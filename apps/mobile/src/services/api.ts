@@ -78,6 +78,20 @@ async function requestInternal<T>(apiUrl: string, path: string, token: string | 
 
 export function normalizeServerUrl(value: string | null | undefined, apiUrl: string) {
   if (!value) return null;
-  const api = new URL(apiUrl);
-  return value.replace(/\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?/i, `//${api.host}`);
+  try {
+    const api = new URL(apiUrl);
+    const target = new URL(value, api);
+    if (!['http:', 'https:'].includes(target.protocol)) return null;
+    if (target.username || target.password) return null;
+    if (['localhost', '127.0.0.1', '0.0.0.0'].includes(target.hostname.toLowerCase())) {
+      // URLs internas emitidas pelo backend devem acompanhar host, porta e TLS
+      // públicos da API; preservar "http" aqui quebrava o app HTTPS em release.
+      target.protocol = api.protocol;
+      target.hostname = api.hostname;
+      target.port = api.port;
+    }
+    return target.toString();
+  } catch {
+    return null;
+  }
 }

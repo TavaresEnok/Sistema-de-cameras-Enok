@@ -4,6 +4,7 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { CamerasService } from '../src/cameras/cameras.service';
 import { FfmpegMjpegService } from '../src/camera-stream/ffmpeg-mjpeg.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
+import { generateIngestKey } from '../src/cameras/helpers/rtmp-ingest.helper';
 
 test('poster de câmera RTMP offline não tenta RTSP direto nem descriptografa marcador', async () => {
   let decryptCalls = 0;
@@ -97,6 +98,34 @@ test('edição de câmera RTMP ignora o marcador de rede sem afrouxar câmera RT
   };
   await service.update('pull-1', { name: 'RTSP validada' });
   assert.equal(networkPolicyCalls, 1, 'câmera RTSP deve continuar passando pela política de rede');
+});
+
+test('caminho por serial não esconde a URL personalizada compatível', async () => {
+  const key = generateIngestKey();
+  const service = Object.create(CamerasService.prototype) as any;
+  service.prisma = {
+    camera: {
+      findUnique: async () => ({
+        sourceMode: 'rtmp_push',
+        rtmpIngestKeyEncrypted: 'chave-cifrada',
+        rtmpIngestPath: 'live/liveStream_H3ZL2802830WB_0_0',
+      }),
+    },
+  };
+  service.cryptoService = { decrypt: () => key };
+  service.configService = {
+    get: (name: string) => name === 'mediaMtxPublicHost'
+      ? 'ajustcam.example.test'
+      : name === 'mediaMtxRtmpShortHost'
+        ? '192.0.2.25'
+        : undefined,
+  };
+
+  const target = await service.getRtmpIngestTarget('camera-1');
+
+  assert.equal(target.ingestPath, 'live/liveStream_H3ZL2802830WB_0_0');
+  assert.match(target.fullUrl, /^rtmp:\/\/192\.0\.2\.25:1935\/d\/[A-Za-z0-9_-]{22}$/);
+  assert.equal(target.serverUrl, 'rtmp://192.0.2.25:1935/drac');
 });
 
 test('filtro HTTP redige token tanto no log quanto na resposta de erro', () => {

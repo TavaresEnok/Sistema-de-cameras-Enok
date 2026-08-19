@@ -200,7 +200,14 @@ export function WebRtcVideo({
         if (!response.ok) throw new Error(`WHEP ${response.status}`);
         sessionUrl = response.headers.get('location');
         if (sessionUrl) {
+          const original = new URL(whepUrl);
           const resolved = new URL(sessionUrl, whepUrl);
+          // A resposta WHEP controla a URL usada no DELETE e esse request leva
+          // o token de reprodução. Nunca siga Location para outro host: um
+          // proxy comprometido ou mal configurado poderia capturar o token.
+          if (resolved.origin !== original.origin) {
+            throw new Error('WHEP devolveu sessão em origem diferente');
+          }
           if (mediaToken && !resolved.searchParams.has('token')) resolved.searchParams.set('token', mediaToken);
           sessionUrl = resolved.toString();
         }

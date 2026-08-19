@@ -13,11 +13,28 @@
       "backgroundColor": "#071013"
     },
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "com.ajustconsulting.dracmobile",
+      "buildNumber": "6",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocalNetworkUsageDescription": "O app usa a rede local para encontrar e configurar suas câmeras.",
+        "NSBonjourServices": [
+          "_rtsp._tcp.",
+          "_http._tcp.",
+          "_onvif._tcp."
+        ]
+      }
     },
     "android": {
       "package": "com.ajustconsulting.dracmobile",
       "versionCode": 6,
+      "permissions": [
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.ACCESS_LOCAL_NETWORK",
+        "android.permission.CHANGE_WIFI_MULTICAST_STATE"
+      ],
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.WRITE_EXTERNAL_STORAGE",
@@ -41,6 +58,13 @@
     "plugins": [
       "./plugins/withAndroidSecurity",
       "expo-video",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permita que o app leia o QR Code da sua câmera.",
+          "recordAudioAndroid": false
+        }
+      ],
       [
         "expo-notifications",
         {

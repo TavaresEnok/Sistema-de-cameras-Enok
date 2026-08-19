@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, AppState, BackHandler, Image, SafeAreaView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { isRedesign } from './src/theme/redesign';
-import { DEFAULT_API_URL, TOP_SAFE } from './src/config';
+import { ALLOW_CLEARTEXT_TRAFFIC, DEFAULT_API_URL, TOP_SAFE } from './src/config';
 import { BottomTabs } from './src/components/BottomTabs';
 import { AlarmsScreen } from './src/screens/AlarmsScreen';
 import { CentralScreen } from './src/screens/CentralScreen';
@@ -282,6 +282,10 @@ function AppInner() {
         if (!raw) return;
         const stored = JSON.parse(raw) as Session;
         const normalized = { ...stored, apiUrl: cleanApiUrl(stored.apiUrl) };
+        if (/^http:\/\//i.test(normalized.apiUrl) && !ALLOW_CLEARTEXT_TRAFFIC) {
+          await clearStoredSession();
+          return;
+        }
         setApiUrl(normalized.apiUrl);
         setEmail(normalized.user.email);
         if (normalized.apiUrl !== stored.apiUrl) await saveStoredSession(normalized);
@@ -478,6 +482,9 @@ function AppInner() {
     try {
       const nextApiUrl = cleanApiUrl(apiUrl);
       if (!nextApiUrl) throw new Error('Informe a URL da API no campo "Servidor".');
+      if (/^http:\/\//i.test(nextApiUrl) && !ALLOW_CLEARTEXT_TRAFFIC) {
+        throw new Error('Esta versão exige conexão segura. Use o endereço HTTPS do servidor.');
+      }
       const data = await request<{
         accessToken: string;
         refreshToken: string;
@@ -533,9 +540,18 @@ function AppInner() {
       Alert.alert('Esqueci minha senha', 'Informe o e-mail da sua conta no campo acima e toque novamente.');
       return;
     }
-    const nextApiUrl = cleanApiUrl(apiUrl);
+    let nextApiUrl = '';
+    try { nextApiUrl = cleanApiUrl(apiUrl); }
+    catch (error) {
+      Alert.alert('Esqueci minha senha', error instanceof Error ? error.message : 'Endereço do servidor inválido.');
+      return;
+    }
     if (!nextApiUrl) {
       Alert.alert('Esqueci minha senha', 'Informe a URL do servidor antes de continuar.');
+      return;
+    }
+    if (/^http:\/\//i.test(nextApiUrl) && !ALLOW_CLEARTEXT_TRAFFIC) {
+      Alert.alert('Esqueci minha senha', 'Esta versão exige o endereço HTTPS do servidor.');
       return;
     }
     try {
@@ -1396,7 +1412,7 @@ function AppInner() {
     const safeId = recording.id.replace(/[^a-zA-Z0-9_-]/g, '-');
     const target = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}download-${safeId}-${Date.now()}.mp4`;
     try {
-      const url = normalizeServerUrl(`${currentSession.apiUrl}/recordings/${recording.id}/download`, currentSession.apiUrl);
+      const url = normalizeServerUrl(`${currentSession.apiUrl}/recordings/${encodeURIComponent(recording.id)}/download`, currentSession.apiUrl);
       if (!url) throw new Error('URL de download indisponível.');
       const result = await FileSystem.downloadAsync(url, target, {
         headers: { Authorization: `Bearer ${currentSession.token}` },
@@ -1713,8 +1729,12 @@ function AppInner() {
               onOpenAlarms={() => setTab('alarmes')}
               onOpenMosaic={() => setTab('mosaico')}
               onOpenPlayback={() => setTab('reproducao')}
+              facilityName={branding.facilityName}
               operationalMessages={operationalMessages}
               onPosterError={(cameraId) => { void refreshPoster(cameraId); }}
+              apiUrl={session.apiUrl}
+              token={session.token}
+              onCamerasChanged={() => { void loadAll(true); }}
             />
           ) : (
           <CentralScreen
@@ -1731,6 +1751,9 @@ function AppInner() {
             onOpenMosaic={() => setTab('mosaico')}
             onOpenPlayback={() => setTab('reproducao')}
             onPosterError={(cameraId) => { void refreshPoster(cameraId); }}
+            apiUrl={session.apiUrl}
+            token={session.token}
+            onCamerasChanged={() => { void loadAll(true); }}
           />
           )
         )}

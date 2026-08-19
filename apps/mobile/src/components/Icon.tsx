@@ -15,7 +15,8 @@ export type IconName =
   | 'download' | 'check' | 'server' | 'logout' | 'cloud' | 'smartphone' | 'info' | 'share'
   | 'alert' | 'moon' | 'sun' | 'videoOff' | 'aperture' | 'maximize'
   | 'star' | 'edit' | 'trash' | 'close' | 'clock'
-  | 'pause' | 'rewind' | 'forward';
+  | 'pause' | 'rewind' | 'forward'
+  | 'wifi' | 'bluetooth' | 'qrCode' | 'search' | 'cable' | 'radio';
 
 interface IconProps {
   name: IconName;
@@ -209,6 +210,49 @@ export function Icon({ name, size = 22, color = '#fff', strokeWidth = 1.9, fill 
         <Svg width={size} height={size} viewBox="0 0 24 24">
           <Circle {...common} cx={12} cy={12} r={9} />
           <Path {...common} d="M12 7.5V12l3 2" />
+        </Svg>
+      );
+    case 'wifi':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Path {...common} d="M3 8.7a14 14 0 0 1 18 0M6.5 12.2a8.8 8.8 0 0 1 11 0M9.8 15.6a3.8 3.8 0 0 1 4.4 0" />
+          <Circle cx={12} cy={19} r={1.1} fill={color} />
+        </Svg>
+      );
+    case 'bluetooth':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Path {...common} d="M7 7l10 10-5 4V3l5 4L7 17" />
+        </Svg>
+      );
+    case 'qrCode':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Rect {...common} x={3} y={3} width={7} height={7} rx={1} />
+          <Rect {...common} x={14} y={3} width={7} height={7} rx={1} />
+          <Rect {...common} x={3} y={14} width={7} height={7} rx={1} />
+          <Path {...common} d="M14 14h3v3h4M14 21v-3M18 21h3" />
+        </Svg>
+      );
+    case 'search':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Circle {...common} cx={10.5} cy={10.5} r={6.5} />
+          <Path {...common} d="m15.4 15.4 5 5" />
+        </Svg>
+      );
+    case 'cable':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Path {...common} d="M7 3v5M11 3v5M5 8h8v2a4 4 0 0 1-4 4v2a5 5 0 0 0 5 5h1" />
+          <Path {...common} d="M15 18h5v3h-5z" />
+        </Svg>
+      );
+    case 'radio':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Circle {...common} cx={12} cy={12} r={2} />
+          <Path {...common} d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.5 5.5a9 9 0 0 0 0 13M18.5 5.5a9 9 0 0 1 0 13" />
         </Svg>
       );
     case 'close':

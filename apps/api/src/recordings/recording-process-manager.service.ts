@@ -5,6 +5,7 @@ import {
   NotFoundException,
   OnApplicationShutdown,
   OnModuleInit,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -44,6 +45,8 @@ import {
 import { CLOUD_OFFLOAD_QUEUE } from '../jobs/queues/cloud-offload.queue';
 import { THUMBNAIL_GENERATION_QUEUE } from '../jobs/queues/thumbnail-generation.queue';
 import { modoArmado } from '../cameras/helpers/gatilho-de-gravacao.helper';
+import { isPushSourced } from '../cameras/helpers/rtmp-ingest.helper';
+import { RtmpIngestSourceService } from '../cameras/rtmp-ingest-source.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -168,6 +171,8 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   private redisPublisher: Redis | null = null;
   private readonly motionStopTimers = new Map<string, NodeJS.Timeout>();
   private diskGuardTimer: NodeJS.Timeout | null = null;
+  private readonly diskGuardSuspended = new Map<string, { segmentSeconds: number; retryAt: number }>();
+  private diskGuardResumeInFlight = false;
   private orphanRecoveryTimer: NodeJS.Timeout | null = null;
   private orphanRecoveryInterval: NodeJS.Timeout | null = null;
   private readonly preEventSeconds: number;
@@ -200,6 +205,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     private readonly commercialPolicy: CommercialPolicyService,
     @InjectQueue(THUMBNAIL_GENERATION_QUEUE) private readonly thumbnailQueue: Queue,
     @InjectQueue(CLOUD_OFFLOAD_QUEUE) private readonly cloudOffloadQueue: Queue,
+    @Optional() private readonly rtmpIngestSource?: RtmpIngestSourceService,
   ) {
     this.recordingsRoot = this.configService.get<string>('recordingsRoot') ?? './storage/recordings';
     this.recordingFormat = this.configService.get<string>('ffmpegRecordingFormat') ?? 'mp4';
@@ -343,7 +349,8 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   }
 
   private async enforceDiskGuard() {
-    if (this.active.size === 0 || this.controlMode !== 'local') return;
+    if (this.controlMode !== 'local') return;
+    if (this.active.size === 0 && this.diskGuardSuspended.size === 0) return;
 
     try {
       const { freeBytes, freePercent, usedPercent } = await this.getStorageUsage();
@@ -363,7 +370,14 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
         freePercent < this.minFreePercent ||
         (Number.isFinite(maxUsedPercent) && usedPercent >= maxUsedPercent);
 
-      if (!critical) return;
+      if (!critical) {
+        await this.resumeContinuousRecordingsAfterDiskGuard();
+        return;
+      }
+
+      // Nada ativo para interromper: mantém a fila de retomada e volta a
+      // verificar. Não há motivo para consultar/rotacionar acervo a cada tick.
+      if (this.active.size === 0) return;
 
       const activeCameraIds = [...this.active.keys()];
 
@@ -410,6 +424,51 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       }
     } catch (error) {
       this.logger.warn(`Falha ao executar guarda de disco de gravacao: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Retoma automaticamente apenas gravações CONTÍNUAS. Modos por movimento,
+   * objeto e manual permanecem armados e serão iniciados pelo próximo gatilho;
+   * retomá-los cegamente transformaria um evento encerrado em gravação eterna.
+   */
+  private async resumeContinuousRecordingsAfterDiskGuard() {
+    if (this.diskGuardResumeInFlight || this.diskGuardSuspended.size === 0) return;
+    this.diskGuardResumeInFlight = true;
+    try {
+      for (const [cameraId, suspended] of [...this.diskGuardSuspended.entries()]) {
+        if (suspended.retryAt > Date.now()) continue;
+        const camera = await this.prisma.camera.findUnique({
+          where: { id: cameraId },
+          select: { enabled: true, recordingEnabled: true, recordingMode: true },
+        }).catch(() => null);
+        if (!camera || camera.enabled === false || camera.recordingEnabled === false) {
+          this.diskGuardSuspended.delete(cameraId);
+          continue;
+        }
+        if (camera.recordingMode !== 'continuous') {
+          this.diskGuardSuspended.delete(cameraId);
+          continue;
+        }
+        try {
+          await this.start(cameraId, suspended.segmentSeconds, { recordingMode: 'continuous' });
+          this.diskGuardSuspended.delete(cameraId);
+          await this.camerasService.registerEvent(
+            cameraId,
+            'RECORDING_RESUMED_DISK_GUARD',
+            'INFO',
+            'Gravação contínua retomada automaticamente após recuperação do espaço em disco.',
+            { reason: 'disk_guard_recovered' },
+          ).catch(() => undefined);
+        } catch (error) {
+          suspended.retryAt = Date.now() + 60_000;
+          this.logger.warn(
+            `Falha ao retomar gravação após guarda de disco camera=${cameraId}: ${sanitizeSensitiveText(error)}`,
+          );
+        }
+      }
+    } finally {
+      this.diskGuardResumeInFlight = false;
     }
   }
 
@@ -505,6 +564,8 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   private async suspendRecordingForDiskGuard(cameraId: string, usedPercent: number, freeBytes: number) {
     const state = this.active.get(cameraId);
     if (!state) return;
+
+    this.diskGuardSuspended.set(cameraId, { segmentSeconds: state.segmentSeconds, retryAt: 0 });
 
     // Marca ANTES do kill: o handler de 'close' chama finalize primeiro, e sem
     // isto uma suspensão pedida viraria "queda" na métrica — e dispararia o
@@ -1011,9 +1072,10 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     const camera = await this.camerasService.getCameraOrThrow(cameraId).catch(() => null);
     if (!camera || (camera as { enabled?: boolean }).enabled === false) return;
 
-    const password = this.cryptoService.decrypt(camera.passwordEncrypted);
-    const rtspUrl = this.buildRtsp(camera, password);
-    const transport = camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp';
+    const password = isPushSourced(camera) ? '' : this.cryptoService.decrypt(camera.passwordEncrypted);
+    const input = await this.resolveRecordingInput(camera, password);
+    const rtspUrl = input.rtspUrl;
+    const transport = input.transport;
     const dir = this.preBufferDir(cameraId);
     mkdirSync(dir, { recursive: true });
 
@@ -1166,6 +1228,36 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       channel: recordingProfile.channel,
       subtype: recordingProfile.subtype,
     });
+  }
+
+  /**
+   * Resolve a entrada do gravador sem distinguir a origem depois deste ponto.
+   * RTSP usa a câmera; RTMP usa o path interno autenticado do MediaMTX. A partir
+   * daqui segmentação, cópia de H.265, remux, retenção e watchdog são idênticos.
+   */
+  private async resolveRecordingInput(camera: Camera, password: string) {
+    if (isPushSourced(camera)) {
+      if (!this.rtmpIngestSource) {
+        throw new ServiceUnavailableException('Resolvedor de ingestão RTMP indisponível para gravação.');
+      }
+      try {
+        const source = await this.rtmpIngestSource.resolve(camera, { requireReady: true });
+        return {
+          rtspUrl: source.sourceUrl,
+          transport: 'tcp',
+          sourceCodec: source.metadata.codec,
+        };
+      } catch (error) {
+        throw new ServiceUnavailableException(
+          error instanceof Error ? error.message : 'Câmera RTMP ainda não está publicando vídeo.',
+        );
+      }
+    }
+    return {
+      rtspUrl: this.buildRtsp(camera, password),
+      transport: camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp',
+      sourceCodec: null as string | null,
+    };
   }
 
   private async probeSourceCodec(rtspUrl: string, transport: string): Promise<string | null> {
@@ -2204,10 +2296,11 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       throw new ServiceUnavailableException('FFmpeg não está instalado no servidor.');
     }
 
-    const password = this.cryptoService.decrypt(camera.passwordEncrypted);
-    const rtspUrl = this.buildRtsp(camera, password);
-    const recordingTransport = camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp';
-    const sourceCodec = await this.probeSourceCodec(rtspUrl, recordingTransport);
+    const password = isPushSourced(camera) ? '' : this.cryptoService.decrypt(camera.passwordEncrypted);
+    const input = await this.resolveRecordingInput(camera, password);
+    const rtspUrl = input.rtspUrl;
+    const recordingTransport = input.transport;
+    const sourceCodec = input.sourceCodec ?? await this.probeSourceCodec(rtspUrl, recordingTransport);
     const startDate = new Date();
     const outputDir = buildRecordingOutputDir(this.recordingsRoot, cameraId, startDate);
     const cameraRootDir = buildCameraRootDir(this.recordingsRoot, cameraId);

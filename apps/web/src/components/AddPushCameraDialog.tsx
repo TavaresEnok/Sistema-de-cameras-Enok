@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Plus, Copy, Check, Radio, LoaderCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -58,11 +58,31 @@ export function AddPushCameraDialog({
   const [cameraId, setCameraId] = useState<string | null>(null);
   const [pendentes, setPendentes] = useState<PendingIngest[]>([]);
   const [vinculando, setVinculando] = useState<string | null>(null);
+  const [caminhoManual, setCaminhoManual] = useState('');
   const usaEnderecoCompacto = Boolean(alvo?.canonicalFullUrl && alvo.fullUrl !== alvo.canonicalFullUrl);
   const urlCompletaCompativel = alvo?.fullUrlFitsSingleField !== false;
 
+  useEffect(() => {
+    if (!open || !alvo || !cameraId || !accessToken) return;
+    let cancelled = false;
+    const carregarPendentes = () => {
+      void axios
+        .get(`${getApiBaseUrl()}/cameras/rtmp-ingest/pending`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        })
+        .then(({ data }) => { if (!cancelled) setPendentes(data?.items ?? []); })
+        .catch(() => undefined);
+    };
+    carregarPendentes();
+    const timer = window.setInterval(carregarPendentes, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [open, alvo, cameraId, accessToken]);
+
   const fechar = () => {
-    setNome(''); setAlvo(null); setCopiado(null); setCameraId(null); setPendentes([]);
+    setNome(''); setAlvo(null); setCopiado(null); setCameraId(null); setPendentes([]); setCaminhoManual('');
     onClose();
   };
 
@@ -122,6 +142,7 @@ export function AddPushCameraDialog({
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       setPendentes([]);
+      setCaminhoManual('');
       toast({
         title: 'Equipamento vinculado',
         description: 'O vídeo dele passa a entrar como esta câmera em até um minuto.',
@@ -178,6 +199,14 @@ export function AddPushCameraDialog({
               <span className="font-medium text-foreground">Rede → RTMP</span> (ou <em>Push Stream</em>).
               Assim que ele começar a publicar, a câmera aparece na grade.
             </p>
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+              <p className="text-[11px] font-semibold text-amber-500">Intelbras/Positivo: selecione Personalizado</p>
+              <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+                Cole a URL completa no campo <strong className="text-foreground">Endereço personalizado</strong>.
+                Não use “Não personalizado” com apenas IP/porta: esse modo pode conectar com o serial do aparelho
+                sem enviar vídeo para um servidor RTMP genérico.
+              </p>
+            </div>
             {usaEnderecoCompacto && (
               <div className="rounded-md border border-[hsl(var(--status-online)_/_0.35)] bg-[hsl(var(--status-online)_/_0.08)] p-3">
                 <p className="text-[11px] font-semibold text-[hsl(var(--status-online))]">Compatível com campos curtos</p>
@@ -204,8 +233,11 @@ export function AddPushCameraDialog({
               </div>
             )}
             <details className="rounded-md border border-border bg-muted/20 px-3 py-2">
-              <summary className="cursor-pointer text-[11px] font-medium">Equipamento com servidor e chave separados</summary>
+              <summary className="cursor-pointer text-[11px] font-medium">Equipamento com campos Servidor + Chave</summary>
               <div className="mt-3 space-y-3">
+                <p className="text-[10px] leading-relaxed text-muted-foreground">
+                  Use somente se o equipamento tiver dois campos reais. “Não personalizado” com IP/porta não é equivalente.
+                </p>
                 <Campo rotulo="Servidor RTMP" valor={alvo.serverUrl} copiado={copiado === 's'} onCopiar={() => copiar(alvo.serverUrl, 's')} />
                 <Campo rotulo="Chave do stream" valor={alvo.streamKey} copiado={copiado === 'k'} onCopiar={() => copiar(alvo.streamKey, 'k')} />
               </div>
@@ -219,8 +251,9 @@ export function AddPushCameraDialog({
                   </p>
                   <p className="text-[10px] leading-relaxed text-muted-foreground">
                     Estes aparelhos estão tentando publicar mas não deixam escolher o destino — usam
-                    caminho próprio e ignoram a chave acima. Se um deles for esta câmera, vincule e
-                    pronto: não precisa configurar mais nada nele.
+                    caminho próprio e ignoram a chave acima. Se um deles for esta câmera, vincule para
+                    identificá-lo. Se continuar sem vídeo, configure o endereço Personalizado com a URL
+                    completa mostrada acima. A lista atualiza automaticamente.
                   </p>
                   {pendentes.map((p) => (
                     <div key={p.path} className="flex items-center gap-2 rounded-md border border-border bg-background/70 p-2">
@@ -245,6 +278,39 @@ export function AddPushCameraDialog({
                 </div>
               </>
             )}
+            <Separator />
+            <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+              <p className="text-[11px] font-semibold">Câmera usa um caminho próprio?</p>
+              <p className="text-[10px] leading-relaxed text-muted-foreground">
+                Alguns modelos ignoram a chave e publicam com o número de série. Se a tentativa não
+                aparecer acima, informe o caminho exibido no log da câmera.
+              </p>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={caminhoManual}
+                  onChange={(e) => setCaminhoManual(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && caminhoManual.trim() && vinculando === null) {
+                      void vincular(caminhoManual.trim());
+                    }
+                  }}
+                  placeholder="live/liveStream_NUMERO_DE_SERIE_0_0"
+                  aria-label="Caminho próprio da câmera"
+                  className="h-9 min-w-0 flex-1 font-mono text-[11px]"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={vinculando !== null || !caminhoManual.trim()}
+                  onClick={() => void vincular(caminhoManual.trim())}
+                  className="h-9 shrink-0 text-[11px]"
+                >
+                  {vinculando === caminhoManual.trim() && <LoaderCircle className="mr-1.5 h-3 w-3 animate-spin" />}
+                  Vincular caminho
+                </Button>
+              </div>
+            </div>
             <Separator />
             <p className="text-[10px] leading-relaxed text-muted-foreground">
               A chave é uma senha de publicação — quem a tiver pode enviar vídeo como se fosse esta câmera.

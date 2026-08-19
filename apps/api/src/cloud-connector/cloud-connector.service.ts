@@ -2,6 +2,8 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ModuleRef } from '@nestjs/core';
 import { AlarmStatus, CameraStatus } from '@prisma/client';
 import axios from 'axios';
+import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'node:crypto';
 import * as os from 'node:os';
 import { statfs, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -19,6 +21,7 @@ import {
   type HeartbeatAlert,
   type HeartbeatCamerasBlock,
 } from './heartbeat-cameras.helper';
+import { buildReactivationSnapshot, type ReactivationSnapshot } from './reactivation-snapshot.helper';
 
 type LicenseStatus = 'UNKNOWN' | 'ACTIVE' | 'GRACE' | 'RESTRICTED' | 'SUSPENDED';
 
@@ -77,6 +80,12 @@ const SETTING_KEYS = [
   'cloud.appliedConfigRevision',
   'cloud.configApplyStatus',
   'cloud.configApplyError',
+  'cloud.reactivationArchiveRequestId',
+  'cloud.reactivationArchiveStatus',
+  'cloud.reactivationArchiveError',
+  'cloud.reactivationRestoreRequestId',
+  'cloud.reactivationRestoreStatus',
+  'cloud.reactivationRestoreError',
 ];
 
 @Injectable()
@@ -198,6 +207,19 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
           : []),
       ]);
 
+      // Cancelamento/recontratação usa o mesmo canal de saída do heartbeat. A
+      // instalação pode estar atrás de NAT/CGNAT; a Central nunca tenta entrar
+      // nela. O snapshot é estritamente de configuração, sem vídeo, eventos,
+      // sessões, biometria ou credenciais, e a Central o cifra ao receber.
+      await this.processReactivationArchive(response.data?.reactivationArchive, config).catch(async (archiveError) => {
+        const detail = sanitizeSensitiveText(archiveError).slice(0, 500);
+        this.logger.error(`Falha no arquivo de reativação: ${detail}`);
+        await Promise.all([
+          this.writeSetting('cloud.reactivationArchiveStatus', 'FAILED'),
+          this.writeSetting('cloud.reactivationArchiveError', detail),
+        ]).catch(() => undefined);
+      });
+
       return {
         skipped: false,
         synced: true,
@@ -221,6 +243,194 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
 
   private isEnabled() {
     return String(process.env.CLOUD_CONNECTOR_ENABLED ?? 'false').toLowerCase() === 'true';
+  }
+
+  private async processReactivationArchive(command: unknown, config: { apiUrl: string; installationId: string; licenseKey: string; timeoutMs: number }) {
+    if (!command || typeof command !== 'object') return;
+    const value = command as { action?: unknown; requestId?: unknown };
+    const action = String(value.action || '').toUpperCase();
+    const requestId = String(value.requestId || '').trim();
+    if (!requestId) return;
+    if (action === 'RESTORE') {
+      await this.processReactivationRestore(requestId, config);
+      return;
+    }
+    if (action !== 'CREATE') return;
+    const settings = await this.readSettings();
+    if (settings['cloud.reactivationArchiveRequestId'] === requestId && settings['cloud.reactivationArchiveStatus'] === 'UPLOADED') return;
+
+    await this.writeSetting('cloud.reactivationArchiveStatus', 'PREPARING');
+    const snapshot = await this.collectReactivationSnapshot(config.installationId);
+    await axios.post(`${config.apiUrl}/api/agent/reactivation-archive`, { requestId, snapshot }, {
+      timeout: Math.max(config.timeoutMs ?? 0, 30_000),
+      maxBodyLength: 8 * 1024 * 1024,
+      headers: {
+        'x-drac-installation-id': config.installationId,
+        'x-drac-license-key': config.licenseKey,
+      },
+    });
+    await Promise.all([
+      this.writeSetting('cloud.reactivationArchiveRequestId', requestId),
+      this.writeSetting('cloud.reactivationArchiveStatus', 'UPLOADED'),
+      this.writeSetting('cloud.reactivationArchiveError', ''),
+    ]);
+  }
+
+  private async processReactivationRestore(
+    requestId: string,
+    config: { apiUrl: string; installationId: string; licenseKey: string; timeoutMs: number },
+  ) {
+    const settings = await this.readSettings();
+    if (settings['cloud.reactivationRestoreRequestId'] === requestId
+        && ['RESTORED', 'PRESERVED_EXISTING'].includes(settings['cloud.reactivationRestoreStatus'] || '')) return;
+
+    await this.writeSetting('cloud.reactivationRestoreStatus', 'RESTORING');
+    const headers = {
+      'x-drac-installation-id': config.installationId,
+      'x-drac-license-key': config.licenseKey,
+    };
+    try {
+      const response = await axios.get(`${config.apiUrl}/api/agent/reactivation-archive/${encodeURIComponent(requestId)}`, {
+        timeout: Math.max(config.timeoutMs ?? 0, 30_000),
+        maxContentLength: 8 * 1024 * 1024,
+        headers,
+      });
+      const result = await this.restoreReactivationSnapshot(response.data?.snapshot);
+      const status = result.preservedExisting ? 'PRESERVED_EXISTING' : 'RESTORED';
+      await axios.post(
+        `${config.apiUrl}/api/agent/reactivation-archive/${encodeURIComponent(requestId)}/restored`,
+        { status, summary: result },
+        { timeout: Math.max(config.timeoutMs ?? 0, 30_000), headers },
+      );
+      await Promise.all([
+        this.writeSetting('cloud.reactivationRestoreRequestId', requestId),
+        this.writeSetting('cloud.reactivationRestoreStatus', status),
+        this.writeSetting('cloud.reactivationRestoreError', ''),
+      ]);
+    } catch (error) {
+      const detail = sanitizeSensitiveText(error).slice(0, 500);
+      await Promise.all([
+        this.writeSetting('cloud.reactivationRestoreStatus', 'FAILED'),
+        this.writeSetting('cloud.reactivationRestoreError', detail),
+      ]);
+      throw error;
+    }
+  }
+
+  /**
+   * Restaura somente uma instalação LIMPA. Se já houver câmeras, nada é
+   * mesclado ou sobrescrito: esse é o caso normal da reativação no mesmo
+   * servidor, cujo banco já contém os cadastros. Em máquina nova, usuários
+   * voltam inativos e câmeras voltam desligadas/sem senha até a confirmação
+   * humana das credenciais.
+   */
+  private async restoreReactivationSnapshot(snapshot: unknown) {
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('Arquivo de reativação inválido.');
+    const source = snapshot as Partial<ReactivationSnapshot>;
+    if (source.version !== 1) throw new Error('Versão do arquivo de reativação incompatível.');
+    const rows = (value: unknown): Record<string, any>[] => Array.isArray(value)
+      ? value.filter((item): item is Record<string, any> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+      : [];
+    const unmanaged = (value: Record<string, any>) => {
+      const { createdAt: _createdAt, updatedAt: _updatedAt, lastSeenAt: _lastSeenAt, ...rest } = value;
+      return rest;
+    };
+    const existingCameras = await this.prisma.camera.count();
+    if (existingCameras > 0) return { preservedExisting: true, existingCameras };
+
+    const recoveryHash = await bcrypt.hash(randomBytes(48).toString('base64url'), 10);
+    const cryptoService = this.moduleRef.get(CryptoService, { strict: false });
+    const blankCameraPassword = cryptoService.encrypt('');
+    return this.prisma.$transaction(async (tx) => {
+      const userIds = new Map<string, string>();
+      for (const raw of rows(source.users)) {
+        if (!raw.id || !raw.email) continue;
+        const existing = await tx.user.findUnique({ where: { email: String(raw.email) } });
+        if (existing) {
+          userIds.set(String(raw.id), existing.id);
+          continue;
+        }
+        const user = await tx.user.create({ data: {
+          id: String(raw.id),
+          name: String(raw.name || raw.email),
+          email: String(raw.email).toLowerCase(),
+          role: raw.role,
+          isActive: false,
+          passwordHash: recoveryHash,
+        } });
+        userIds.set(String(raw.id), user.id);
+      }
+
+      await tx.site.createMany({ data: rows(source.sites).map(unmanaged) as any, skipDuplicates: true });
+      await tx.cameraGroup.createMany({ data: rows(source.groups).map(unmanaged) as any, skipDuplicates: true });
+      await tx.area.createMany({ data: rows(source.areas).map(unmanaged) as any, skipDuplicates: true });
+      await tx.siteMapLayout.createMany({
+        data: rows(source.siteMapLayouts).map((raw) => ({ ...unmanaged(raw), svgDataUrl: null })) as any,
+        skipDuplicates: true,
+      });
+
+      const cameraRows = rows(source.cameras).map((raw) => ({
+        ...unmanaged(raw),
+        enabled: false,
+        passwordEncrypted: blankCameraPassword,
+        ownerUserId: raw.ownerUserId ? userIds.get(String(raw.ownerUserId)) || null : null,
+      }));
+      if (cameraRows.length) await tx.camera.createMany({ data: cameraRows as any, skipDuplicates: true });
+
+      const permissionRows = rows(source.cameraPermissions).flatMap((raw) => {
+        const userId = userIds.get(String(raw.userId || ''));
+        return userId ? [{ ...unmanaged(raw), userId }] : [];
+      });
+      if (permissionRows.length) await tx.cameraPermission.createMany({ data: permissionRows as any, skipDuplicates: true });
+      const layoutRows = rows(source.liveLayouts).flatMap((raw) => {
+        const userId = userIds.get(String(raw.userId || ''));
+        return userId ? [{ ...unmanaged(raw), userId }] : [];
+      });
+      if (layoutRows.length) await tx.liveLayout.createMany({ data: layoutRows as any, skipDuplicates: true });
+      for (const raw of rows(source.aiSettings)) {
+        const data = unmanaged(raw);
+        await tx.aiSettings.upsert({ where: { id: String(data.id || 'global') }, create: data, update: data });
+      }
+      for (const raw of rows(source.rolePermissions)) {
+        const data = unmanaged(raw);
+        await tx.rolePermission.upsert({ where: { role: data.role }, create: data as any, update: { permissions: data.permissions } });
+      }
+      for (const raw of rows(source.systemSettings)) {
+        const data = unmanaged(raw);
+        delete data.updatedByUserId;
+        await tx.systemSetting.upsert({ where: { key: String(data.key) }, create: data as any, update: { value: String(data.value) } });
+      }
+      return {
+        preservedExisting: false,
+        sites: rows(source.sites).length,
+        groups: rows(source.groups).length,
+        areas: rows(source.areas).length,
+        users: userIds.size,
+        cameras: cameraRows.length,
+        credentialsRequired: true,
+      };
+    }, { timeout: 60_000 });
+  }
+
+  private async collectReactivationSnapshot(installationId: string): Promise<ReactivationSnapshot> {
+    const [sites, siteMapLayouts, areas, groups, users, cameras, cameraPermissions, liveLayouts, aiSettings, rolePermissions, systemSettings] = await Promise.all([
+      this.prisma.site.findMany(),
+      this.prisma.siteMapLayout.findMany(),
+      this.prisma.area.findMany(),
+      this.prisma.cameraGroup.findMany(),
+      this.prisma.user.findMany(),
+      this.prisma.camera.findMany(),
+      this.prisma.cameraPermission.findMany(),
+      this.prisma.liveLayout.findMany(),
+      this.prisma.aiSettings.findMany(),
+      this.prisma.rolePermission.findMany(),
+      this.prisma.systemSetting.findMany(),
+    ]);
+    return buildReactivationSnapshot({
+      installationId,
+      customerName: process.env.CLOUD_CUSTOMER_NAME || null,
+      collections: { sites, siteMapLayouts, areas, groups, users, cameras, cameraPermissions, liveLayouts, aiSettings, rolePermissions, systemSettings },
+    });
   }
 
   private getConfig() {

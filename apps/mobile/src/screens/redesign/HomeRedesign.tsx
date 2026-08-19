@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Icon } from '../../components/Icon';
+import { AddCameraSheet } from '../../components/AddCameraSheet';
 import { isRecordingArmed, isOnlineStatus } from '../../utils/camera-view';
 import { loadFeaturedCameraId, saveFeaturedCameraId } from './featuredCamera';
 import type { Alarm, Camera } from '../../types';
@@ -44,6 +45,9 @@ interface Props {
   operationalMessages?: string[];
   /** Poster expirado/quebrado → pede um novo ao App. */
   onPosterError?: (cameraId: string) => void;
+  apiUrl: string;
+  token: string | null;
+  onCamerasChanged?: () => void;
 }
 
 function greeting(): string {
@@ -74,6 +78,7 @@ function ClockBadge({ style, textStyle }: { style: any; textStyle: any }) {
 export function HomeRedesign(props: Props) {
   const { cameras, user, streamPosters, alarms, alarmCount, refreshing, onRefresh, onOpenCamera, onOpenAlarms, facilityName, operationalMessages, onPosterError } = props;
   const { theme } = useTheme();
+  const [addCameraOpen, setAddCameraOpen] = useState(false);
 
   // Destaque: escolha fixada pelo usuário (long-press num card) > 1ª online.
   const [featuredId, setFeaturedId] = useState<string | null>(null);
@@ -109,18 +114,22 @@ export function HomeRedesign(props: Props) {
   const styles = makeStyles(theme);
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: theme.bg }}
-      contentContainerStyle={styles.root}
-      showsVerticalScrollIndicator={false}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
-    >
+    <>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: theme.bg }}
+        contentContainerStyle={styles.root}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
+      >
       {/* Header */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
           <Text style={styles.greet}>{greeting()},</Text>
           <Text style={styles.client} numberOfLines={1}>{clientName}</Text>
         </View>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Adicionar dispositivo" style={[styles.iconBtn, { backgroundColor: theme.accent }]} onPress={() => setAddCameraOpen(true)} activeOpacity={0.8}>
+          <Icon name="plus" size={20} color={theme.textOnAccent} strokeWidth={2.4} />
+        </TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Alarmes" style={styles.iconBtn} onPress={onOpenAlarms} activeOpacity={0.8}>
           <Icon name="bell" size={19} color={theme.text} />
           {alarmCount > 0 ? <View style={styles.badgeDot} /> : null}
@@ -147,7 +156,15 @@ export function HomeRedesign(props: Props) {
 
       {/* Hero: câmera em destaque (long-press para fixar/soltar) */}
       {hero ? (
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Tirar foto" style={styles.hero} activeOpacity={0.9} onPress={() => onOpenCamera(hero)} onLongPress={() => pinCamera(hero)}>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={`Abrir câmera ${hero.name}. ${isOnlineStatus(hero.status) ? 'Online' : 'Offline'}`}
+          accessibilityHint="Toque e segure para fixar ou remover do destaque"
+          style={styles.hero}
+          activeOpacity={0.9}
+          onPress={() => onOpenCamera(hero)}
+          onLongPress={() => pinCamera(hero)}
+        >
           {heroPoster ? (
             <Image source={{ uri: heroPoster }} style={styles.heroImg} resizeMode="cover" onError={() => onPosterError?.(hero.id)} />
           ) : (
@@ -183,12 +200,28 @@ export function HomeRedesign(props: Props) {
             </View>
           </View>
         </TouchableOpacity>
-      ) : null}
+      ) : (
+        <View style={styles.noCameras}>
+          <View style={styles.noCamerasIcon}><Icon name="camera" size={24} color={theme.accent} /></View>
+          <Text style={styles.noCamerasTitle}>Adicione sua primeira câmera</Text>
+          <Text style={styles.noCamerasText}>O app procura dispositivos na rede e orienta cada etapa da instalação.</Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Adicionar primeira câmera"
+            style={styles.noCamerasButton}
+            onPress={() => setAddCameraOpen(true)}
+          >
+            <Icon name="plus" size={17} color={theme.textOnAccent} />
+            <Text style={[styles.noCamerasButtonText, { color: theme.textOnAccent }]}>Adicionar câmera</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Suas câmeras */}
+      {cameras.length ? <>
       <View style={styles.sectionHead}>
         <Text style={styles.sectionTitle}>Suas câmeras</Text>
-        <TouchableOpacity onPress={props.onOpenMosaic}><Text style={styles.link}>Ver todas</Text></TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Ver todas as câmeras" onPress={props.onOpenMosaic}><Text style={styles.link}>Ver todas</Text></TouchableOpacity>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.carousel}>
         {cameras.slice(0, 10).map((cam) => {
@@ -196,7 +229,16 @@ export function HomeRedesign(props: Props) {
           const poster = streamPosters[cam.id];
           const isPinnedCard = featuredId === cam.id;
           return (
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Tirar foto" key={cam.id} style={styles.card} activeOpacity={0.85} onPress={() => onOpenCamera(cam)} onLongPress={() => pinCamera(cam)}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={`Abrir câmera ${cam.name}. ${isOn ? 'Online' : 'Offline'}`}
+              accessibilityHint="Toque e segure para fixar ou remover do destaque"
+              key={cam.id}
+              style={styles.card}
+              activeOpacity={0.85}
+              onPress={() => onOpenCamera(cam)}
+              onLongPress={() => pinCamera(cam)}
+            >
               <View style={styles.cardThumb}>
                 {isOn && poster ? (
                   <Image source={{ uri: poster }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={() => onPosterError?.(cam.id)} />
@@ -218,18 +260,19 @@ export function HomeRedesign(props: Props) {
           );
         })}
       </ScrollView>
+      </> : null}
 
       {/* Atividade recente */}
       <View style={styles.sectionHead}>
         <Text style={styles.sectionTitle}>Atividade recente</Text>
-        <TouchableOpacity onPress={onOpenAlarms}><Text style={styles.link}>Ver tudo</Text></TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Ver todos os eventos" onPress={onOpenAlarms}><Text style={styles.link}>Ver tudo</Text></TouchableOpacity>
       </View>
       <View style={{ gap: 9 }}>
         {alarms.slice(0, 4).map((a) => {
           const cam = a.cameraId ? cameras.find((c) => c.id === a.cameraId) : undefined;
           const poster = cam ? streamPosters[cam.id] : null;
           return (
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Alarmes"
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${labelForEvent(a.type)}. ${a.cameraName || cam?.name || 'Sistema'}`}
               key={a.id}
               style={styles.activity}
               activeOpacity={0.85}
@@ -254,7 +297,17 @@ export function HomeRedesign(props: Props) {
         })}
         {alarms.length === 0 ? <Text style={styles.empty}>Sem atividade recente.</Text> : null}
       </View>
-    </ScrollView>
+      </ScrollView>
+      {/* Modal fora do ScrollView: evita que foco, gestos e botão Voltar sejam
+          disputados pela página Início durante o cadastro. */}
+      <AddCameraSheet
+        visible={addCameraOpen}
+        apiUrl={props.apiUrl}
+        token={props.token}
+        onClose={() => setAddCameraOpen(false)}
+        onCreated={props.onCamerasChanged}
+      />
+    </>
   );
 }
 
@@ -297,7 +350,7 @@ function timeAgo(iso?: string): string {
 
 function makeStyles(t: any) {
   return StyleSheet.create({
-    root: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 132 },
+    root: { width: '100%', maxWidth: 900, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 132 },
     header: { flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 16 },
     greet: { fontFamily: UI, fontSize: 13, fontWeight: '500', color: t.textSub },
     client: { fontFamily: TITLE, fontSize: 24, fontWeight: '800', color: t.text, letterSpacing: -0.4, marginTop: 1 },
@@ -327,6 +380,12 @@ function makeStyles(t: any) {
     heroName: { color: '#fff', fontFamily: TITLE, fontSize: 17, fontWeight: '700' },
     heroArea: { color: 'rgba(255,255,255,0.68)', fontFamily: UI, fontSize: 12, fontWeight: '500', marginTop: 2 },
     expandBtn: { width: 38, height: 38, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.16)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)', alignItems: 'center', justifyContent: 'center' },
+    noCameras: { alignItems: 'center', backgroundColor: t.surface, borderWidth: 1, borderColor: t.border, borderRadius: 22, paddingHorizontal: 24, paddingVertical: 28 },
+    noCamerasIcon: { width: 52, height: 52, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: t.accentBg, marginBottom: 13 },
+    noCamerasTitle: { fontFamily: TITLE, fontSize: 17, fontWeight: '700', color: t.text, textAlign: 'center' },
+    noCamerasText: { fontFamily: UI, fontSize: 13, lineHeight: 19, color: t.textSub, textAlign: 'center', marginTop: 6, maxWidth: 390 },
+    noCamerasButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: t.accent, borderRadius: 13, paddingHorizontal: 18, height: 46, marginTop: 18 },
+    noCamerasButtonText: { fontFamily: UI, fontSize: 14, fontWeight: '700' },
 
     sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 22, marginBottom: 12 },
     sectionTitle: { fontFamily: TITLE, fontSize: 16, fontWeight: '700', color: t.text },

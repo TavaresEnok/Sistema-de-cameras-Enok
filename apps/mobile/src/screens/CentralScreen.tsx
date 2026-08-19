@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import React, { useMemo, useState } from 'react';
 import { Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { CameraTile } from '../components/CameraTile';
+import { AddCameraSheet } from '../components/AddCameraSheet';
 import { FavoritesSheet } from '../components/FavoritesSheet';
 import { Icon, type IconName } from '../components/Icon';
 import { CameraGridSkeleton } from '../components/Skeleton';
@@ -34,6 +35,9 @@ interface CentralScreenProps {
   onOpenMosaic: () => void;
   onOpenPlayback: () => void;
   onPosterError?: (cameraId: string) => void;
+  apiUrl: string;
+  token: string | null;
+  onCamerasChanged?: () => void;
 }
 
 function initialsOf(name?: string): string {
@@ -50,10 +54,12 @@ function todayLabel(): string {
 export function CentralScreen({
   cameras, user, streamPosters, operationalMessages, alarms, alarmCount, refreshing, onRefresh,
   onOpenCamera, onOpenAlarms, onOpenMosaic, onOpenPlayback, onPosterError,
+  apiUrl, token, onCamerasChanged,
 }: CentralScreenProps) {
   const { theme, branding } = useTheme();
   const { favorites, isFavorite, toggleFavorite } = useLibrary();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [addCameraOpen, setAddCameraOpen] = useState(false);
 
   const stats = useMemo(() => {
     const online = cameras.filter((c) => isOnlineStatus(c.status)).length;
@@ -100,6 +106,14 @@ export function CentralScreen({
           {branding.logoDataUrl ? (
             <Image source={{ uri: branding.logoDataUrl }} style={styles.headerLogo} resizeMode="contain" />
           ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Adicionar dispositivo"
+            style={[styles.iconBtn, { backgroundColor: theme.accent, borderColor: theme.accent }]}
+            onPress={() => setAddCameraOpen(true)}
+          >
+            <Icon name="plus" size={21} color={theme.textOnAccent} strokeWidth={2.4} />
+          </Pressable>
           <Pressable
             style={[
               styles.iconBtn,
@@ -305,6 +319,7 @@ export function CentralScreen({
       ) : null}
 
       <FavoritesSheet visible={sheetOpen} cameras={cameras} onClose={() => setSheetOpen(false)} />
+      <AddCameraSheet visible={addCameraOpen} apiUrl={apiUrl} token={token} onClose={() => setAddCameraOpen(false)} onCreated={onCamerasChanged} />
     </ScrollView>
   );
 }

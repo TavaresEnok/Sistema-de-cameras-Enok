@@ -1816,6 +1816,12 @@
         'installation.provision_created': 'Instalação gerada',
         'installation.provision_regenerated': 'Instalação regerada',
         'installation.provision_deleted': 'Instalação cancelada',
+        'installation.archive_requested': 'Arquivo final solicitado',
+        'installation.archive_created': 'Arquivo final criado',
+        'installation.archive_deleted': 'Arquivo final excluído',
+        'installation.archive_expired': 'Arquivo final expirado',
+        'installation.archive_reactivated': 'Instalação reativada',
+        'installation.archive_restore_completed': 'Configurações restauradas',
         'installation.installer_downloaded': 'Instalador baixado',
         'installation.installer_denied': 'Instalador recusado',
         'installation.installer_command_viewed': 'Comando de instalação aberto',
@@ -3644,6 +3650,29 @@
             <div class="deploy-step current"><div class="deploy-dot">2</div><div><strong>Aguardando execução</strong><span>Copie o instalador e execute no servidor Linux do cliente.</span></div></div>
             <div class="deploy-step pending"><div class="deploy-dot">3</div><div><strong>Primeiro heartbeat</strong><span>A Central muda para conectado automaticamente.</span></div></div>
           </div>`;
+        const archive = item.reactivationArchive || null;
+        const archiveRestore = item.reactivationRestore || null;
+        const archiveStateLabel = {
+          REQUESTED: 'Aguardando a instalação', AVAILABLE: 'Arquivo disponível',
+          DELETED: 'Excluído', EXPIRED: 'Prazo encerrado',
+        }[archive?.state] || 'Nenhum arquivo';
+        const archivePanel = item.status === 'PENDING_INSTALL' ? '' : `
+          <section class="panel" style="margin-top:14px">
+            <div class="panel-head"><div><div class="panel-title">Continuidade após cancelamento</div><div class="panel-subtitle">Configurações sem vídeos, eventos, sessões, biometria ou senhas</div></div>
+              <span class="badge ${archive?.state === 'AVAILABLE' ? 'ok' : archive?.state === 'REQUESTED' ? 'warn' : 'neutral'}">${escapeHtml(archiveStateLabel)}</span></div>
+            <div class="detail-body">
+              ${archive?.state === 'AVAILABLE' ? `
+                <div class="kv"><span>Gerado em</span><strong>${archive.createdAt ? escapeHtml(dtf.format(new Date(archive.createdAt))) : '—'}</strong></div>
+                <div class="kv"><span>Validade</span><strong>${archive.expiresAt ? escapeHtml(dtf.format(new Date(archive.expiresAt))) : '—'}</strong></div>
+                <div class="kv"><span>Tamanho</span><strong>${bytes(archive.sizeBytes || 0)}</strong></div>
+                <div class="subtext mono" style="margin-top:8px">SHA-256 ${escapeHtml(archive.sha256 || '—')}</div>
+                ${archiveRestore?.state ? `<div class="kv" style="margin-top:9px"><span>Restauração</span><strong>${escapeHtml({ REQUESTED: 'Aguardando a instalação', RESTORED: 'Concluída', PRESERVED_EXISTING: 'Banco existente preservado' }[archiveRestore.state] || archiveRestore.state)}</strong></div>` : ''}
+                <div class="license-actions" style="margin-top:13px">${archiveRestore?.state === 'REQUESTED' ? '<button class="primary" disabled>Aguardando restauração</button>' : '<button id="restore-reactivation-archive" class="primary">Preparar recontratação</button>'}<button id="delete-reactivation-archive" class="danger">Excluir agora</button></div>`
+                : archive?.state === 'REQUESTED'
+                  ? `<div class="subtext">A solicitação será recebida no próximo heartbeat. O arquivo será cifrado na Central e vencerá em ${archive.expiresAt ? escapeHtml(dtf.format(new Date(archive.expiresAt))) : '24 meses'}.</div>`
+                  : `<div class="subtext">Ao cancelar, a instalação enviará somente cadastros e configurações necessários para uma possível recontratação. Credenciais precisarão ser informadas novamente.</div><div class="license-actions" style="margin-top:13px"><button id="request-reactivation-archive" class="danger">Cancelar e criar arquivo final</button></div>`}
+            </div>
+          </section>`;
 
         /* ── CASCA ESTÁVEL, CORPOS VOLÁTEIS ────────────────────────────────
            Este template é a CASCA do detalhe: abas, molduras de painel e
@@ -3760,6 +3789,7 @@
                   <div class="subtext">O diagnóstico é sanitizado: não inclui chave de licença, token nem segredos.</div>`}
               </div>
             </section>
+            ${archivePanel}
           </div>
 
           <div class="detail-tab-panel" data-tab-panel="alertas">
@@ -3960,6 +3990,9 @@
         els.detail.querySelector('#copy-selected-diagnostics')?.addEventListener('click', () => copyDiagnosticsFor(item.id));
         els.detail.querySelector('#copy-selected-installer')?.addEventListener('click', () => copyInstallerFor(item.id));
         els.detail.querySelector('#delete-pending-install')?.addEventListener('click', () => deletePendingInstallation(item.id));
+        els.detail.querySelector('#request-reactivation-archive')?.addEventListener('click', () => requestReactivationArchive(item.id));
+        els.detail.querySelector('#delete-reactivation-archive')?.addEventListener('click', () => deleteReactivationArchive(item.id));
+        els.detail.querySelector('#restore-reactivation-archive')?.addEventListener('click', () => prepareReactivation(item.id));
       }
 
       /* ── Corpos voláteis do detalhe ──────────────────────────────────────
@@ -4982,6 +5015,30 @@
         setView('operacao');
         await load();
         showToast('Instalação pendente cancelada.');
+      }
+      async function requestReactivationArchive(id) {
+        if (!confirm('Cancelar o contrato e solicitar o arquivo final desta instalação? Vídeos, eventos, biometria, sessões e senhas não serão guardados.')) return;
+        const res = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(id)}/reactivation-archive`), { method: 'POST', credentials: 'include' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(data.message || 'Não foi possível solicitar o arquivo final.'); return; }
+        await load();
+        showToast('Cancelamento registrado. Aguardando o próximo sinal da instalação.');
+      }
+      async function deleteReactivationArchive(id) {
+        if (!confirm('Excluir definitivamente este arquivo de reativação? Esta ação não pode ser desfeita.')) return;
+        const res = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(id)}/reactivation-archive`), { method: 'DELETE', credentials: 'include' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(data.message || 'Não foi possível excluir o arquivo.'); return; }
+        await load();
+        showToast('Arquivo excluído e certificado na auditoria.');
+      }
+      async function prepareReactivation(id) {
+        if (!confirm('Reativar o contrato desta instalação? As credenciais das câmeras deverão ser confirmadas novamente.')) return;
+        const res = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(id)}/reactivation-archive/reactivate`), { method: 'POST', credentials: 'include' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(data.message || 'Não foi possível preparar a recontratação.'); return; }
+        await load();
+        showToast('Instalação reativada. Confirme as credenciais das câmeras.');
       }
       async function copyInstallerFor(id) {
         try {

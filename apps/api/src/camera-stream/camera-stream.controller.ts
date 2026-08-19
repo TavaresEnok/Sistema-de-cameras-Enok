@@ -48,6 +48,13 @@ type MediaMtxAuthRequest = {
   ip?: string;
 };
 
+type SrsPublishHookRequest = {
+  action?: string;
+  ip?: string;
+  app?: string;
+  stream?: string;
+};
+
 export function isLoopbackMediaWorkerAuthorized(body: MediaMtxAuthRequest) {
   const action = String(body?.action ?? '');
   const path = String(body?.path ?? '');
@@ -68,6 +75,11 @@ export function isLoopbackMediaWorkerAuthorized(body: MediaMtxAuthRequest) {
 
 @Controller('camera-stream')
 export class CameraStreamController {
+  // Câmeras não vinculadas costumam reconectar em poucos segundos. Negativas
+  // são cacheadas por um intervalo curto para que uma única câmera errada não
+  // transforme o banco em rate limiter; vínculo recém-criado passa em até 15 s.
+  private readonly rejectedSrsPaths = new Map<string, number>();
+
   constructor(
     private readonly ffmpegMjpegService: FfmpegMjpegService,
     private readonly clipCaptureService: ClipCaptureService,
@@ -117,6 +129,77 @@ export class CameraStreamController {
       .split(',')[0]
       .trim();
     return `${reqProto}://${apiHost}`;
+  }
+
+  /**
+   * O SRS recebe `publish` antes de o primeiro pacote de mídia existir. É o
+   * único ponto confiável para aprender câmeras FMLE que recebem o aceite e
+   * desligam sem mandar um quadro — nesse caso o callback do MediaMTX nunca é
+   * alcançado e a antiga lista de pendentes ficava vazia para sempre.
+   *
+   * Este também é o primeiro portão de autorização. Recusar aqui impede o SRS
+   * de manter/encaminhar centenas de sessões que o MediaMTX recusaria depois.
+   */
+  @Public()
+  @SkipThrottle()
+  @Post('srs-publish')
+  async recordSrsPublishAttempt(
+    @Body() body: SrsPublishHookRequest,
+    @Query('internalToken') internalToken: string | undefined,
+    @Res() res: Response,
+  ) {
+    const expectedCallbackToken = (
+      this.configService.get<string>('mediaMtxAuthCallbackToken') ?? ''
+    ).trim();
+    if (
+      expectedCallbackToken.length < 32
+      || !internalToken
+      || !timingSafeTextEquals(internalToken, expectedCallbackToken)
+    ) {
+      return res.status(401).json({ code: 1, message: 'Callback de mídia não autenticado.' });
+    }
+
+    // Hook diferente de on_publish não deve virar dado operacional.
+    if (String(body?.action ?? '') !== 'on_publish') {
+      return res.status(400).json({ code: 1, message: 'Ação de callback inválida.' });
+    }
+
+    const app = String(body?.app ?? '').trim().replace(/^\/+|\/+$/g, '');
+    const stream = String(body?.stream ?? '').trim().replace(/^\/+|\/+$/g, '');
+    const path = `${app}/${stream}`;
+
+    if (!app || !stream) {
+      return res.status(200).json({ code: 1, message: 'Caminho de publicação inválido.' });
+    }
+
+    const cachedUntil = this.rejectedSrsPaths.get(path) ?? 0;
+    if (cachedUntil > Date.now()) {
+      this.pendingIngest.record(path, body?.ip ?? null);
+      return res.status(200).json({ code: 1, message: 'Equipamento ainda não vinculado.' });
+    }
+    this.rejectedSrsPaths.delete(path);
+
+    const ingestKey = ingestKeyFromPathName(path);
+    let camera: any;
+    try {
+      camera = ingestKey
+        ? await this.camerasService.findCameraByIngestKey(ingestKey)
+        : await this.camerasService.findCameraByIngestPath(path);
+    } catch {
+      // Autorização fail-closed: banco indisponível nunca abre uma publicação.
+      return res.status(200).json({ code: 1, message: 'Autorização temporariamente indisponível.' });
+    }
+    if (!camera) {
+      this.pendingIngest.record(path, body?.ip ?? null);
+      this.rejectedSrsPaths.set(path, Date.now() + 15_000);
+      if (this.rejectedSrsPaths.size > 2048) {
+        const oldest = this.rejectedSrsPaths.keys().next().value;
+        if (oldest) this.rejectedSrsPaths.delete(oldest);
+      }
+      return res.status(200).json({ code: 1, message: 'Equipamento ainda não vinculado.' });
+    }
+
+    return res.status(200).json({ code: 0 });
   }
 
   @Public()

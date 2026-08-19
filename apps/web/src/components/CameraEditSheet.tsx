@@ -115,6 +115,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
   const [confirmarVoltarRtsp, setConfirmarVoltarRtsp] = useState(false);
   const [copiado, setCopiado] = useState<string | null>(null);
   const [pendentes, setPendentes] = useState<PendingIngest[]>([]);
+  const [caminhoManual, setCaminhoManual] = useState('');
   const [senhaVisivel, setSenhaVisivel] = useState(false);
   const [buscandoSenha, setBuscandoSenha] = useState(false);
   const [avisoDaSenha, setAvisoDaSenha] = useState<string | null>(null);
@@ -160,6 +161,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
     setSenhaVisivel(false);
     setSenhaRevelada(null);
     setAvisoDaSenha(null);
+    setCaminhoManual('');
     setLoading(true);
     // Modo de origem vem de endpoint próprio (a chave é credencial e só
     // administrador lê). Falha aqui não pode impedir editar a câmera.
@@ -168,12 +170,6 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
         headers: { Authorization: `Bearer ${accessToken}` },
       })
       .then(({ data }) => { if (!cancelled) setIngest(data ?? null); })
-      .catch(() => undefined);
-    void axios
-      .get(`${getApiBaseUrl()}/cameras/rtmp-ingest/pending`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      })
-      .then(({ data }) => { if (!cancelled) setPendentes(data?.items ?? []); })
       .catch(() => undefined);
     void axios
       .get(`${getApiBaseUrl()}/cameras/${cameraId}`, { headers: { Authorization: `Bearer ${accessToken}` } })
@@ -217,6 +213,29 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
       cancelled = true;
     };
   }, [cameraId, accessToken]);
+
+  // A câmera costuma tentar uma vez por minuto. Atualizar apenas ao abrir a
+  // gaveta fazia a linha aparecer só depois de fechar e abrir de novo, parecendo
+  // que a detecção não existia. Enquanto a edição está aberta, acompanha as
+  // tentativas sem exigir ação do instalador.
+  useEffect(() => {
+    if (!open || !cameraId || !accessToken) return;
+    let cancelled = false;
+    const carregarPendentes = () => {
+      void axios
+        .get(`${getApiBaseUrl()}/cameras/rtmp-ingest/pending`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        })
+        .then(({ data }) => { if (!cancelled) setPendentes(data?.items ?? []); })
+        .catch(() => undefined);
+    };
+    carregarPendentes();
+    const timer = window.setInterval(carregarPendentes, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [open, cameraId, accessToken]);
 
   if (!camera) return null;
   const upd = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
@@ -272,6 +291,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
       ]);
       setIngest(alvo ?? null);
       setPendentes(lista?.items ?? []);
+      setCaminhoManual('');
       toast({ title: 'Equipamento vinculado', description: 'O vídeo dele passa a entrar como esta câmera.' });
     } catch (err) {
       const msg = axios.isAxiosError(err) ? (err.response?.data?.message ?? err.message) : 'Tente novamente.';
@@ -476,13 +496,22 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                           <p className="text-[11px] font-semibold">Equipamento vinculado</p>
                           <p className="mt-1 font-mono text-[11px] text-muted-foreground">{ingest.ingestPath}</p>
                           <p className="mt-1.5 text-[10px] leading-relaxed text-muted-foreground">
-                            Este aparelho não deixa escolher o destino — ele publica sempre neste caminho.
-                            Nada a configurar nele; o vídeo já entra como esta câmera.
+                            O modo IP/porta do equipamento chegou ao servidor com este identificador.
+                            Se não houver vídeo, use abaixo o modo <strong className="text-foreground">Personalizado</strong>
+                            {' '}com a URL completa — alguns firmwares conectam pelo serial, mas não enviam mídia nesse modo.
                           </p>
                         </div>
                       ) : null}
-                      {!ingest?.ingestPath && (
+                      {ingest?.fullUrl && (
                         <div className="space-y-3">
+                          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+                            <p className="text-[11px] font-semibold text-amber-500">Intelbras/Positivo: use endereço Personalizado</p>
+                            <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+                              Selecione <strong className="text-foreground">Tipo de endereço → Personalizado</strong> e cole
+                              {' '}a URL completa abaixo. Não use “Não personalizado” com apenas IP/porta: esse modo gera
+                              {' '}o caminho por serial e pode encerrar sem transmitir quadros para servidores genéricos.
+                            </p>
+                          </div>
                           {usaEnderecoCompacto && (
                             <div className="rounded-md border border-[hsl(var(--status-online)_/_0.35)] bg-[hsl(var(--status-online)_/_0.08)] p-3">
                               <p className="text-[11px] font-semibold text-[hsl(var(--status-online))]">Endereço compacto selecionado</p>
@@ -508,8 +537,12 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                             </div>
                           )}
                           <details className="rounded-md border border-border bg-background/40 px-3 py-2">
-                            <summary className="cursor-pointer text-[11px] font-medium">Servidor e chave separados</summary>
+                            <summary className="cursor-pointer text-[11px] font-medium">Equipamento com campos Servidor + Chave</summary>
                             <div className="mt-3 space-y-3">
+                              <p className="text-[10px] leading-relaxed text-muted-foreground">
+                                Use somente quando existirem dois campos reais. Na Intelbras, “Não personalizado”
+                                com IP/porta não equivale a Servidor + Chave.
+                              </p>
                               <CampoCopiavel
                                 rotulo="Servidor RTMP"
                                 valor={ingest?.serverUrl ?? ''}
@@ -534,7 +567,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                             <p className="text-[11px] font-semibold">Equipamentos tentando publicar</p>
                             <p className="text-[10px] leading-relaxed text-muted-foreground">
                               Chegaram no servidor mas ainda não pertencem a nenhuma câmera. Se um deles
-                              for esta, vincule — o vídeo passa a entrar por aqui.
+                              for esta, vincule — o vídeo passa a entrar por aqui. A lista atualiza automaticamente.
                             </p>
                             {pendentes.map((p) => (
                               <div key={p.path} className="flex items-center gap-2 rounded-md border border-border bg-background/60 p-2">
@@ -555,6 +588,43 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                                 </Button>
                               </div>
                             ))}
+                          </div>
+                        </>
+                      )}
+
+                      {!ingest?.ingestPath && (
+                        <>
+                          <Separator />
+                          <div className="space-y-2 rounded-md border border-border bg-background/40 p-3">
+                            <p className="text-[11px] font-semibold">Câmera usa um caminho próprio?</p>
+                            <p className="text-[10px] leading-relaxed text-muted-foreground">
+                              Alguns modelos ignoram a chave e publicam com o número de série. Se a tentativa
+                              não aparecer automaticamente, informe aqui o caminho exibido no log da câmera.
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={caminhoManual}
+                                onChange={(e) => setCaminhoManual(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && caminhoManual.trim() && !ingestBusy) {
+                                    void vincular(caminhoManual.trim());
+                                  }
+                                }}
+                                placeholder="live/liveStream_NUMERO_DE_SERIE_0_0"
+                                aria-label="Caminho próprio da câmera"
+                                className="h-9 min-w-0 flex-1 font-mono text-[11px]"
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={ingestBusy || !caminhoManual.trim()}
+                                onClick={() => void vincular(caminhoManual.trim())}
+                                className="h-9 shrink-0 text-[11px]"
+                              >
+                                Vincular caminho
+                              </Button>
+                            </div>
                           </div>
                         </>
                       )}

@@ -101,7 +101,7 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
           {FILTERS.map((f) => {
             const on = filter === f.id;
             return (
-              <TouchableOpacity key={f.id} style={[s.chip, on && s.chipOn]} onPress={() => setFilter(f.id)} activeOpacity={0.8}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Filtrar eventos por ${f.label}`} accessibilityState={{ selected: on }} key={f.id} style={[s.chip, on && s.chipOn]} onPress={() => setFilter(f.id)} activeOpacity={0.8}>
                 <Text style={[s.chipText, { color: on ? '#fff' : theme.textSub }]}>{f.label}</Text>
               </TouchableOpacity>
             );
@@ -118,6 +118,9 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
                 const sys = isSystemEvent(a.type);
                 return (
                   <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={`${labelForEvent(a.type)}. ${a.cameraName || cam?.name || 'Sistema'}. ${new Date(a.occurredAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
+                    accessibilityState={{ disabled: !a.cameraId }}
                     key={a.id}
                     style={[s.row, highlightedAlarmId === a.id && { borderColor: theme.accent, borderWidth: 1.5 }]}
                     activeOpacity={0.85}
@@ -182,7 +185,9 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
               <Text style={[s.acaoTexto, { color: theme.text }]}>Tentar novamente</Text>
             </TouchableOpacity>
           </View>
-        ) : alarms.length === 0 ? <Text style={s.empty}>Nenhum evento ainda.</Text> : null}
+        ) : alarms.length === 0 ? <Text style={s.empty}>Nenhum evento ainda.</Text>
+          : groups.length === 0 ? <Text style={s.empty}>Nenhum evento neste filtro.</Text>
+          : null}
         {truncated ? (
           <Text style={s.capNote}>Mostrando os 50 eventos mais recentes.</Text>
         ) : null}
@@ -196,7 +201,7 @@ function makeStyles(t: any) {
     acao: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 9, paddingVertical: 5 },
     acaoTexto: { fontSize: 11, fontWeight: '700' },
     capNote: { fontFamily: UI, fontSize: 12, color: t.textMuted, textAlign: 'center', marginTop: 18 },
-    root: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 132 },
+    root: { width: '100%', maxWidth: 900, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 132 },
     title: { fontFamily: TITLE, fontSize: 26, fontWeight: '800', color: t.text, letterSpacing: -0.5, marginBottom: 14 },
     chips: { flexDirection: 'row', gap: 8 },
     chip: { backgroundColor: t.surface, borderWidth: 1, borderColor: t.border, borderRadius: 999, paddingHorizontal: 16, height: 36, alignItems: 'center', justifyContent: 'center' },

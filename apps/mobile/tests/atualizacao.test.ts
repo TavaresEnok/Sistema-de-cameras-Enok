@@ -36,6 +36,13 @@ test('manifesto ilegível ou incompleto é SILENCIOSO', () => {
   assert.equal(avaliarAtualizacao(INFO, null, 'http://h'), null, 'sem saber a versão local não dá para comparar');
 });
 
+test('manifesto de atualização não pode redirecionar para URL ou caminho arbitrário', () => {
+  const remoto = { ...INFO, versionCode: 99, artifacts: { apk: { file: 'https://malicioso.test/app.apk' } } };
+  const traversal = { ...INFO, versionCode: 99, artifacts: { apk: { file: '../../outro.apk' } } };
+  assert.equal(avaliarAtualizacao(remoto, 1, 'https://api.local/apk'), null);
+  assert.equal(avaliarAtualizacao(traversal, 1, 'https://api.local/apk'), null);
+});
+
 test('o manifesto fica ao lado do APK, por cliente', () => {
   assert.equal(urlDoBuildInfo('http://host/apk/', 'grupoflash'), 'http://host/apk/drac-grupoflash-build-info.json');
 });

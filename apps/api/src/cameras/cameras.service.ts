@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ModuleRef } from '@nestjs/core';
 import { temZonaDeArea, validarZonasDeDeteccao } from './helpers/validar-zonas.helper';
@@ -44,6 +44,7 @@ import {
 } from './helpers/rtsp-url.helper';
 import { sanitizeSensitiveText } from '../common/security/sensitive-text.helper';
 import { envNumber } from '../common/config/env-number.helper';
+import { RtmpIngestSourceService, type RtmpStreamMetadata } from './rtmp-ingest-source.service';
 import {
   execFileWithSecretUrl,
   spawnWithSecretUrl,
@@ -72,8 +73,10 @@ import {
 import { decidirEstadoDaCamera, devoSondarRtsp } from './helpers/prova-de-vida.helper';
  
 
-export function sanitizeCamera<T extends { passwordEncrypted: string }>(camera: T): Omit<T, 'passwordEncrypted'> {
-  const { passwordEncrypted, ...safeCamera } = camera;
+export function sanitizeCamera<T extends { passwordEncrypted: string; rtmpIngestKeyHash?: unknown; rtmpIngestKeyEncrypted?: unknown }>(camera: T): Omit<T, 'passwordEncrypted' | 'rtmpIngestKeyHash' | 'rtmpIngestKeyEncrypted'> {
+  // Hash e ciphertext da chave RTMP também são segredos internos. A URL de
+  // publicação só sai pelo descritor explícito, no cadastro/rotação autorizada.
+  const { passwordEncrypted, rtmpIngestKeyHash, rtmpIngestKeyEncrypted, ...safeCamera } = camera;
   return safeCamera;
 }
 
@@ -160,6 +163,7 @@ export class CamerasService {
     private readonly portChecker: PortCheckerService,
     private readonly alarmsService: AlarmsService,
     private readonly moduleRef: ModuleRef,
+    @Optional() private readonly rtmpIngestSource?: RtmpIngestSourceService,
   ) {}
 
   /**
@@ -709,7 +713,10 @@ export class CamerasService {
       const origem = camera.rtmpIngestPath
         ? `rtmp://…/${camera.rtmpIngestPath}`
         : 'aguardando o equipamento publicar';
-      const perfil = { channel: 1, subtype: 0, url: origem, codec: 'h264' };
+      const codec = this.normalizeVideoCodec(
+        camera.detectedVideoCodec ?? camera.recordingVideoCodec ?? camera.streamVideoCodec,
+      );
+      const perfil = { channel: 1, subtype: 0, url: origem, codec };
       return { live: perfil, recording: perfil, analytics: perfil, sourceMode: SOURCE_MODE_PUSH };
     }
 
@@ -1613,9 +1620,12 @@ export class CamerasService {
         // Câmera nova nasce seguindo o grupo: herdar a política é o padrão são,
         // e um número próprio que ninguém revisita é como se acumula exceção.
         retentionFollowsGroup: dto.retentionFollowsGroup ?? true,
-        // RTMP clássico entrega H.264 — não há sonda a fazer nem codec a adivinhar.
-        streamVideoCodec: 'h264',
-        detectedVideoCodec: 'h264',
+        // O codec pertence à publicação, não ao protocolo. Enhanced RTMP pode
+        // transportar H.265; os campos são preenchidos quando o primeiro stream
+        // real chega ao MediaMTX.
+        streamVideoCodec: null,
+        recordingVideoCodec: null,
+        detectedVideoCodec: null,
         audioEnabled: dto.audioEnabled ?? false,
         aiEnabled: aiEnabledEfetivo({
           recordingMode: dto.recordingMode ?? 'continuous',
@@ -1627,7 +1637,7 @@ export class CamerasService {
       },
     });
     this.logger.log(`Câmera ${camera.name} criada em modo de publicação (RTMP).`);
-    return { ...camera, rtmpIngest: this.buildIngestDescriptor(key) };
+    return { ...sanitizeCamera(camera), rtmpIngest: this.buildIngestDescriptor(key) };
   }
 
   /**
@@ -1664,27 +1674,89 @@ export class CamerasService {
    * aberta" só diz que o equipamento responde; aqui, que o vídeo está chegando.
    */
   private async getPushSourcedStatus(
-    camera: { id: string; name: string; status: CameraStatus; rtmpIngestPath?: string | null; rtmpIngestKeyEncrypted?: string | null },
+    camera: {
+      id: string;
+      name: string;
+      status: CameraStatus;
+      rtmpIngestPath?: string | null;
+      rtmpIngestKeyEncrypted?: string | null;
+      detectedVideoCodec?: string | null;
+      streamVideoCodec?: string | null;
+      recordingVideoCodec?: string | null;
+      detectedWidth?: number | null;
+      detectedHeight?: number | null;
+      detectedFps?: number | null;
+      detectedBitrateKbps?: number | null;
+      recordingEnabled?: boolean;
+      preferredLiveProtocol?: string | null;
+    },
     previousStatus: CameraStatus,
     startedAt: number,
   ) {
     let publicando = false;
+    let stalled = false;
+    let metadata: RtmpStreamMetadata = {
+      codec: this.normalizeVideoCodec(
+        camera.detectedVideoCodec ?? camera.recordingVideoCodec ?? camera.streamVideoCodec,
+      ) ?? null,
+      width: camera.detectedWidth ?? null,
+      height: camera.detectedHeight ?? null,
+      fps: camera.detectedFps ?? null,
+      bitrateKbps: camera.detectedBitrateKbps ?? null,
+    };
     try {
-      let caminhos: string[] = [];
-      if (isAcceptableIngestPath(camera.rtmpIngestPath)) {
-        caminhos = [normalizeIngestPath(camera.rtmpIngestPath)];
-      } else if (camera.rtmpIngestKeyEncrypted) {
-        try {
-          const chave = this.cryptoService.decrypt(camera.rtmpIngestKeyEncrypted);
-          // Aceita primeiro o alias curto novo e depois o path hexadecimal
-          // histórico. Assim a frota pode migrar câmera a câmera, sem downtime.
-          if (isValidIngestKey(chave)) caminhos = ingestPathNames(chave);
-        } catch { /* chave ilegível: segue como não publicando */ }
-      }
-      for (const caminho of caminhos) {
-        if (await this.ingestPathIsLive(caminho)) {
-          publicando = true;
-          break;
+      if (this.rtmpIngestSource) {
+        const resolved = await this.rtmpIngestSource.resolve(camera);
+        stalled = resolved.stalled;
+        publicando = resolved.ready && !resolved.stalled;
+        metadata = resolved.metadata;
+
+        // Dimensões/FPS não vêm no resumo de tracks do MediaMTX. A sonda usa a
+        // mesma sessão interna e roda fora do caminho crítico do health/live.
+        if (resolved.ready) {
+          void this.rtmpIngestSource.probeMetadata(resolved.sourceUrl, resolved.pathName)
+            .then(async (probed) => {
+              if (!probed) return;
+              await this.prisma.camera.update({
+                where: { id: camera.id },
+                data: {
+                  streamVideoCodec: probed.codec ?? metadata.codec,
+                  recordingVideoCodec: probed.codec ?? metadata.codec,
+                  detectedVideoCodec: probed.codec ?? metadata.codec,
+                  streamWidth: probed.width,
+                  streamHeight: probed.height,
+                  streamFps: probed.fps,
+                  streamBitrateKbps: probed.bitrateKbps,
+                  recordingWidth: probed.width,
+                  recordingHeight: probed.height,
+                  recordingFps: probed.fps,
+                  recordingBitrateKbps: probed.bitrateKbps,
+                  detectedWidth: probed.width,
+                  detectedHeight: probed.height,
+                  detectedFps: probed.fps,
+                  detectedBitrateKbps: probed.bitrateKbps,
+                },
+              });
+            })
+            .catch(() => undefined);
+        }
+      } else {
+        // Compatibilidade para testes/instâncias antigas que constroem o serviço
+        // manualmente sem o resolvedor compartilhado.
+        let caminhos: string[] = [];
+        if (isAcceptableIngestPath(camera.rtmpIngestPath)) {
+          caminhos = [normalizeIngestPath(camera.rtmpIngestPath)];
+        } else if (camera.rtmpIngestKeyEncrypted) {
+          try {
+            const chave = this.cryptoService.decrypt(camera.rtmpIngestKeyEncrypted);
+            if (isValidIngestKey(chave)) caminhos = ingestPathNames(chave);
+          } catch { /* chave ilegível: segue como não publicando */ }
+        }
+        for (const caminho of caminhos) {
+          if (await this.ingestPathIsLive(caminho)) {
+            publicando = true;
+            break;
+          }
         }
       }
     } catch {
@@ -1696,7 +1768,17 @@ export class CamerasService {
     const status = publicando ? CameraStatus.ONLINE : CameraStatus.OFFLINE;
     await this.prisma.camera.update({
       where: { id: camera.id },
-      data: { status, ...(publicando ? { lastSeenAt: new Date() } : {}) },
+      data: {
+        status,
+        streamVideoCodec: metadata.codec ?? camera.streamVideoCodec,
+        recordingVideoCodec: metadata.codec ?? camera.recordingVideoCodec,
+        detectedVideoCodec: metadata.codec ?? camera.detectedVideoCodec,
+        detectedWidth: metadata.width ?? camera.detectedWidth,
+        detectedHeight: metadata.height ?? camera.detectedHeight,
+        detectedFps: metadata.fps ?? camera.detectedFps,
+        detectedBitrateKbps: metadata.bitrateKbps ?? camera.detectedBitrateKbps,
+        ...(publicando ? { lastSeenAt: new Date() } : {}),
+      },
     });
     if (status !== previousStatus) {
       this.logger.log(`${camera.name}: ${previousStatus} → ${status} (ingestão RTMP).`);
@@ -1707,13 +1789,14 @@ export class CamerasService {
       rtspReachable: publicando,
       rtspAuthOk: publicando,
       onvifReachable: false,
-      detectedVideoCodec: 'h264',
-      detectedFps: null as number | null,
-      configuredFps: null as number | null,
-      recordingEnabled: true,
-      preferredLiveProtocol: 'webrtc',
+      detectedVideoCodec: metadata.codec,
+      detectedFps: metadata.fps,
+      configuredFps: metadata.fps,
+      recordingEnabled: camera.recordingEnabled ?? false,
+      preferredLiveProtocol: camera.preferredLiveProtocol ?? 'webrtc',
       status,
       lastSeenAt: publicando ? new Date() : null,
+      stalled,
       liveProbeLatencyMs: Math.max(0, Date.now() - startedAt),
       checkedAt: new Date().toISOString(),
     };
@@ -1836,9 +1919,23 @@ export class CamerasService {
       select: { sourceMode: true, rtmpIngestKeyEncrypted: true, rtmpIngestPath: true },
     });
     if (!camera || !isPushSourced(camera)) return null;
-    // Equipamento com caminho próprio não usa a nossa chave: mostrar a chave ali
-    // seria mentir para o instalador sobre o que está valendo.
+    // Caminho próprio prova que o modo IP/porta chegou ao servidor, mas não que
+    // o firmware enviará mídia nesse dialeto. Intelbras/Positivo em modo "Não
+    // personalizado" anunciam `live/liveStream_<serial>` e podem encerrar sem
+    // quadro; o modo interoperável é "Personalizado" com a URL completa. Por
+    // isso, quando a chave ainda existe, devolvemos AMBAS as informações: o
+    // vínculo observado e a alternativa padrão que o instalador deve testar.
     if (camera.rtmpIngestPath) {
+      if (camera.rtmpIngestKeyEncrypted) {
+        try {
+          const key = this.cryptoService.decrypt(camera.rtmpIngestKeyEncrypted);
+          if (isValidIngestKey(key)) {
+            return { ...this.buildIngestDescriptor(key), ingestPath: camera.rtmpIngestPath };
+          }
+        } catch {
+          // Mantém abaixo o vínculo legível mesmo se a chave antiga não abrir.
+        }
+      }
       return {
         sourceMode: SOURCE_MODE_PUSH,
         serverUrl: null,

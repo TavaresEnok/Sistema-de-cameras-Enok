@@ -45,6 +45,7 @@ import { liveViewModeToSourceProfile } from './helpers/source-profile.helper';
 import { decidirFonteDaMaxima } from './helpers/fonte-da-maxima.helper';
 import { decidirCopiaDeVideo } from './helpers/copia-em-vez-de-reencode.helper';
 import { SourceGatewayService } from './source-gateway.service';
+import { RtmpIngestSourceService } from '../cameras/rtmp-ingest-source.service';
 
 type DeliveryUrls = {
   enabled: boolean;
@@ -237,6 +238,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // Opcional pelo mesmo motivo dos testes; em produção o PrismaModule é
     // @Global e o Nest injeta. Sem ele, o histórico só não é persistido.
     @Optional() private readonly prisma?: PrismaService,
+    @Optional() private readonly rtmpIngestSource?: RtmpIngestSourceService,
   ) {}
 
   private hotGridBudget(): number {
@@ -1855,129 +1857,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   }
 
   /**
-   * Prepara os paths de entrega de uma câmera que PUBLICA em nós.
-   *
-   * A inversão de sentido simplifica quase tudo:
-   *  · não há o que sondar — a câmera não é discável, e o codec do RTMP clássico
-   *    é H.264 por definição do protocolo, então a entrega é PASSTHROUGH puro
-   *    (sem FFmpeg, sem transcode, sem custo de CPU por câmera);
-   *  · os três modos (grade, selecionada, original) leem a MESMA ingestão, porque
-   *    quem publica manda um fluxo só — não existe sub-stream para escolher;
-   *  · `sourceOnDemand` mantém o repasse ligado só enquanto alguém assiste; a
-   *    ingestão em si continua de pé, pois quem a segura é a câmera.
-   *
-   * Se a câmera não estiver publicando no momento, o path simplesmente não fica
-   * pronto — mesmo comportamento visível de uma câmera offline no modo pull.
+   * Mantido como estreitamento testável: RTMP não possui um pipeline paralelo.
+   * Ele resolve sua origem interna e entra no MESMO configurador de live usado
+   * por RTSP (passthrough original, fallback H.264, áudio, grade e limites).
    */
-  private async configurePushSourcedPath(
-    camera: any,
-    deliveryMode: LiveViewMode,
-  ): Promise<EnsuredCameraPath> {
-    const cameraId = String(camera.id);
-    const pathName = this.pathNameFromCameraId(cameraId, deliveryMode);
-
-    // Duas origens possíveis, nesta ordem:
-    //  1. o caminho PRÓPRIO do equipamento, aprendido e confirmado por um
-    //     administrador — tem precedência porque, quando existe, é onde o
-    //     aparelho realmente publica (ele ignora o que mandamos);
-    //  2. a chave que nós geramos, para equipamento que aceita configurar o
-    //     caminho.
-    let ingestPath: string | null = null;
-    if (isAcceptableIngestPath(camera.rtmpIngestPath)) {
-      ingestPath = normalizeIngestPath(camera.rtmpIngestPath);
-    } else {
-      let ingestKey: string | null = null;
-      try {
-        if (camera.rtmpIngestKeyEncrypted) {
-          ingestKey = this.cryptoService.decrypt(camera.rtmpIngestKeyEncrypted);
-        }
-      } catch {
-        ingestKey = null;
-      }
-      if (isValidIngestKey(ingestKey)) {
-        const candidatos = ingestPathNames(ingestKey);
-        // A URL nova publica no alias compacto; a antiga continua em `drac/`.
-        // Se alguma das duas estiver ativa, a entrega acompanha a publicação
-        // real. Sem publicação ainda, prepara o alias recomendado na interface.
-        ingestPath = candidatos[0];
-        for (const candidato of candidatos) {
-          try {
-            if (await this.isPathPublishing(candidato)) {
-              ingestPath = candidato;
-              break;
-            }
-          } catch (error: any) {
-            // 404 significa apenas "não está publicando neste formato". Uma
-            // falha real da API não pode nos fazer trocar um path às cegas.
-            if (error?.status !== 404) throw error;
-          }
-        }
-      }
-    }
-    if (!ingestPath) {
-      // Câmera marcada como push mas sem chave nem caminho vinculado: cadastro
-      // incompleto, não erro de operação. Falha explícita para o operador ver a
-      // causa em vez de encarar um tile eternamente "Conectando".
-      throw new BadRequestException(
-        'Câmera em modo de publicação (RTMP) ainda não tem chave nem equipamento vinculado.',
-      );
-    }
-
-    const sourceUrl = this.buildInternalRtspUrl(ingestPath);
-    if (!sourceUrl) {
-      throw new BadRequestException('Ingestão RTMP indisponível: MediaMTX não configurado.');
-    }
-
-    const encodedPath = encodeURIComponent(pathName);
-    const desiredPath: any = {
-      source: sourceUrl,
-      sourceOnDemand: true,
-      sourceOnDemandStartTimeout:
-        this.configService.get<string>('mediaMtxSourceOnDemandStartTimeout') ?? '6s',
-      sourceOnDemandCloseAfter:
-        this.configService.get<string>('mediaMtxSourceOnDemandCloseAfter') ?? '5m',
-      // A ingestão vive dentro do MediaMTX: TCP no laço local é o transporte
-      // previsível, sem depender de UDP entre containers.
-      rtspTransport: 'tcp',
-    };
-
-    try {
-      const current: any = await this.getPath(pathName);
-      const igual =
-        current?.source === desiredPath.source &&
-        current?.rtspTransport === desiredPath.rtspTransport &&
-        current?.sourceOnDemand === desiredPath.sourceOnDemand;
-      if (igual) {
-        return {
-          pathName,
-          sourceUrl,
-          sourceVideoCodec: 'h264',
-          transcodedForLive: false,
-          liveProfile: null,
-          deliveryMode,
-        };
-      }
-    } catch {
-      // Não existe ainda, ou a leitura falhou: cria abaixo.
-    }
-
-    try {
-      await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodedPath}`);
-    } catch {
-      // ignora quando ainda não existe
-    }
-    await this.apiRequest('POST', `/v3/config/paths/add/${encodedPath}`, desiredPath);
-    this.logger.log(`Path MediaMTX pronto ${pathName} -> ingestão RTMP (publicação da câmera)`);
-
-    return {
-      pathName,
-      sourceUrl,
-      // RTMP clássico transporta H.264; o navegador recebe passthrough.
-      sourceVideoCodec: 'h264',
-      transcodedForLive: false,
-      liveProfile: null,
-      deliveryMode,
-    };
+  private configurePushSourcedPath(camera: any, deliveryMode: LiveViewMode) {
+    return this.configureResolvedPathForCamera(camera, deliveryMode);
   }
 
   private async configurePathForCamera(cameraId: string, deliveryMode: LiveViewMode): Promise<EnsuredCameraPath> {
@@ -1999,24 +1884,94 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       await this.teardownPathsForCamera(cameraId);
       throw new BadRequestException('Câmera desativada.');
     }
-    // ── CÂMERA QUE PUBLICA: nada a discar ───────────────────────────────────
-    //
-    // No modo push a câmera não é alcançável — é ela que abre a conexão. Então
-    // TODO o fluxo abaixo (montar URL RTSP, sondar sub-stream, escolher perfil,
-    // subir FFmpeg) não se aplica e, pior, sondar um endereço inalcançável
-    // gastaria os mesmos segundos de espera que já nos custaram caro.
-    //
-    // O desvio é antes de qualquer trabalho, e o caminho de `rtsp_pull` segue
-    // byte a byte o de hoje — a frota existente não passa nem perto daqui.
-    if (isPushSourced(camera)) {
-      return this.configurePushSourcedPath(camera, deliveryMode);
+    return this.configureResolvedPathForCamera(camera, deliveryMode);
+  }
+
+  private async resolvePushLiveSource(camera: any, rtspTransport: string) {
+    let pathName: string | null = null;
+    let sourceUrl: string | null = null;
+    let codec = String(camera.detectedVideoCodec ?? camera.streamVideoCodec ?? '').trim().toLowerCase() || null;
+    let width = Number(camera.detectedWidth ?? camera.streamWidth) || null;
+    let height = Number(camera.detectedHeight ?? camera.streamHeight) || null;
+    let fps = Number(camera.detectedFps ?? camera.streamFps) || null;
+
+    if (this.rtmpIngestSource) {
+      const resolved = await this.rtmpIngestSource.resolve(camera);
+      pathName = resolved.pathName;
+      sourceUrl = resolved.sourceUrl;
+      codec = resolved.metadata.codec || codec;
+      width = resolved.metadata.width ?? width;
+      height = resolved.metadata.height ?? height;
+      fps = resolved.metadata.fps ?? fps;
+      if (!codec && resolved.ready) {
+        codec = await this.probeStreamVideoCodec(sourceUrl!, rtspTransport);
+      }
+    } else {
+      // Compatibilidade com testes unitários que constroem o serviço à mão.
+      // Em produção o resolvedor compartilhado acima é sempre injetado.
+      if (isAcceptableIngestPath(camera.rtmpIngestPath)) {
+        pathName = normalizeIngestPath(camera.rtmpIngestPath);
+      } else if (camera.rtmpIngestKeyEncrypted) {
+        try {
+          const key = this.cryptoService.decrypt(camera.rtmpIngestKeyEncrypted);
+          if (isValidIngestKey(key)) {
+            const candidates = ingestPathNames(key);
+            pathName = candidates[0] ?? null;
+            for (const candidate of candidates) {
+              if (await this.isPathPublishing(candidate).catch(() => false)) {
+                pathName = candidate;
+                break;
+              }
+            }
+          }
+        } catch {
+          pathName = null;
+        }
+      }
+      if (!pathName) {
+        throw new BadRequestException('Câmera RTMP ainda não tem chave nem equipamento vinculado.');
+      }
+      sourceUrl = this.buildInternalRtspUrl(pathName);
+      if (!codec && await this.isPathPublishing(pathName).catch(() => false)) {
+        codec = await this.probeStreamVideoCodec(sourceUrl!, rtspTransport);
+      }
     }
 
-    const password = this.cryptoService.decrypt(camera.passwordEncrypted);
+    if (!sourceUrl || !pathName) {
+      throw new BadRequestException('Não foi possível resolver a publicação RTMP desta câmera.');
+    }
+
+    return {
+      profile: null as { channel: number; subtype: number } | null,
+      sourceUrl,
+      codec,
+      width,
+      height,
+      fps,
+      // Codec desconhecido é tratado conservadoramente como HEVC nos modos que
+      // exigem compatibilidade web. Em "original" ele continua em passthrough.
+      isHevc: codec ? isHevcCodec(codec) : true,
+      requiresSanitization: false,
+      ingestPathName: pathName,
+    };
+  }
+
+  /**
+   * Configurador comum de entrega. A diferença entre pull e push termina na
+   * resolução de `sourceUrl`; daqui em diante ambos obedecem às mesmas regras
+   * de passthrough, compatibilidade web, áudio, limites e autocura.
+   */
+  private async configureResolvedPathForCamera(camera: any, deliveryMode: LiveViewMode): Promise<EnsuredCameraPath> {
+    const cameraId = String(camera.id);
+    const pushSourced = isPushSourced(camera);
+
+    const password = pushSourced ? '' : this.cryptoService.decrypt(camera.passwordEncrypted);
 
     const pathName = this.pathNameFromCameraId(cameraId, deliveryMode);
     const encodedPath = encodeURIComponent(pathName);
-    const sourceOnDemand = this.configService.get<boolean>('mediaMtxSourceOnDemand') ?? false;
+    const sourceOnDemand = pushSourced
+      ? true
+      : this.configService.get<boolean>('mediaMtxSourceOnDemand') ?? false;
     const sourceOnDemandStartTimeout = this.configService.get<string>('mediaMtxSourceOnDemandStartTimeout') ?? '6s';
     const sourceOnDemandCloseAfter = this.configService.get<string>('mediaMtxSourceOnDemandCloseAfter') ?? '5m';
     const runOnDemandCloseAfter = this.configService.get<string>('mediaMtxRunOnDemandCloseAfter') ?? '5m';
@@ -2024,16 +1979,25 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       this.configService.get<string>('mediaMtxSelectedRunOnDemandCloseAfter') ?? runOnDemandCloseAfter;
     const effectiveRunOnDemandCloseAfter =
       deliveryMode === 'selected' ? selectedRunOnDemandCloseAfter : runOnDemandCloseAfter;
-    const rtspTransport = camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp';
+    const rtspTransport = pushSourced
+      ? 'tcp'
+      : camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp';
 
     // Live (tela cheia) respeita o perfil principal configurado. A GRADE usa o
     // sub-stream quando existe (mais leve e rápido); ver chooseGridSource.
-    const selected = deliveryMode === 'grid'
-      ? await this.chooseGridSource(cameraId, camera, password, rtspTransport)
-      : await this.chooseLiveSource(cameraId, camera, password, rtspTransport);
+    const selected = pushSourced
+      ? await this.resolvePushLiveSource(camera, rtspTransport)
+      : deliveryMode === 'grid'
+        ? await this.chooseGridSource(cameraId, camera, password, rtspTransport)
+        : await this.chooseLiveSource(cameraId, camera, password, rtspTransport);
     const liveProfile = selected.profile;
     const sourceUrl = selected.sourceUrl;
     const isHevc = selected.isHevc;
+    const sourceVideoCodec = String(('codec' in selected ? selected.codec : null) ?? '').trim().toLowerCase()
+      || (isHevc ? 'h265' : 'h264');
+    const sourceWidth = Number(('width' in selected ? selected.width : null) ?? camera.streamWidth) || null;
+    const sourceHeight = Number(('height' in selected ? selected.height : null) ?? camera.streamHeight) || null;
+    const sourceFps = Number(('fps' in selected ? selected.fps : null) ?? camera.streamFps) || null;
     const transcodeAudioForWebrtc = deliveryMode === 'selected' && Boolean(camera.audioEnabled);
     const sanitizeGridSource =
       deliveryMode === 'grid' &&
@@ -2084,7 +2048,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // princípio que o Frigate documenta: "reduce the number of connections to
     // your camera", consumindo do restream em vez de reconectar.
     let sourceParaEstePath = sourceUrl;
-    if (deliveryMode === 'original') {
+    if (deliveryMode === 'original' && !pushSourced) {
       const nomeDaBase = this.pathNameFromCameraId(cameraId, 'selected');
       const baseAoVivo = await this.getPath(nomeDaBase).then((p: any) => p?.ready === true).catch(() => false);
       const decisao = decidirFonteDaMaxima({
@@ -2144,7 +2108,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // que também passa a credencial no comando e trata a exposição na saída.
       //
       // Reversível sem tocar em código: MEDIAMTX_PRIVATE_SOURCE_HOP=true.
-      const privateSourceUrl = this.usePrivateSourceHop
+      const privateSourceUrl = !pushSourced && this.usePrivateSourceHop
         ? `rtsp://127.0.0.1:$RTSP_PORT/${await this.ensurePrivateSourcePath(
           pathName,
           sourceUrl,
@@ -2211,16 +2175,16 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       const copiaNaGrade = deliveryMode === 'grid'
         ? decidirCopiaDeVideo(
             {
-              codec: isHevc ? 'h265' : String(camera.streamVideoCodec ?? '').trim().toLowerCase(),
-              largura: camera.streamWidth,
-              altura: camera.streamHeight,
-              fps: camera.streamFps,
+              codec: sourceVideoCodec,
+              largura: sourceWidth,
+              altura: sourceHeight,
+              fps: sourceFps,
             },
             { larguraMaxima: GRID_LIVE_MAX_WIDTH, alturaMaxima: GRID_LIVE_MAX_HEIGHT, fpsAlvo: GRID_LIVE_TARGET_FPS },
           )
         : { copiar: false, motivo: 'nao-e-grade' as const };
       if (copiaNaGrade.copiar) {
-        this.logger.log(`Grade de ${cameraId} COPIA o vídeo (${camera.streamWidth}x${camera.streamHeight} H.264 já cabe) — sem reencode.`);
+        this.logger.log(`Grade de ${cameraId} COPIA o vídeo (${sourceWidth}x${sourceHeight} H.264 já cabe) — sem reencode.`);
       }
       const videoJaServe = !isHevc && (deliveryMode !== 'grid' || copiaNaGrade.copiar);
       const cpuVideoArgs = sanitizeGridSource || videoJaServe
@@ -2363,7 +2327,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         return {
           pathName,
           sourceUrl,
-          sourceVideoCodec: isHevc ? 'h265' : 'h264',
+          sourceVideoCodec,
           transcodedForLive,
           liveProfile,
           deliveryMode,
@@ -2388,7 +2352,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         return {
           pathName,
           sourceUrl,
-          sourceVideoCodec: isHevc ? 'h265' : 'h264',
+          sourceVideoCodec,
           transcodedForLive,
           liveProfile,
           deliveryMode,
@@ -2409,7 +2373,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     return {
       pathName,
       sourceUrl,
-      sourceVideoCodec: isHevc ? 'h265' : 'h264',
+      sourceVideoCodec,
       transcodedForLive,
       liveProfile,
       deliveryMode,

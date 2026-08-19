@@ -607,6 +607,8 @@ export default function CameraDetailPage() {
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [previewFrame, setPreviewFrame] = useState<PreviewFrame | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const modoPush = cameraConfigMeta?.sourceMode === 'rtmp_push' || cam?.sourceMode === 'rtmp_push';
+  const caminhoRtmp = cameraConfigMeta?.rtmpIngestPath ?? cam?.rtmpIngestPath ?? null;
 
   const initialTabs = useMemo(() => {
     if (typeof window === 'undefined') {
@@ -967,22 +969,24 @@ export default function CameraDetailPage() {
         `${API_URL}/cameras/${cam.id}`,
         {
           name: form.name.trim(),
-          ip: form.ip.trim(),
-          rtspPort: Number(form.rtspPort),
-          onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : undefined,
-          username: form.username.trim(),
-          password: form.password.trim() ? form.password : undefined,
-          rtspPath: form.rtspPath.trim(),
-          onvifPath: form.onvifPath.trim(),
-          onvifProfileToken: form.onvifProfileToken.trim(),
-          channel: Number(form.channel),
-          subtype: Number(form.subtype),
-          liveChannel: form.liveChannel.trim() ? Number(form.liveChannel) : null,
-          liveSubtype: form.liveSubtype.trim() ? Number(form.liveSubtype) : null,
-          recordingChannel: form.recordingChannel.trim() ? Number(form.recordingChannel) : null,
-          recordingSubtype: form.recordingSubtype.trim() ? Number(form.recordingSubtype) : null,
-          analyticsChannel: form.analyticsChannel.trim() ? Number(form.analyticsChannel) : null,
-          analyticsSubtype: form.analyticsSubtype.trim() ? Number(form.analyticsSubtype) : null,
+          ...(!modoPush ? {
+            ip: form.ip.trim(),
+            rtspPort: Number(form.rtspPort),
+            onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : undefined,
+            username: form.username.trim(),
+            password: form.password.trim() ? form.password : undefined,
+            rtspPath: form.rtspPath.trim(),
+            onvifPath: form.onvifPath.trim(),
+            onvifProfileToken: form.onvifProfileToken.trim(),
+            channel: Number(form.channel),
+            subtype: Number(form.subtype),
+            liveChannel: form.liveChannel.trim() ? Number(form.liveChannel) : null,
+            liveSubtype: form.liveSubtype.trim() ? Number(form.liveSubtype) : null,
+            recordingChannel: form.recordingChannel.trim() ? Number(form.recordingChannel) : null,
+            recordingSubtype: form.recordingSubtype.trim() ? Number(form.recordingSubtype) : null,
+            analyticsChannel: form.analyticsChannel.trim() ? Number(form.analyticsChannel) : null,
+            analyticsSubtype: form.analyticsSubtype.trim() ? Number(form.analyticsSubtype) : null,
+          } : {}),
           recordingEnabled: form.recordingEnabled,
           recordingMode: form.recordingMode,
           recordingObjectClasses: form.recordingObjectClasses,
@@ -1480,7 +1484,9 @@ export default function CameraDetailPage() {
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate text-sm font-semibold">{cam.name}</span>
-            <span className="hidden text-xs text-muted-foreground md:inline">{cam.ipAddress}</span>
+            <span className="hidden text-xs text-muted-foreground md:inline">
+              {modoPush ? 'Entrada RTMP push' : cam.ipAddress}
+            </span>
           </div>
         </div>
         <div className="hidden items-center gap-2 md:flex">
@@ -1539,7 +1545,9 @@ export default function CameraDetailPage() {
                 </button>
               )}
               <div className="absolute bottom-2 left-2 right-2 z-10 flex justify-between">
-                <span className="rounded bg-black/60 px-1.5 text-[10px] font-mono text-white/70">{cam.ipAddress}</span>
+                <span className="rounded bg-black/60 px-1.5 text-[10px] font-mono text-white/70">
+                  {modoPush ? (caminhoRtmp ? `RTMP · ${caminhoRtmp}` : 'RTMP · aguardando publicação') : cam.ipAddress}
+                </span>
                 <LiveClock className="rounded bg-black/60 px-1.5 text-[10px] font-mono text-white/70" />
               </div>
             </div>
@@ -1782,15 +1790,17 @@ export default function CameraDetailPage() {
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void runConnectionTest()}
-                      disabled={testingConnection}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3.5 text-xs font-semibold transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {testingConnection ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Radar className="h-3.5 w-3.5" />}
-                      {testingConnection ? 'Testando...' : 'Testar conexão'}
-                    </button>
+                    {!modoPush && (
+                      <button
+                        type="button"
+                        onClick={() => void runConnectionTest()}
+                        disabled={testingConnection}
+                        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3.5 text-xs font-semibold transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {testingConnection ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Radar className="h-3.5 w-3.5" />}
+                        {testingConnection ? 'Testando...' : 'Testar conexão RTSP'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void runLiveDiagnostics()}
@@ -1809,15 +1819,17 @@ export default function CameraDetailPage() {
                       {previewLoading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
                       {previewLoading ? 'Capturando...' : 'Conferir imagem'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void discoverEndpoints()}
-                      disabled={discoveringEndpoints}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3.5 text-xs font-semibold transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {discoveringEndpoints ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                      {discoveringEndpoints ? 'Detectando...' : 'Detectar automaticamente'}
-                    </button>
+                    {!modoPush && (
+                      <button
+                        type="button"
+                        onClick={() => void discoverEndpoints()}
+                        disabled={discoveringEndpoints}
+                        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3.5 text-xs font-semibold transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {discoveringEndpoints ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                        {discoveringEndpoints ? 'Detectando...' : 'Detectar RTSP/ONVIF'}
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1839,38 +1851,70 @@ export default function CameraDetailPage() {
 
                 {/* Grid principal */}
                 <div className="grid items-start gap-5 xl:grid-cols-2">
-                  <SettingsCard icon={KeyRound} title="Identificação e acesso" description="Como o AjustCam encontra e autentica nesta câmera.">
+                  <SettingsCard
+                    icon={KeyRound}
+                    title={modoPush ? 'Identificação e publicação RTMP' : 'Identificação e acesso'}
+                    description={modoPush
+                      ? 'A câmera abre a conexão e envia o vídeo ao AjustCam; não existe IP RTSP para o servidor acessar.'
+                      : 'Como o AjustCam encontra e autentica nesta câmera.'}
+                  >
                     <div className="grid gap-3 md:grid-cols-2">
                       <SettingsField label="Nome da câmera" wide>
                         <SettingsInput value={form.name} onChange={(event) => updateField('name', event.target.value)} />
                       </SettingsField>
-                      <SettingsField label="Endereço IP">
-                        <SettingsInput value={form.ip} onChange={(event) => updateField('ip', event.target.value)} className="font-mono" />
-                      </SettingsField>
-                      <SettingsField label="Porta de vídeo">
-                        <SettingsInput type="number" min={1} value={form.rtspPort} onChange={(event) => updateField('rtspPort', event.target.value)} className="font-mono" />
-                      </SettingsField>
-                      <SettingsField label="Usuário">
-                        <SettingsInput value={form.username} onChange={(event) => updateField('username', event.target.value)} />
-                      </SettingsField>
-                      <SettingsField label="Senha" hint="Em branco mantém a senha atual.">
-                        <SettingsInput type="password" value={form.password} placeholder="••••••••" onChange={(event) => updateField('password', event.target.value)} />
-                      </SettingsField>
-                      <SettingsField label="Porta de controle" hint="ONVIF / PTZ. Em branco para detectar." wide>
-                        <SettingsInput type="number" min={1} value={form.onvifPort} onChange={(event) => updateField('onvifPort', event.target.value)} className="font-mono md:max-w-[50%]" />
-                      </SettingsField>
+                      {modoPush ? (
+                        <>
+                          <SettingsField label="Modo de entrada">
+                            <SettingsInput value="A câmera envia (RTMP push)" readOnly />
+                          </SettingsField>
+                          <SettingsField label="Estado do vínculo">
+                            <SettingsInput value={caminhoRtmp ? 'Equipamento vinculado' : 'Aguardando vínculo'} readOnly />
+                          </SettingsField>
+                          <SettingsField label="Caminho publicado pelo equipamento" hint="Identificador informado pela própria câmera." wide>
+                            <SettingsInput
+                              value={caminhoRtmp ?? 'Aguardando a primeira tentativa de publicação'}
+                              readOnly
+                              className="font-mono"
+                            />
+                          </SettingsField>
+                        </>
+                      ) : (
+                        <>
+                          <SettingsField label="Endereço IP">
+                            <SettingsInput value={form.ip} onChange={(event) => updateField('ip', event.target.value)} className="font-mono" />
+                          </SettingsField>
+                          <SettingsField label="Porta de vídeo">
+                            <SettingsInput type="number" min={1} value={form.rtspPort} onChange={(event) => updateField('rtspPort', event.target.value)} className="font-mono" />
+                          </SettingsField>
+                          <SettingsField label="Usuário">
+                            <SettingsInput value={form.username} onChange={(event) => updateField('username', event.target.value)} />
+                          </SettingsField>
+                          <SettingsField label="Senha" hint="Em branco mantém a senha atual.">
+                            <SettingsInput type="password" value={form.password} placeholder="••••••••" onChange={(event) => updateField('password', event.target.value)} />
+                          </SettingsField>
+                          <SettingsField label="Porta de controle" hint="ONVIF / PTZ. Em branco para detectar." wide>
+                            <SettingsInput type="number" min={1} value={form.onvifPort} onChange={(event) => updateField('onvifPort', event.target.value)} className="font-mono md:max-w-[50%]" />
+                          </SettingsField>
+                        </>
+                      )}
                     </div>
                   </SettingsCard>
 
                   <SettingsCard icon={Video} title="Transmissão ao vivo" description="O grid entrega no máximo 720p / 20 FPS; a câmera individual usa a resolução original do perfil.">
                     <div className="grid gap-3 md:grid-cols-2">
-                      <SettingsField label="Fonte da imagem" hint="Original usa o perfil principal; Econômico usa o substream.">
-                        <SettingsSelect value={liveSourceMode} onChange={(event) => applyLiveSourceMode(event.target.value as LiveSourceMode)}>
-                          <option value="original">Original da câmera</option>
-                          <option value="economical">Econômico</option>
-                          {liveSourceMode === 'advanced' ? <option value="advanced">Perfil personalizado</option> : null}
-                        </SettingsSelect>
-                      </SettingsField>
+                      {modoPush ? (
+                        <SettingsField label="Fonte da imagem" hint="Fluxo recebido diretamente do equipamento.">
+                          <SettingsInput value="Publicação RTMP da câmera" readOnly />
+                        </SettingsField>
+                      ) : (
+                        <SettingsField label="Fonte da imagem" hint="Original usa o perfil principal; Econômico usa o substream.">
+                          <SettingsSelect value={liveSourceMode} onChange={(event) => applyLiveSourceMode(event.target.value as LiveSourceMode)}>
+                            <option value="original">Original da câmera</option>
+                            <option value="economical">Econômico</option>
+                            {liveSourceMode === 'advanced' ? <option value="advanced">Perfil personalizado</option> : null}
+                          </SettingsSelect>
+                        </SettingsField>
+                      )}
                       <SettingsField label="Resolução no grid" hint="Nunca ultrapassa 720p.">
                         <SettingsInput
                           value={`${form.streamWidth || GRID_LIVE_MAX_WIDTH}×${form.streamHeight || GRID_LIVE_MAX_HEIGHT}`}
@@ -1885,12 +1929,18 @@ export default function CameraDetailPage() {
                           <option value="hls">HLS</option>
                         </SettingsSelect>
                       </SettingsField>
-                      <SettingsField label="Transporte RTSP">
-                        <SettingsSelect value={form.preferredRtspTransport} onChange={(event) => updateField('preferredRtspTransport', event.target.value as CameraConfig['preferredRtspTransport'])}>
-                          <option value="tcp">TCP</option>
-                          <option value="udp">UDP</option>
-                        </SettingsSelect>
-                      </SettingsField>
+                      {modoPush ? (
+                        <SettingsField label="Transporte de entrada">
+                          <SettingsInput value="RTMP / TCP" readOnly className="font-mono" />
+                        </SettingsField>
+                      ) : (
+                        <SettingsField label="Transporte RTSP">
+                          <SettingsSelect value={form.preferredRtspTransport} onChange={(event) => updateField('preferredRtspTransport', event.target.value as CameraConfig['preferredRtspTransport'])}>
+                            <option value="tcp">TCP</option>
+                            <option value="udp">UDP</option>
+                          </SettingsSelect>
+                        </SettingsField>
+                      )}
                       <SettingsField label="Codec da live">
                         <SettingsInput value="H.264" readOnly className="font-mono" />
                       </SettingsField>

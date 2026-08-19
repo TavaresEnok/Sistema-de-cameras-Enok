@@ -12,6 +12,9 @@ export interface Camera {
   building: string;
   floor: string;
   ipAddress: string;
+  /** Origem real do vídeo. No push não existe IP RTSP para exibir ou editar. */
+  sourceMode: 'rtsp_pull' | 'rtmp_push';
+  rtmpIngestPath?: string | null;
   rtspPort: number;
   model: string;
   status: 'online' | 'offline' | 'recording' | 'motion' | 'alarm' | 'no_signal' | 'maintenance';
@@ -289,17 +292,23 @@ function mapCameraItems(
     const detectedStreamHeight = camera.detectedHeight ?? configuredStreamHeight;
     const effectiveFps = camera.streamFps ?? camera.detectedFps ?? 0;
     const effectiveRecordingMode = (camera.recordingMode ?? (camera.recordingEnabled ? 'continuous' : 'manual')) as Camera['recordingMode'];
+    const sourceMode: Camera['sourceMode'] = camera.sourceMode === 'rtmp_push' ? 'rtmp_push' : 'rtsp_pull';
+    const sourceLabel = sourceMode === 'rtmp_push' ? 'RTMP push' : camera.ip;
     return {
       id: camera.id,
       code: camera.name,
       name: camera.name,
-      location: camera.ip,
+      location: sourceLabel,
       zone: camera.area?.name ?? camera.site?.name ?? previous?.zone ?? 'Sem zona',
       building: camera.site?.name ?? previous?.building ?? 'Sem unidade',
       floor: camera.group?.name ?? previous?.floor ?? '-',
-      ipAddress: camera.ip,
+      ipAddress: sourceLabel,
+      sourceMode,
+      rtmpIngestPath: camera.rtmpIngestPath ?? null,
       rtspPort: camera.rtspPort ?? 554,
-      model: `${formatCodec(camera.detectedVideoCodec ?? camera.streamVideoCodec)}${camera.rtspPath ? ' / RTSP' : ''}`,
+      model: sourceMode === 'rtmp_push'
+        ? `${formatCodec(camera.detectedVideoCodec ?? camera.streamVideoCodec)} / RTMP`
+        : `${formatCodec(camera.detectedVideoCodec ?? camera.streamVideoCodec)}${camera.rtspPath ? ' / RTSP' : ''}`,
       status: mapCameraStatus(camera.status, camera.recordingEnabled, effectiveRecordingMode, runtime),
       fps: effectiveFps ?? 0,
       resolution: formatResolution(detectedStreamWidth, detectedStreamHeight),

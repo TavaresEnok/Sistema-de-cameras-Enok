@@ -83,9 +83,13 @@ type LiveDeliveryMode = 'selected' | 'grid' | 'original';
 function getStoredLiveQuality(cameraId: string): LiveQualityMode {
   try {
     const stored = window.localStorage.getItem(`${LIVE_QUALITY_STORAGE_PREFIX}:${cameraId}`);
-    return stored === 'instant' || stored === 'max' ? stored : 'balanced';
+    if (stored === 'instant' || stored === 'balanced' || stored === 'max') return stored;
+    // Sem preferência explícita, navegador com HEVC recebe o bitstream original
+    // (zero transcode). O incompatível começa em H.264. A escolha manual segue
+    // persistida e sempre prevalece.
+    return BROWSER_DECODES_HEVC ? 'max' : 'balanced';
   } catch {
-    return 'balanced';
+    return BROWSER_DECODES_HEVC ? 'max' : 'balanced';
   }
 }
 
@@ -2271,7 +2275,7 @@ export function LiveStreamPlayer({
             >
               {([
                 ['instant', 'Instantâneo', 'Substream da câmera: imagem menor, menor latência e menos banda. Use em redes lentas ou muitas câmeras.'],
-                ['balanced', 'Equilibrado', 'Resolução original convertida para H.264 — compatível com todos os navegadores. Padrão recomendado.'],
+                ['balanced', 'Equilibrado', 'Resolução original convertida para H.264 — fallback para navegador sem H.265 ou escolha manual.'],
                 [
                   'max',
                   'Máxima',

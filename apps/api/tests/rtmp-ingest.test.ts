@@ -171,12 +171,27 @@ test('host curto configurado prevalece, mantém porta explícita e os 128 bits',
   });
 
   assert.ok(alvo.canonicalFullUrl.length > RTMP_SINGLE_FIELD_MAX_LENGTH);
+  assert.equal(alvo.serverUrl, 'rtmp://168.194.13.70:1935/drac');
   assert.equal(alvo.fullUrl, `rtmp://168.194.13.70:1935/d/${compacta}`);
   assert.equal(alvo.fullUrl.length, 50);
   assert.equal(alvo.fullUrlFitsSingleField, true);
   assert.equal(alvo.streamKey, chave, 'o formato separado continua compatível com a chave hexadecimal');
   assert.equal(ingestKeyFromPathName(alvo.fullUrl.split(':1935/')[1]), chave);
   assert.ok(alvo.fullUrl.includes(':1935'), 'firmwares legados devem receber a porta explicitamente');
+});
+
+test('host curto também prevalece no campo separado Servidor RTMP', () => {
+  const chave = 'a'.repeat(32);
+  const alvo = buildPublishTarget({
+    host: 'rtmp.exemplo.test',
+    compactHost: '192.0.2.25',
+    port: 1935,
+    key: chave,
+  });
+
+  assert.equal(alvo.serverUrl, 'rtmp://192.0.2.25:1935/drac');
+  assert.equal(alvo.fullUrl, `rtmp://192.0.2.25:1935/d/${encodeCompactIngestKey(chave)}`);
+  assert.equal(alvo.canonicalFullUrl, `rtmp://rtmp.exemplo.test:1935/drac/${chave}`);
 });
 
 test('sem host curto, domínio do AjustCam usa alias Base64URL sem reduzir os 128 bits', () => {

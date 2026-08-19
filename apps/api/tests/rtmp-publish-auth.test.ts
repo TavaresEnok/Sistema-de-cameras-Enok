@@ -52,16 +52,17 @@ function montarController(opcoes: { cameraPorChave?: (k: unknown) => Promise<any
   // O registro de tentativas entra aqui: recusar em silêncio foi o que
   // transformou a primeira tentativa de campo num mistério.
   const pendentes = new PendingIngestRegistry();
-  return new CameraStreamController(
+  const controller = new CameraStreamController(
     null as any, null as any, null as any, cameras,
     null as any, null as any, null as any, null as any, null as any, config,
     pendentes,
   );
+  return { controller, pendentes };
 }
 
 async function autorizar(body: Record<string, unknown>, opcoes = {}) {
   const { res, capturado } = respostaFalsa();
-  const controller = montarController(opcoes);
+  const { controller } = montarController(opcoes);
   await controller.authorizeMediaMtx(body as any, TOKEN_INTERNO, res);
   return capturado;
 }
@@ -173,7 +174,7 @@ test('ler o path de ingestão sem token continua negado', async () => {
 
 test('callback sem o token interno é recusado antes de tudo', async () => {
   const { res, capturado } = respostaFalsa();
-  const controller = montarController({ cameraPorChave: async () => CAMERA_VALIDA });
+  const { controller } = montarController({ cameraPorChave: async () => CAMERA_VALIDA });
   await controller.authorizeMediaMtx(
     { action: 'publish', protocol: 'rtmp', path: ingestPathName(CHAVE) } as any,
     'token-errado',
@@ -190,4 +191,62 @@ test('ações desconhecidas seguem negadas', async () => {
     );
     assert.equal(r.status, 401, `ação "${acao}" não deveria passar`);
   }
+});
+
+test('hook do SRS registra e recusa caminho próprio antes de chegar ao MediaMTX', async () => {
+  const { controller, pendentes } = montarController();
+  const { res, capturado } = respostaFalsa();
+
+  await controller.recordSrsPublishAttempt(
+    {
+      action: 'on_publish',
+      app: 'live',
+      stream: 'liveStream_H3ZL2802830WB_0_0',
+      ip: '179.124.141.169',
+    },
+    TOKEN_INTERNO,
+    res,
+  );
+
+  assert.equal(capturado.status, 200);
+  assert.equal(capturado.corpo?.code, 1);
+  assert.deepEqual(
+    pendentes.list().map(({ path, remoteAddr, attempts }) => ({ path, remoteAddr, attempts })),
+    [{ path: 'live/liveStream_H3ZL2802830WB_0_0', remoteAddr: '179.124.141.169', attempts: 1 }],
+  );
+});
+
+test('hook do SRS não lista publicação que já pertence a uma câmera', async () => {
+  const { controller, pendentes } = montarController({ cameraPorCaminho: async () => CAMERA_VALIDA });
+  const { res, capturado } = respostaFalsa();
+
+  await controller.recordSrsPublishAttempt(
+    { action: 'on_publish', app: 'live', stream: 'liveStream_H3ZL2802830WB_0_0' },
+    TOKEN_INTERNO,
+    res,
+  );
+
+  assert.equal(capturado.status, 200);
+  assert.equal(capturado.corpo?.code, 0);
+  assert.deepEqual(pendentes.list(), []);
+});
+
+test('hook do SRS exige token interno e ação exata', async () => {
+  const { controller, pendentes } = montarController();
+  const semToken = respostaFalsa();
+  await controller.recordSrsPublishAttempt(
+    { action: 'on_publish', app: 'live', stream: 'liveStream_SERIAL_0_0' },
+    'errado',
+    semToken.res,
+  );
+  assert.equal(semToken.capturado.status, 401);
+
+  const acaoErrada = respostaFalsa();
+  await controller.recordSrsPublishAttempt(
+    { action: 'on_unpublish', app: 'live', stream: 'liveStream_SERIAL_0_0' },
+    TOKEN_INTERNO,
+    acaoErrada.res,
+  );
+  assert.equal(acaoErrada.capturado.status, 400);
+  assert.deepEqual(pendentes.list(), []);
 });

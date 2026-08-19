@@ -47,7 +47,9 @@ export function avaliarAtualizacao(
   if (info.versionCode <= versionCodeAtual) return null;
 
   const arquivo = info.artifacts?.apk?.file;
-  if (!arquivo) return null;
+  // O manifesto vem da rede. Aceita somente o nome de artefato que o builder
+  // oficial produz; caminho relativo, URL ou traversal nunca chegam ao Linking.
+  if (!arquivo || !/^drac-[a-z0-9][a-z0-9-]{1,38}\.apk$/i.test(arquivo)) return null;
   const base = baseUrlDoApk.replace(/\/+$/, '');
   return {
     versionName: info.versionName ?? String(info.versionCode),

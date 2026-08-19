@@ -4,7 +4,6 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Dimensions,
   Image,
   RefreshControl,
   ScrollView,
@@ -12,6 +11,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { LiveVideo } from '../../components/VideoPlayers';
@@ -43,13 +43,14 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('Todas');
   const [view, setView] = useState<'list' | 'mosaic'>('list');
+  const { width: windowWidth } = useWindowDimensions();
   // ── UMA FONTE DE FAVORITAS ───────────────────────────────────────────────
   // Esta tela mantinha a própria lista em `@drac:cam-favs:v1`, GLOBAL — sem
   // escopo de usuário nem de servidor. Dois operadores no mesmo aparelho
   // compartilhavam favoritas, e a estrela marcada aqui não existia na Home nem
   // no app clássico, que usam o LibraryProvider (escopado por sessão).
   const { favorites: favs, toggleFavorite: toggleFav } = useLibrary();
-  const s = makeStyles(theme);
+  const s = makeStyles(theme, windowWidth);
 
   const groups = useMemo(() => {
     const names = new Set<string>();
@@ -96,10 +97,10 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
             <Text style={s.subtitle}>{onlineCount} de {cameras.length} online</Text>
           </View>
           <View style={s.toggle}>
-            <TouchableOpacity style={[s.toggleBtn, view === 'list' && s.toggleOn]} onPress={() => setView('list')}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Visualização em lista" accessibilityState={{ selected: view === 'list' }} style={[s.toggleBtn, view === 'list' && s.toggleOn]} onPress={() => setView('list')}>
               <Icon name="server" size={17} color={view === 'list' ? '#fff' : theme.textSub} />
             </TouchableOpacity>
-            <TouchableOpacity style={[s.toggleBtn, view === 'mosaic' && s.toggleOn]} onPress={() => setView('mosaic')}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Visualização em mosaico" accessibilityState={{ selected: view === 'mosaic' }} style={[s.toggleBtn, view === 'mosaic' && s.toggleOn]} onPress={() => setView('mosaic')}>
               <Icon name="grid" size={17} color={view === 'mosaic' ? '#fff' : theme.textSub} />
             </TouchableOpacity>
           </View>
@@ -114,9 +115,13 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
             placeholderTextColor={theme.textMuted}
             value={query}
             onChangeText={setQuery}
+            accessibilityLabel="Buscar câmera"
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
           />
           {query ? (
-            <TouchableOpacity onPress={() => setQuery('')}><Icon name="close" size={16} color={theme.textMuted} /></TouchableOpacity>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Limpar busca" onPress={() => setQuery('')}><Icon name="close" size={16} color={theme.textMuted} /></TouchableOpacity>
           ) : null}
         </View>
 
@@ -126,7 +131,7 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
             const on = group === g;
             const count = g === 'Todas' ? cameras.length : cameras.filter((c) => c.group?.name === g).length;
             return (
-              <TouchableOpacity key={g} style={[s.chip, on && s.chipOn]} onPress={() => setGroup(g)} activeOpacity={0.8}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Filtrar pelo grupo ${g}`} accessibilityState={{ selected: on }} key={g} style={[s.chip, on && s.chipOn]} onPress={() => setGroup(g)} activeOpacity={0.8}>
                 <Text style={[s.chipText, { color: on ? '#fff' : theme.textSub }]}>{g}</Text>
                 <View style={[s.chipCount, on && { backgroundColor: 'rgba(255,255,255,0.25)' }]}>
                   <Text style={[s.chipCountText, { color: on ? '#fff' : theme.textSub }]}>{count}</Text>
@@ -169,7 +174,7 @@ function ListRow({ cam, poster, theme, s, fav, onToggleFav, onOpen }: any) {
   const res = cam.detectedHeight ? `${cam.detectedHeight}p` : null;
   const fps = cam.detectedFps ? `${Math.round(cam.detectedFps)} fps` : null;
   return (
-    <TouchableOpacity style={s.row} activeOpacity={0.85} onPress={onOpen}>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Abrir câmera ${cam.name}. ${isOn ? 'Online' : 'Offline'}`} style={s.row} activeOpacity={0.85} onPress={onOpen}>
       <View style={s.rowThumb}>
         {isOn && poster ? (
           <Image source={{ uri: poster }} style={StyleSheet.absoluteFill} resizeMode="cover" />
@@ -196,7 +201,7 @@ function ListRow({ cam, poster, theme, s, fav, onToggleFav, onOpen }: any) {
         </View>
       </View>
       <View style={{ alignItems: 'center', gap: 10 }}>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Favoritar câmera" onPress={onToggleFav} hitSlop={10}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={fav ? `Remover ${cam.name} dos favoritos` : `Favoritar ${cam.name}`} accessibilityState={{ selected: fav }} onPress={(event) => { event.stopPropagation(); onToggleFav(); }} hitSlop={10}>
           <Icon name="star" size={20} color={fav ? theme.warning : theme.textMuted} />
         </TouchableOpacity>
         <Icon name="forward" size={15} color={theme.textMuted} />
@@ -213,7 +218,7 @@ function t2(theme: any): string {
 function MosaicTile({ cam, poster, live, hlsUrl, whepUrl, onRefreshStream, theme, s, fav, onToggleFav, onOpen }: any) {
   const isOn = isOnlineStatus(cam.status);
   return (
-    <TouchableOpacity style={s.tile} activeOpacity={0.85} onPress={onOpen}>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Abrir câmera ${cam.name}. ${isOn ? 'Online' : 'Offline'}`} style={s.tile} activeOpacity={0.85} onPress={onOpen}>
       {live && (hlsUrl || whepUrl) ? (
         <LiveVideo
           uri={hlsUrl}
@@ -238,7 +243,7 @@ function MosaicTile({ cam, poster, live, hlsUrl, whepUrl, onRefreshStream, theme
       )}
       <View style={s.tileShade} />
       {isOn ? <View style={[s.liveBadgeSm, { top: 8, left: 8 }]}><View style={s.liveDotSm} /><Text style={s.liveTextSm}>AO VIVO</Text></View> : null}
-      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Favoritar câmera" style={s.tileStar} onPress={onToggleFav} hitSlop={8}>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={fav ? `Remover ${cam.name} dos favoritos` : `Favoritar ${cam.name}`} accessibilityState={{ selected: fav }} style={s.tileStar} onPress={(event) => { event.stopPropagation(); onToggleFav(); }} hitSlop={8}>
         <Icon name="star" size={16} color={fav ? theme.warning : '#fff'} />
       </TouchableOpacity>
       <View style={s.tileFooter}>
@@ -254,9 +259,13 @@ function MosaicTile({ cam, poster, live, hlsUrl, whepUrl, onRefreshStream, theme
   );
 }
 
-function makeStyles(t: any) {
+function makeStyles(t: any, windowWidth: number) {
+  const contentWidth = Math.min(windowWidth, 900) - 40;
+  const columns = windowWidth >= 700 ? 3 : 2;
+  const gap = 11;
+  const tileWidth = (contentWidth - (columns - 1) * gap) / columns;
   return StyleSheet.create({
-    root: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 132 },
+    root: { width: '100%', maxWidth: 900, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 132 },
     header: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14 },
     title: { fontFamily: TITLE, fontSize: 26, fontWeight: '800', color: t.text, letterSpacing: -0.5 },
     subtitle: { fontFamily: UI, fontSize: 13, color: t.textSub, marginTop: 2 },
@@ -290,7 +299,7 @@ function makeStyles(t: any) {
     grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 11, marginTop: 14 },
     // Altura EXPLÍCITA (≈16:11 da meia-largura): aspectRatio com largura em % não
     // resolve dentro deste ScrollView (tiles ficavam com altura 0 e o mural vazio).
-    tile: { width: '47.5%', flexGrow: 1, height: Math.round(((Dimensions.get('window').width - 40 - 11) / 2) * (11 / 16)), borderRadius: 16, overflow: 'hidden', backgroundColor: '#0D1118' },
+    tile: { width: tileWidth, height: Math.round(tileWidth * (11 / 16)), borderRadius: 16, overflow: 'hidden', backgroundColor: '#0D1118' },
     // Sombra de legibilidade na base (antes era transparente e o nome sumia na imagem).
     tileVideo: { flex: 1, backgroundColor: '#000' },
     tileShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%', backgroundColor: 'rgba(4,7,13,0.02)', borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },

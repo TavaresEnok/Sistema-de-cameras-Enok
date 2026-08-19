@@ -55,7 +55,7 @@ export async function requestCachedStreamUrls<T>(
 
   const run = (async () => {
     try {
-      const response = await fetch(`${apiUrl}/camera-stream/${cameraId}/urls${query}`, {
+      const response = await fetch(`${apiUrl}/camera-stream/${encodeURIComponent(cameraId)}/urls${query}`, {
         ...init,
         signal: controller.signal,
         headers: {

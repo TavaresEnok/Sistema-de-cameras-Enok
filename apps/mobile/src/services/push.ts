@@ -32,6 +32,9 @@ async function ensureAndroidChannel() {
     lightColor: '#EF4444',
     sound: 'default',
     bypassDnd: false,
+    // Em tela bloqueada, o sistema anuncia que há um alarme sem expor câmera,
+    // local ou conteúdo do evento para quem estiver com o aparelho na mão.
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
   });
 }
 

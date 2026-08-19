@@ -227,6 +227,8 @@ function diskGuardManager(opts: { cameras: string[] }) {
   mgr.controlMode = 'local';
   mgr.minFreeBytes = 2 * 1024 ** 3;
   mgr.minFreePercent = 5;
+  mgr.diskGuardSuspended = new Map();
+  mgr.diskGuardResumeInFlight = false;
   mgr.active = new Map(opts.cameras.map((id) => [id, { stopRequested: false, watcher: setInterval(() => {}, 1e9), process: { exitCode: null } }]));
   for (const [, s] of mgr.active) (s.watcher as NodeJS.Timeout).unref?.();
   mgr.getStorageUsage = async () => ({ freeBytes: 1024 ** 3, freePercent: 1, usedPercent: 99 });
@@ -284,6 +286,21 @@ test('guarda de disco: disco saudável não para nada nem emite evento', async (
   assert.equal(mgr.active.size, 1, 'a guarda não pode agir com disco folgado');
   assert.deepEqual(eventos, []);
   assert.deepEqual(desiredWrites, []);
+});
+
+test('guarda de disco: gravação contínua suspensa RETOMA quando o espaço volta', async () => {
+  const { mgr, eventos } = diskGuardManager({ cameras: [] });
+  mgr.diskGuardSuspended.set('cam-1', { segmentSeconds: 300, retryAt: 0 });
+  mgr.getStorageUsage = async () => ({ freeBytes: 50 * 1024 ** 3, freePercent: 60, usedPercent: 40 });
+  mgr.prisma.camera.findUnique = async () => ({ enabled: true, recordingEnabled: true, recordingMode: 'continuous' });
+  const starts: Array<{ cameraId: string; segmentSeconds: number }> = [];
+  mgr.start = async (cameraId: string, segmentSeconds: number) => { starts.push({ cameraId, segmentSeconds }); };
+
+  await mgr.enforceDiskGuard();
+
+  assert.deepEqual(starts, [{ cameraId: 'cam-1', segmentSeconds: 300 }]);
+  assert.equal(mgr.diskGuardSuspended.size, 0);
+  assert.ok(eventos.some((e) => e.tipo === 'RECORDING_RESUMED_DISK_GUARD'));
 });
 
 // ── ROTINA DE FUNDO NÃO PODE DERRUBAR A API ─────────────────────────────────

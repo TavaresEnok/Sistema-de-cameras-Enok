@@ -50,7 +50,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-vms}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres_password}
       POSTGRES_DB: ${POSTGRES_DB:-vms_db}
-      POSTGRES_BACKUP_RETENTION_DAYS: ${POSTGRES_BACKUP_RETENTION_DAYS:-14}
+      POSTGRES_BACKUP_RETENTION_DAYS: ${POSTGRES_BACKUP_RETENTION_DAYS:-30}
       POSTGRES_BACKUP_INTERVAL_SECONDS: ${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}
       # Bancos ALÉM do da aplicação. `drac_central` guarda o painel mestre:
       # instalações, licenças e credenciais de storage. Ficava de fora — o
@@ -79,6 +79,7 @@ services:
         pg_dump -h postgres -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -Fc -f "$$tmp";
         pg_restore --list "$$tmp" >/dev/null;
         mv "$$tmp" "$$out";
+        chmod 600 "$$out";
         echo "$$(date -u +%FT%TZ) postgres_backup=ok file=$$(basename "$$out")";
         for extra in $$POSTGRES_EXTRA_DATABASES; do
           etmp="/backups/.drac-$$extra-$$ts.dump.tmp";
@@ -87,13 +88,14 @@ services:
           if pg_dump -h postgres -U "$$POSTGRES_USER" -d "$$extra" -Fc -f "$$etmp" 2>/dev/null; then
             pg_restore --list "$$etmp" >/dev/null;
             mv "$$etmp" "$$eout";
+            chmod 600 "$$eout";
             echo "$$(date -u +%FT%TZ) postgres_backup=ok db=$$extra file=$$(basename "$$eout")";
           else
             rm -f "$$etmp";
             echo "$$(date -u +%FT%TZ) postgres_backup=FALHOU db=$$extra";
           fi;
         done;
-        find /backups -type f -name "drac-*.dump" -mtime +$${POSTGRES_BACKUP_RETENTION_DAYS:-14} -delete;
+        find /backups -type f -name "drac-*.dump" -mtime +$${POSTGRES_BACKUP_RETENTION_DAYS:-30} -delete;
         sleep "$${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}";
       done'
     networks:
@@ -171,6 +173,10 @@ services:
       - DRAC_CENTRAL_PORT=9765
       - DRAC_CENTRAL_DATA_FILE=/app/data/installations.json
       - DRAC_CENTRAL_BACKUP_DIR=/app/data/backups
+      - DRAC_CENTRAL_ARCHIVE_KEY=${DRAC_CENTRAL_ARCHIVE_KEY:-}
+      - DRAC_CENTRAL_ARCHIVE_DIR=/app/data/reactivation-archives
+      - DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS=${DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS:-24}
+      - DRAC_CENTRAL_MAX_BODY_BYTES=${DRAC_CENTRAL_MAX_BODY_BYTES:-8388608}
       # BANCO DA CENTRAL, nunca o da aplicação. Esta linha FIXAVA
       # `@postgres:5432/vms_db` — o banco do VMS. O painel mestre passaria a
       # gravar as instalações dentro da base das câmeras, em modo dual, sem
@@ -249,6 +255,7 @@ services:
     environment:
       OFFSITE_BACKUP_REMOTE: ${OFFSITE_BACKUP_REMOTE:-}
       OFFSITE_BACKUP_INTERVAL_SECONDS: ${OFFSITE_BACKUP_INTERVAL_SECONDS:-86400}
+      OFFSITE_BACKUP_RETENTION_DAYS: ${OFFSITE_BACKUP_RETENTION_DAYS:-90}
       OFFSITE_INCLUDE_RECORDINGS: ${OFFSITE_INCLUDE_RECORDINGS:-false}
       OFFSITE_BACKUP_TRANSFERS: ${OFFSITE_BACKUP_TRANSFERS:-4}
       OFFSITE_BACKUP_CHECKERS: ${OFFSITE_BACKUP_CHECKERS:-8}

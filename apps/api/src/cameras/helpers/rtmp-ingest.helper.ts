@@ -175,8 +175,15 @@ export function buildPublishTarget(input: {
   scheme?: 'rtmp' | 'rtmps';
 }): RtmpPublishTarget {
   const scheme = input.scheme ?? 'rtmp';
-  const serverUrl = `${scheme}://${input.host}:${input.port}/${RTMP_INGEST_APP}`;
-  const canonicalFullUrl = `${serverUrl}/${input.key}`;
+  // O domínio continua sendo a referência canônica, mas câmera é equipamento
+  // embarcado: DNS longo aumenta o campo e há firmware que resolve o host de
+  // forma inconsistente. Quando o instalador configurou um IP curto, ele deve
+  // valer também no modo de DOIS campos (Servidor + Chave), não só na URL
+  // completa. Antes a tela mostrava a URL completa por IP, mas escondia nos
+  // detalhes um `serverUrl` com domínio — exatamente a configuração ambígua que
+  // levava o operador a copiar o destino maior para a câmera.
+  const canonicalServerUrl = `${scheme}://${input.host}:${input.port}/${RTMP_INGEST_APP}`;
+  const canonicalFullUrl = `${canonicalServerUrl}/${input.key}`;
   const compactKey = encodeCompactIngestKey(input.key);
   const portaPadrao = (scheme === 'rtmp' && input.port === 1935)
     || (scheme === 'rtmps' && input.port === 443);
@@ -188,6 +195,8 @@ export function buildPublishTarget(input: {
     && /^[a-z0-9.-]+$/i.test(compactHost)
     && !compactHost.startsWith('.')
     && !compactHost.endsWith('.');
+  const serverHost = compactHostSeguro ? compactHost : input.host;
+  const serverUrl = `${scheme}://${serverHost}:${input.port}/${RTMP_INGEST_APP}`;
   const compactHostFullUrl = compactHostSeguro && compactKey
     ? `${scheme}://${compactHost}:${input.port}/${RTMP_INGEST_COMPACT_APP}/${compactKey}`
     : null;
@@ -196,15 +205,17 @@ export function buildPublishTarget(input: {
   // principal. Isso mantém a porta visível para firmwares que não aplicam a
   // porta padrão do RTMP corretamente. A representação Base64URL reduz apenas
   // o texto (32 → 22 caracteres), preservando os mesmos 16 bytes/128 bits.
-  const compactFullUrl = canonicalFullUrl.length > RTMP_SINGLE_FIELD_MAX_LENGTH
-    ? [compactHostFullUrl, domainCompactFullUrl]
-      .find((url): url is string => Boolean(url && url.length <= RTMP_SINGLE_FIELD_MAX_LENGTH)) ?? null
-    : null;
-  const fullUrl = canonicalFullUrl.length <= RTMP_SINGLE_FIELD_MAX_LENGTH
-    ? canonicalFullUrl
-    : compactFullUrl
-      ? compactFullUrl
-      : canonicalFullUrl;
+  // Host curto configurado é uma preferência operacional explícita: usa IP e
+  // porta mesmo que o domínio também coubesse. Sem host curto, preservamos o
+  // comportamento histórico e só compactamos quando necessário.
+  const compactFullUrl = [compactHostFullUrl, domainCompactFullUrl]
+    .find((url): url is string => Boolean(
+      url
+      && url !== canonicalFullUrl
+      && url.length <= RTMP_SINGLE_FIELD_MAX_LENGTH
+      && (compactHostSeguro || canonicalFullUrl.length > RTMP_SINGLE_FIELD_MAX_LENGTH),
+    )) ?? null;
+  const fullUrl = compactFullUrl ?? canonicalFullUrl;
   return {
     serverUrl,
     streamKey: input.key,

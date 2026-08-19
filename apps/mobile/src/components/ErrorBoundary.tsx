@@ -55,10 +55,10 @@ export class ErrorBoundary extends Component<Props, State> {
           <Text style={styles.message}>
             O app encontrou um erro inesperado. Você pode tentar recarregar a tela.
           </Text>
-          <Text style={styles.detail} numberOfLines={3}>
-            {this.state.error.message}
-          </Text>
-          <Pressable style={styles.button} onPress={this.reset}>
+          {__DEV__ ? (
+            <Text style={styles.detail} numberOfLines={3}>{this.state.error.message}</Text>
+          ) : null}
+          <Pressable accessibilityRole="button" accessibilityLabel="Tentar carregar a tela novamente" style={styles.button} onPress={this.reset}>
             <Text style={styles.buttonText}>Tentar de novo</Text>
           </Pressable>
         </View>

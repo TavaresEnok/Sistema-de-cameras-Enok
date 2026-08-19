@@ -193,6 +193,13 @@ module.exports = () => ({
         foregroundImage: asset('adaptive-icon.png', base.android && base.android.adaptiveIcon && base.android.adaptiveIcon.foregroundImage),
       },
     },
+    ios: {
+      ...base.ios,
+      // Um white-label precisa de identificador próprio também no iOS. Quando
+      // não houver valor específico, o packageId Android já é um identificador
+      // reverso válido e mantém as duas lojas alinhadas.
+      bundleIdentifier: c.iosBundleId || c.packageId || base.ios.bundleIdentifier,
+    },
     extra: {
       ...(base.extra || {}),
       client,
@@ -204,6 +211,10 @@ module.exports = () => ({
       // Servidor embutido por cliente (cai para a env pública, depois vazio).
       apiUrl: c.apiUrl || process.env.EXPO_PUBLIC_API_URL || '',
       primaryColor: c.primaryColor || null,
+      // A tela de login precisa conhecer a política REAL do binário. Ler
+      // `expoConfig.android.usesCleartextTraffic` não funciona: essa opção vive
+      // dentro do plugin de build e não aparece no manifesto do Expo em runtime.
+      allowCleartextTraffic,
       // Relatório de travamento (GlitchTip hospedado na AjustConsulting). Sem
       // isto o app funciona igual — só não avisa quando fecha sozinho no
       // celular do cliente. Por cliente, para separar as frotas.

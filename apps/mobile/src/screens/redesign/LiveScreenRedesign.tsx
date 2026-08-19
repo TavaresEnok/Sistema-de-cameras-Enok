@@ -186,7 +186,7 @@ export function LiveScreenRedesign(props: Props) {
             <Text style={s.fsName} numberOfLines={1}>{camera.name}</Text>
           </View>
           <ClockBadge style={s.fsClock} textStyle={s.clockText} />
-          <TouchableOpacity style={s.fsClose} onPress={() => setFullscreen(false)} activeOpacity={0.8}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Sair da tela cheia" style={s.fsClose} onPress={() => setFullscreen(false)} activeOpacity={0.8}>
             <Icon name="close" size={18} color="#fff" />
           </TouchableOpacity>
         </View>
@@ -207,11 +207,11 @@ export function LiveScreenRedesign(props: Props) {
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="Tirar foto" style={s.fsBtn} onPress={() => onSnapshot(camera)} activeOpacity={0.8}>
               <Icon name="camera" size={20} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity style={[s.fsBtn, recordingActive && s.fsBtnRec]} onPress={() => onToggleRecording(camera)} activeOpacity={0.8}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={recordingActive ? 'Parar gravação no aparelho' : 'Gravar no aparelho'} accessibilityState={{ selected: recordingActive }} style={[s.fsBtn, recordingActive && s.fsBtnRec]} onPress={() => onToggleRecording(camera)} activeOpacity={0.8}>
               <View style={[s.fsRecDot, recordingActive && { borderRadius: 4 }]} />
             </TouchableOpacity>
             {canPtz ? (
-              <TouchableOpacity style={[s.fsBtn, ptzOpen && s.fsBtnOn]} onPress={() => setPtzOpen((p) => !p)} activeOpacity={0.8}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Controles PTZ" accessibilityState={{ expanded: ptzOpen }} style={[s.fsBtn, ptzOpen && s.fsBtnOn]} onPress={() => setPtzOpen((p) => !p)} activeOpacity={0.8}>
                 <Icon name="crosshair" size={20} color="#fff" />
               </TouchableOpacity>
             ) : null}
@@ -225,7 +225,7 @@ export function LiveScreenRedesign(props: Props) {
     <View style={[s.root, { paddingTop: topInset }]}>
       {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => (isPlaying ? onClosePlayback() : onBack())} activeOpacity={0.8}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={isPlaying ? 'Fechar reprodução' : 'Voltar para as câmeras'} style={s.backBtn} onPress={() => (isPlaying ? onClosePlayback() : onBack())} activeOpacity={0.8}>
           <Icon name="close" size={18} color={theme.text} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
@@ -267,10 +267,10 @@ export function LiveScreenRedesign(props: Props) {
 
       {/* Segmented Ao vivo / Gravações */}
       <View style={s.segmented}>
-        <TouchableOpacity style={[s.segBtn, mode === 'live' && s.segOn]} onPress={() => { setMode('live'); if (isPlaying) onClosePlayback(); }}>
+        <TouchableOpacity accessibilityRole="tab" accessibilityState={{ selected: mode === 'live' }} accessibilityLabel="Ao vivo" style={[s.segBtn, mode === 'live' && s.segOn]} onPress={() => { setMode('live'); if (isPlaying) onClosePlayback(); }}>
           <Text style={[s.segText, mode === 'live' && s.segTextOn]}>Ao vivo</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.segBtn, mode === 'rec' && s.segOn]} onPress={() => setMode('rec')}>
+        <TouchableOpacity accessibilityRole="tab" accessibilityState={{ selected: mode === 'rec' }} accessibilityLabel="Gravações" style={[s.segBtn, mode === 'rec' && s.segOn]} onPress={() => setMode('rec')}>
           <Text style={[s.segText, mode === 'rec' && s.segTextOn]}>Gravações</Text>
         </TouchableOpacity>
       </View>
@@ -307,9 +307,9 @@ export function LiveScreenRedesign(props: Props) {
                 <View style={s.joyHome}><Icon name="aperture" size={18} color={theme.accent} /></View>
               </View>
               <View style={s.zoomCol}>
-                <TouchableOpacity style={s.zoomBtn} disabled={!canPtz} onPress={() => onSendPtz('ZoomIn')}><Icon name="plus" size={20} color={theme.text} /></TouchableOpacity>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Aumentar zoom" accessibilityState={{ disabled: !canPtz }} style={s.zoomBtn} disabled={!canPtz} onPress={() => onSendPtz('ZoomIn')}><Icon name="plus" size={20} color={theme.text} /></TouchableOpacity>
                 <Text style={s.zoomLabel}>Zoom</Text>
-                <TouchableOpacity style={s.zoomBtn} disabled={!canPtz} onPress={() => onSendPtz('ZoomOut')}><Icon name="minus" size={20} color={theme.text} /></TouchableOpacity>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Diminuir zoom" accessibilityState={{ disabled: !canPtz }} style={s.zoomBtn} disabled={!canPtz} onPress={() => onSendPtz('ZoomOut')}><Icon name="minus" size={20} color={theme.text} /></TouchableOpacity>
               </View>
             </View>
           ) : null}
@@ -449,7 +449,7 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
             {chips.map((c) => {
               const on = c.key === recordingDate;
               return (
-                <TouchableOpacity key={c.key} style={[s.dateChip, on && s.dateChipOn]} activeOpacity={0.85} onPress={() => onSelectDate(c.key)}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Selecionar ${c.key}`} accessibilityState={{ selected: on }} key={c.key} style={[s.dateChip, on && s.dateChipOn]} activeOpacity={0.85} onPress={() => onSelectDate(c.key)}>
                   <Text style={[s.dateChipDow, on && { color: theme.textOnAccent ?? '#fff' }]}>{c.dow}</Text>
                   <Text style={[s.dateChipNum, on && { color: theme.textOnAccent ?? '#fff' }]}>{c.num}</Text>
                 </TouchableOpacity>
@@ -487,7 +487,7 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
 
           {/* Baixar trecho atual */}
           {activePlayback && canDownload ? (
-            <TouchableOpacity style={s.downloadBtn} activeOpacity={0.85} onPress={() => onDownloadRecording(activePlayback.recording)}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Baixar este trecho" style={s.downloadBtn} activeOpacity={0.85} onPress={() => onDownloadRecording(activePlayback.recording)}>
               <Icon name="download" size={17} color={theme.textSub} />
               <Text style={s.downloadText}>Baixar este trecho</Text>
             </TouchableOpacity>
@@ -511,7 +511,7 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
               {recordings.map((r) => {
                 const downloading = downloadingIds.includes(r.id);
                 return (
-                  <TouchableOpacity key={r.id} style={s.recRow} activeOpacity={0.85} disabled={!canPlayback} onPress={() => onOpenPlayback(r)}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Reproduzir gravação das ${new Date(r.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`} accessibilityState={{ disabled: !canPlayback }} key={r.id} style={s.recRow} activeOpacity={0.85} disabled={!canPlayback} onPress={() => onOpenPlayback(r)}>
                     <View style={s.recThumb}>
                       {r.thumbnailUrl ? <Image source={{ uri: r.thumbnailUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={onThumbnailError} /> : <View style={[StyleSheet.absoluteFill, s.recThumbEmpty]}><Icon name="play" size={14} color={theme.textMuted} /></View>}
                     </View>
@@ -520,7 +520,7 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
                       <Text style={s.recRowSub}>{(r.triggerMode ?? '').toLowerCase() === 'motion' ? 'Movimento' : 'Contínua'}{r.durationSeconds ? ` · ${Math.round(r.durationSeconds)}s` : ''}</Text>
                     </View>
                     {canDownload ? (
-                      <TouchableOpacity style={s.recDl} activeOpacity={0.8} disabled={downloading} onPress={() => onDownloadRecording(r)} hitSlop={6}>
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Baixar gravação" accessibilityState={{ disabled: downloading, busy: downloading }} style={s.recDl} activeOpacity={0.8} disabled={downloading} onPress={(event) => { event.stopPropagation(); onDownloadRecording(r); }} hitSlop={6}>
                         <Icon name="download" size={16} color={downloading ? theme.textMuted : theme.textSub} />
                       </TouchableOpacity>
                     ) : null}
@@ -595,7 +595,7 @@ function recentDateChips(selected: string): Array<{ key: string; dow: string; nu
 function ActionBtn({ s, theme, icon, label, active, danger, disabled, onPress }: { s: any; theme: any; icon: IconName; label: string; active?: boolean; danger?: boolean; disabled?: boolean; onPress: () => void }) {
   const color = danger ? theme.danger : active ? theme.accent : theme.text;
   return (
-    <TouchableOpacity style={[s.actionBtn, active && { backgroundColor: theme.accentBg, borderColor: theme.accent }, disabled && { opacity: 0.4 }]} disabled={disabled} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active, disabled: !!disabled }} style={[s.actionBtn, active && { backgroundColor: theme.accentBg, borderColor: theme.accent }, disabled && { opacity: 0.4 }]} disabled={disabled} onPress={onPress} activeOpacity={0.8}>
       <Icon name={icon} size={20} color={color} />
       <Text style={[s.actionLabel, { color: active ? theme.accent : theme.textSub }]}>{label}</Text>
     </TouchableOpacity>
@@ -603,8 +603,9 @@ function ActionBtn({ s, theme, icon, label, active, danger, disabled, onPress }:
 }
 
 function PtzBtn({ s, theme, icon, dir, pos, active, onPress, disabled }: { s: any; theme: any; icon: IconName; dir: Direction; pos: any; active?: boolean; onPress: (d: Direction) => void; disabled?: boolean }) {
+  const label: Record<Direction, string> = { Up: 'Mover para cima', Down: 'Mover para baixo', Left: 'Mover para a esquerda', Right: 'Mover para a direita', ZoomIn: 'Aumentar zoom', ZoomOut: 'Diminuir zoom' };
   return (
-    <TouchableOpacity style={[s.joyBtn, pos, active && { backgroundColor: theme.accent }]} disabled={disabled} onPress={() => onPress(dir)} activeOpacity={0.7}>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={label[dir]} accessibilityState={{ disabled: !!disabled, selected: active }} style={[s.joyBtn, pos, active && { backgroundColor: theme.accent }]} disabled={disabled} onPress={() => onPress(dir)} activeOpacity={0.7}>
       <Icon name={icon} size={20} color={active ? '#fff' : theme.text} />
     </TouchableOpacity>
   );

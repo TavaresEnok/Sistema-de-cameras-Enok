@@ -24,6 +24,7 @@ function rodaObjetoDe(info: Record<string, unknown>): boolean {
 }
 import { envNumber } from '../common/config/env-number.helper';
 import { modoArmado } from '../cameras/helpers/gatilho-de-gravacao.helper';
+import { isPushSourced } from '../cameras/helpers/rtmp-ingest.helper';
 
 const AI_MODES = ['motion', 'face', 'general'] as const;
 type AiMode = typeof AI_MODES[number];
@@ -1175,6 +1176,34 @@ export class AiManagerService implements OnModuleInit {
         classes: classesDeObjeto,
       },
     };
+
+    // Câmera RTMP não é discável em 0.0.0.0: sua origem é a publicação já
+    // recebida pelo MediaMTX. Para a IA usamos a entrega `grid`, que reaproveita
+    // exatamente a política existente (H.264 copy; HEVC convertido somente
+    // porque o detector precisa de quadros compatíveis).
+    if (isPushSourced(cam)) {
+      const delivery = await this.mediamtxProxy.ensurePathForCamera(cam.id, 'grid');
+      const internalUrl = this.mediamtxProxy.buildInternalRtspUrl(delivery.pathName);
+      if (!internalUrl) {
+        throw new BadRequestException('Publicação RTMP ainda não está disponível para análise.');
+      }
+      const sanitized = sanitizeRtspUrl(internalUrl);
+      return {
+        rtspUrl: internalUrl,
+        info: {
+          ...infoBase,
+          sourceKind: 'mediamtx_rtmp_push',
+          usesMediaMtx: true,
+          audioRequested: false,
+          analyticsRtspUrl: sanitized,
+          analyticsSourceUrlSanitized: sanitized,
+          analyticsOriginalRtspUrl: sanitized,
+          analyticsSourceCodec: delivery.sourceVideoCodec,
+          analyticsTranscodedForAi: Boolean(delivery.transcodedForLive),
+          analyticsMediaMtxPath: delivery.pathName,
+        },
+      };
+    }
 
     const rtspTransport = cam.preferredRtspTransport || process.env.FFMPEG_RTSP_TRANSPORT || 'tcp';
     const analyticsCodec = await this.mediamtxProxy.probeStreamVideoCodec(rtspUrl, rtspTransport).catch(() => null);

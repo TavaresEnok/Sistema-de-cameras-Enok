@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MediamtxProxyService } from '../src/camera-stream/mediamtx-proxy.service';
+import { RecordingProcessManagerService } from '../src/recordings/recording-process-manager.service';
 import {
   compactIngestPathName,
   generateIngestKey,
@@ -25,7 +26,8 @@ const CAMERA_ID = '5b55e86c16cd4976bc23a08e699aa5f3';
 
 function makeProxy(overrides: Record<string, unknown> = {}) {
   const config = { get: () => undefined } as any;
-  const mgr = new MediamtxProxyService(config, {} as any, {} as any, {} as any) as any;
+  const settings = { isGpuAccelerationEnabled: async () => false } as any;
+  const mgr = new MediamtxProxyService(config, {} as any, {} as any, settings) as any;
   mgr.logger = { error() {}, warn() {}, log() {}, debug() {} };
   Object.assign(mgr, overrides);
   return mgr;
@@ -40,6 +42,7 @@ function cameraPush(chave: string, extra: Record<string, unknown> = {}) {
     sourceMode: SOURCE_MODE_PUSH,
     rtmpIngestKeyEncrypted: `cifrado:${chave}`,
     passwordEncrypted: 'irrelevante-no-modo-push',
+    detectedVideoCodec: 'h264',
     ...extra,
   };
 }
@@ -51,7 +54,7 @@ test('câmera em push lê do path de ingestão, sem discar para a câmera', asyn
     cryptoService: { decrypt: (v: string) => v.replace(/^cifrado:/, '') },
     pathNameFromCameraId: () => `cam_${CAMERA_ID}_grid`,
     buildInternalRtspUrl: (p: string) => `rtsp://mediamtx:8554/${p}`,
-    getPath: async () => { throw new Error('não existe'); },
+    getPath: async () => { throw Object.assign(new Error('não existe'), { status: 404 }); },
     apiRequest: async (metodo: string, rota: string, corpo?: any) => {
       chamadas.push({ metodo, rota, corpo });
       return '{}';
@@ -61,7 +64,7 @@ test('câmera em push lê do path de ingestão, sem discar para a câmera', asyn
   const r = await mgr.configurePushSourcedPath(cameraPush(chave), 'grid');
 
   assert.equal(r.sourceUrl, `rtsp://mediamtx:8554/${compactIngestPathName(chave)}`);
-  assert.equal(r.sourceVideoCodec, 'h264', 'RTMP clássico entrega H.264');
+  assert.equal(r.sourceVideoCodec, 'h264', 'H.264 conhecido deve atravessar sem conversão');
   assert.equal(r.transcodedForLive, false, 'push não pode custar transcode');
   assert.equal(r.deliveryMode, 'grid');
 
@@ -72,6 +75,55 @@ test('câmera em push lê do path de ingestão, sem discar para a câmera', asyn
   assert.notEqual(criado!.corpo.source, 'publisher', 'não deve subir FFmpeg para câmera que publica');
 });
 
+test('RTMP H.265 preserva original e usa a política H.264 existente só na entrega compatível', async () => {
+  const chave = generateIngestKey();
+  const configurar = async (modo: 'selected' | 'original') => {
+    const chamadas: Array<{ metodo: string; corpo?: any }> = [];
+    const mgr = makeProxy({
+      cryptoService: { decrypt: (v: string) => v.replace(/^cifrado:/, '') },
+      pathNameFromCameraId: (_id: string, m: string) => `cam_${CAMERA_ID}_${m}`,
+      buildInternalRtspUrl: (p: string) => `rtsp://mediamtx:8554/${p}`,
+      buildInternalPublishRtspUrl: (p: string) => `rtsp://publisher@127.0.0.1:8554/${p}`,
+      getPath: async () => { throw Object.assign(new Error('não existe'), { status: 404 }); },
+      apiRequest: async (metodo: string, _rota: string, corpo?: any) => {
+        chamadas.push({ metodo, corpo });
+        return '{}';
+      },
+    });
+    const result = await mgr.configurePushSourcedPath(
+      cameraPush(chave, { detectedVideoCodec: 'h265', detectedWidth: 1920, detectedHeight: 1080, detectedFps: 30 }),
+      modo,
+    );
+    return { result, criado: chamadas.find((c) => c.metodo === 'POST')?.corpo };
+  };
+
+  const original = await configurar('original');
+  assert.equal(original.result.sourceVideoCodec, 'h265');
+  assert.equal(original.result.transcodedForLive, false);
+  assert.equal(original.criado.source, `rtsp://mediamtx:8554/${compactIngestPathName(chave)}`);
+
+  const compativel = await configurar('selected');
+  assert.equal(compativel.result.sourceVideoCodec, 'h265');
+  assert.equal(compativel.result.transcodedForLive, true);
+  assert.equal(compativel.criado.source, 'publisher');
+  assert.match(compativel.criado.runOnDemand, /libx264/);
+});
+
+test('gravação RTMP consome a publicação interna e preserva o codec H.265', async () => {
+  const mgr: any = Object.create(RecordingProcessManagerService.prototype);
+  mgr.rtmpIngestSource = {
+    resolve: async () => ({
+      sourceUrl: 'rtsp://interno:senha@mediamtx:8554/d/abcdefghijklmnopqrstuv',
+      metadata: { codec: 'h265' },
+    }),
+  };
+
+  const input = await mgr.resolveRecordingInput({ sourceMode: SOURCE_MODE_PUSH }, '');
+  assert.equal(input.rtspUrl, 'rtsp://interno:senha@mediamtx:8554/d/abcdefghijklmnopqrstuv');
+  assert.equal(input.transport, 'tcp');
+  assert.equal(input.sourceCodec, 'h265');
+});
+
 test('publicação antiga ativa continua sendo lida do path hexadecimal', async () => {
   const chave = generateIngestKey();
   const mgr = makeProxy({
@@ -79,7 +131,7 @@ test('publicação antiga ativa continua sendo lida do path hexadecimal', async 
     pathNameFromCameraId: () => `cam_${CAMERA_ID}_grid`,
     buildInternalRtspUrl: (p: string) => `rtsp://mediamtx:8554/${p}`,
     isPathPublishing: async (p: string) => p === ingestPathName(chave),
-    getPath: async () => { throw new Error('não existe'); },
+    getPath: async () => { throw Object.assign(new Error('não existe'), { status: 404 }); },
     apiRequest: async () => '{}',
   });
 
@@ -95,7 +147,7 @@ test('os três modos leem a MESMA ingestão — quem publica manda um fluxo só'
       cryptoService: { decrypt: (v: string) => v.replace(/^cifrado:/, '') },
       pathNameFromCameraId: (_id: string, m: string) => `cam_${CAMERA_ID}_${m}`,
       buildInternalRtspUrl: (p: string) => `rtsp://mediamtx:8554/${p}`,
-      getPath: async () => { throw new Error('não existe'); },
+      getPath: async () => { throw Object.assign(new Error('não existe'), { status: 404 }); },
       apiRequest: async () => '{}',
     });
     const r = await mgr.configurePushSourcedPath(cameraPush(chave), modo);
@@ -112,7 +164,13 @@ test('path já correto não é recriado — recriar derruba quem está assistind
     cryptoService: { decrypt: (v: string) => v.replace(/^cifrado:/, '') },
     pathNameFromCameraId: () => `cam_${CAMERA_ID}_grid`,
     buildInternalRtspUrl: (p: string) => `rtsp://mediamtx:8554/${p}`,
-    getPath: async () => ({ source: fonte, rtspTransport: 'tcp', sourceOnDemand: true }),
+    getPath: async () => ({
+      source: fonte,
+      rtspTransport: 'tcp',
+      sourceOnDemand: true,
+      sourceOnDemandStartTimeout: '6s',
+      sourceOnDemandCloseAfter: '5m',
+    }),
     apiRequest: async (metodo: string) => { chamadas.push(metodo); return '{}'; },
   });
 
@@ -126,7 +184,7 @@ test('modo push sem chave gerada falha explicitamente, não fica "Conectando"', 
     cryptoService: { decrypt: () => { throw new Error('sem chave'); } },
     pathNameFromCameraId: () => `cam_${CAMERA_ID}_grid`,
     buildInternalRtspUrl: (p: string) => `rtsp://mediamtx:8554/${p}`,
-    getPath: async () => { throw new Error('não existe'); },
+    getPath: async () => { throw Object.assign(new Error('não existe'), { status: 404 }); },
     apiRequest: async () => '{}',
   });
   await assert.rejects(
