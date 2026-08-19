@@ -22,6 +22,7 @@ import {
   type HeartbeatCamerasBlock,
 } from './heartbeat-cameras.helper';
 import { buildReactivationSnapshot, type ReactivationSnapshot } from './reactivation-snapshot.helper';
+import { SettingsService } from '../settings/settings.service';
 
 type LicenseStatus = 'UNKNOWN' | 'ACTIVE' | 'GRACE' | 'RESTRICTED' | 'SUSPENDED';
 
@@ -161,6 +162,9 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       // e só se aplicar der certo: marcar antes transformaria uma falha em
       // "aplicado" e a Central passaria a mentir.
       const desiredRevision = Number(response.data?.configRevision ?? 0) || 0;
+      const previouslyAppliedRevision = Number(payload.configState?.appliedRevision ?? 0) || 0;
+      const shouldApplyDesiredConfig = desiredRevision > previouslyAppliedRevision
+        || payload.configState?.applyStatus === 'FAILED';
       let applyStatus = 'APPLIED';
       let applyError = '';
 
@@ -191,6 +195,9 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
             Array.isArray(response.data?.cloudStorageRemovals) ? response.data.cloudStorageRemovals : [],
           )),
         ]);
+        if (response.data?.branding != null && shouldApplyDesiredConfig) {
+          await this.applyManagedBranding(response.data.branding);
+        }
         await this.enforceRuntimeRestrictions(restrictions);
       } catch (applyFailure) {
         applyStatus = 'FAILED';
@@ -678,7 +685,7 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
         applyError: applied['cloud.configApplyError'] || null,
         // Campos que ESTA versão entende. A Central usa isto para não marcar
         // como "pendente para sempre" uma config que a instalação nem conhece.
-        supports: ['licenseStatus', 'restrictions', 'aiPolicy', 'cloudStorage'],
+        supports: ['licenseStatus', 'restrictions', 'aiPolicy', 'cloudStorage', 'branding'],
       },
       summary: {
         status: appReadinessStatus === 'blocked' ? 'blocked' : appReadinessStatus === 'attention' ? 'attention' : 'ok',
@@ -1063,6 +1070,50 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       where: { key },
       create: { key, value },
       update: { value },
+    });
+  }
+
+  /**
+   * Aplica o subconjunto simples de marca administrado pela Central. A
+   * validação definitiva continua no SettingsService, a mesma usada pela tela
+   * local, para que nenhum payload remoto consiga contornar limite de imagem
+   * ou formato de cor.
+   */
+  private async applyManagedBranding(raw: unknown) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('Identidade visual recebida da Central é inválida.');
+    }
+    const source = raw as Record<string, unknown>;
+    const facilityName = String(source.facilityName || '').trim();
+    if (!facilityName) throw new Error('Identidade visual recebida sem nome da instalação.');
+    const useDefaultColors = source.brandUseDefaultColors === true;
+    const primaryColor = String(source.brandPrimaryColor || '').trim();
+    const settings = this.moduleRef.get(SettingsService, { strict: false });
+    await settings.patch({
+      facilityName,
+      brandLogoDataUrl: String(source.brandLogoDataUrl || '').trim(),
+      brandUseDefaultColors: useDefaultColors,
+      brandPrimaryColor: primaryColor,
+      brandBackgroundColor: String(source.brandBackgroundColor || '').trim(),
+      // O editor da Central é deliberadamente simples. Limpar os overrides
+      // avançados impede que uma personalização antiga (gradiente, cards,
+      // textos ou estados) continue escondida e produza o visual exagerado que
+      // este editor existe para evitar.
+      brandBackgroundColor2: '',
+      brandSecondaryColor: '',
+      brandPrimaryTextColor: '',
+      brandSecondaryTextColor: '',
+      brandBackgroundTextColor: '',
+      brandMenuColor: '',
+      brandMenuTextColor: '',
+      brandButtonTextColor: '',
+      brandBorderColor: '',
+      brandSuccessColor: '',
+      brandWarningColor: '',
+      brandDangerColor: '',
+      // Uma única escolha de destaque vale também no tema claro; o fundo claro
+      // e suas superfícies continuam nos padrões neutros do produto.
+      brandLightPrimaryColor: useDefaultColors ? '#2563eb' : primaryColor,
     });
   }
 

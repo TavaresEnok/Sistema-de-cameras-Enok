@@ -837,6 +837,34 @@
       .modal-body { padding: 18px; color: var(--muted); line-height: 1.6; font-size: 12.5px; }
       .modal-body strong { color: var(--ink); font-weight: 500; }
       .modal-actions { padding: 14px 18px; border-top: 1px solid var(--line-hair); display: flex; justify-content: flex-end; gap: 8px; }
+      #app-edit-dialog { width: min(700px, calc(100vw - 28px)); }
+      #app-edit-dialog .modal-body { max-height: min(74vh, 720px); overflow: auto; }
+      .brand-editor { margin-top: 17px; padding-top: 17px; border-top: 1px solid var(--line-hair); }
+      .brand-editor-head { display: flex; align-items: start; justify-content: space-between; gap: 14px; margin-bottom: 13px; }
+      .brand-editor-title { color: var(--ink); font-size: 13px; font-weight: 600; }
+      .brand-editor-copy { margin-top: 2px; color: var(--quiet); font-size: 11.5px; }
+      .brand-toggle { display: flex; align-items: center; gap: 8px; color: var(--ink); white-space: nowrap; cursor: pointer; }
+      .brand-toggle input { width: 15px; }
+      .brand-preview { min-height: 118px; margin: 12px 0; border: 1px solid var(--line); border-radius: 13px; overflow: hidden;
+        display: grid; grid-template-columns: 170px 1fr; background: #11141a; transition: background .15s ease; }
+      .brand-preview-side { padding: 17px; border-right: 1px solid rgba(255,255,255,.09); display: flex; align-items: flex-start; }
+      .brand-preview-logo { display: block; max-width: 136px; max-height: 48px; object-fit: contain; object-position: left center; }
+      .brand-preview-fallback { color: #fff; font-size: 15px; font-weight: 650; letter-spacing: .03em; }
+      .brand-preview-main { padding: 17px; color: #f8fafc; }
+      .brand-preview-main small { display: block; margin-top: 4px; color: #9ca3af; }
+      .brand-preview-button { display: inline-flex; margin-top: 14px; min-height: 28px; align-items: center; padding: 0 13px;
+        border-radius: 7px; color: #fff; background: #4f8cff; font-size: 11.5px; font-weight: 600; }
+      .brand-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+      .brand-color-row { display: grid; grid-template-columns: 42px 1fr; gap: 7px; }
+      .brand-color-row input[type="color"] { width: 42px; padding: 3px; cursor: pointer; }
+      .brand-logo-row { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; }
+      .brand-delivery { min-height: 18px; margin-top: 8px; color: var(--quiet); font-size: 11.5px; }
+      @media (max-width: 620px) {
+        .brand-editor-head { display: grid; }
+        .brand-preview { grid-template-columns: 1fr; }
+        .brand-preview-side { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.09); }
+        .brand-grid { grid-template-columns: 1fr; }
+      }
 
       /* ── Skeleton ─────────────────────────────────────────────────────── */
       .sk { border-radius: 5px; background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
@@ -1571,6 +1599,53 @@
           <label for="app-edit-api">Servidor (URL da API)</label>
           <input id="app-edit-api" placeholder="http://168.194.13.70:5173/api" class="mono" />
         </div>
+        <section class="brand-editor" aria-labelledby="brand-editor-title">
+          <div class="brand-editor-head">
+            <div>
+              <div id="brand-editor-title" class="brand-editor-title">Identidade visual</div>
+              <div class="brand-editor-copy">Uma personalização simples para o sistema web e o aplicativo.</div>
+            </div>
+            <label class="brand-toggle"><input type="checkbox" id="app-edit-custom-colors" /> Usar cores próprias</label>
+          </div>
+          <div id="app-brand-preview" class="brand-preview">
+            <div class="brand-preview-side">
+              <img id="app-brand-preview-logo" class="brand-preview-logo" alt="Prévia do logo" hidden />
+              <span id="app-brand-preview-fallback" class="brand-preview-fallback">CLIENTE</span>
+            </div>
+            <div class="brand-preview-main">
+              <strong id="app-brand-preview-name">Nome do cliente</strong>
+              <small>Prévia aproximada da navegação e dos destaques</small>
+              <span id="app-brand-preview-button" class="brand-preview-button">Ao vivo</span>
+            </div>
+          </div>
+          <div class="brand-logo-row">
+            <div class="field">
+              <label for="app-edit-logo-file">Logo (PNG, JPG ou WebP, até 400 KB)</label>
+              <input id="app-edit-logo-file" type="file" accept="image/png,image/jpeg,image/webp" />
+            </div>
+            <button id="app-edit-logo-remove" class="sm" type="button">Remover logo</button>
+          </div>
+          <div class="brand-grid" style="margin-top:11px">
+            <div class="field">
+              <label for="app-edit-primary-hex">Cor de destaque</label>
+              <div class="brand-color-row">
+                <input id="app-edit-primary" type="color" value="#2563eb" />
+                <input id="app-edit-primary-hex" class="mono" value="#2563eb" maxlength="7" />
+              </div>
+            </div>
+            <div class="field">
+              <label class="brand-toggle" style="margin-bottom:6px"><input type="checkbox" id="app-edit-custom-background" /> Personalizar fundo escuro</label>
+              <div class="brand-color-row">
+                <input id="app-edit-background" type="color" value="#111318" />
+                <input id="app-edit-background-hex" class="mono" value="#111318" maxlength="7" />
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px">
+            <div id="app-edit-brand-delivery" class="brand-delivery"></div>
+            <button id="app-edit-brand-default" class="ghost sm" type="button">Voltar ao visual padrão</button>
+          </div>
+        </section>
         <div class="alert-item" style="margin-top:12px;border-color:var(--amber-line);background:var(--amber-soft)">
           <span class="badge warn">Atenção</span>
           <div style="margin-top:6px;color:var(--ink)">O pacote é a identidade permanente do app na Play Store. Defina antes da primeira publicação — depois de publicado, não mude (vira outro app).</div>
@@ -5072,6 +5147,61 @@
 
       /* ── Apps (APK) ──────────────────────────────────────────────────── */
       let appsBuildPoll = null;
+      let appEditLogoDataUrl = '';
+
+      function validHexColor(value) {
+        return /^#[0-9a-f]{6}$/i.test(String(value || '').trim());
+      }
+
+      function syncBrandColor(pickerId, textId, source) {
+        const picker = document.querySelector(`#${pickerId}`);
+        const text = document.querySelector(`#${textId}`);
+        if (source === 'picker') text.value = picker.value.toLowerCase();
+        else if (validHexColor(text.value)) picker.value = text.value.toLowerCase();
+        updateAppBrandPreview();
+      }
+
+      function updateAppBrandPreview() {
+        const custom = document.querySelector('#app-edit-custom-colors').checked;
+        const customBackground = custom && document.querySelector('#app-edit-custom-background').checked;
+        const primaryText = document.querySelector('#app-edit-primary-hex').value.trim().toLowerCase();
+        const backgroundText = document.querySelector('#app-edit-background-hex').value.trim().toLowerCase();
+        const primary = custom && validHexColor(primaryText) ? primaryText : '#4f8cff';
+        const background = customBackground && validHexColor(backgroundText) ? backgroundText : '#11141a';
+        const name = document.querySelector('#app-edit-name').value.trim() || 'Nome do cliente';
+        document.querySelector('#app-brand-preview').style.background = background;
+        document.querySelector('#app-brand-preview-button').style.background = primary;
+        document.querySelector('#app-brand-preview-name').textContent = name;
+        const logo = document.querySelector('#app-brand-preview-logo');
+        const fallback = document.querySelector('#app-brand-preview-fallback');
+        if (appEditLogoDataUrl) {
+          logo.src = appEditLogoDataUrl;
+          logo.hidden = false;
+          fallback.hidden = true;
+        } else {
+          logo.removeAttribute('src');
+          logo.hidden = true;
+          fallback.hidden = false;
+          fallback.textContent = name.toUpperCase();
+        }
+        for (const id of ['app-edit-primary', 'app-edit-primary-hex']) document.querySelector(`#${id}`).disabled = !custom;
+        document.querySelector('#app-edit-custom-background').disabled = !custom;
+        for (const id of ['app-edit-background', 'app-edit-background-hex']) {
+          document.querySelector(`#${id}`).disabled = !customBackground;
+        }
+      }
+
+      function resetAppBrandingToDefault() {
+        appEditLogoDataUrl = '';
+        document.querySelector('#app-edit-logo-file').value = '';
+        document.querySelector('#app-edit-custom-colors').checked = false;
+        document.querySelector('#app-edit-custom-background').checked = false;
+        document.querySelector('#app-edit-primary').value = '#2563eb';
+        document.querySelector('#app-edit-primary-hex').value = '#2563eb';
+        document.querySelector('#app-edit-background').value = '#111318';
+        document.querySelector('#app-edit-background-hex').value = '#111318';
+        updateAppBrandPreview();
+      }
       // A aba Apps é dirigida pela lista de INSTALAÇÕES (todos os clientes),
       // juntando o status de build vindo do agente. Assim Apps e Clientes batem.
       async function loadApps() {
@@ -5152,6 +5282,26 @@
           document.querySelector('#app-edit-name').value = data.appName || '';
           document.querySelector('#app-edit-pkg').value = data.packageId || '';
           document.querySelector('#app-edit-api').value = data.apiUrl || '';
+          const branding = data.branding || {};
+          appEditLogoDataUrl = branding.brandLogoDataUrl || '';
+          const custom = branding.brandUseDefaultColors === false && validHexColor(branding.brandPrimaryColor);
+          const primary = custom ? branding.brandPrimaryColor.toLowerCase() : '#2563eb';
+          const background = validHexColor(branding.brandBackgroundColor) ? branding.brandBackgroundColor.toLowerCase() : '#111318';
+          document.querySelector('#app-edit-custom-colors').checked = custom;
+          document.querySelector('#app-edit-custom-background').checked = custom && Boolean(branding.brandBackgroundColor);
+          document.querySelector('#app-edit-primary').value = primary;
+          document.querySelector('#app-edit-primary-hex').value = primary;
+          document.querySelector('#app-edit-background').value = background;
+          document.querySelector('#app-edit-background-hex').value = background;
+          document.querySelector('#app-edit-logo-file').value = '';
+          const delivery = data.brandingDelivery || {};
+          const deliveryBox = document.querySelector('#app-edit-brand-delivery');
+          deliveryBox.textContent = delivery.desiredRevision > delivery.appliedRevision
+            ? `Aguardando a instalação aplicar a revisão ${delivery.desiredRevision}.`
+            : delivery.status === 'FAILED'
+              ? `Falha ao aplicar: ${delivery.error || 'sem detalhe'}`
+              : delivery.desiredRevision > 0 ? 'Identidade aplicada pela instalação.' : '';
+          updateAppBrandPreview();
           document.querySelector('#app-edit-dialog').showModal();
         } catch { showToast('Não foi possível carregar os dados do app.'); }
       }
@@ -5160,15 +5310,30 @@
         const appName = document.querySelector('#app-edit-name').value.trim();
         const packageId = document.querySelector('#app-edit-pkg').value.trim();
         const apiUrl = document.querySelector('#app-edit-api').value.trim();
+        const customColors = document.querySelector('#app-edit-custom-colors').checked;
+        const customBackground = customColors && document.querySelector('#app-edit-custom-background').checked;
+        const primaryColor = document.querySelector('#app-edit-primary-hex').value.trim().toLowerCase();
+        const backgroundColor = document.querySelector('#app-edit-background-hex').value.trim().toLowerCase();
+        if (customColors && !validHexColor(primaryColor)) { showToast('A cor de destaque deve usar #RRGGBB.'); return; }
+        if (customBackground && !validHexColor(backgroundColor)) { showToast('A cor de fundo deve usar #RRGGBB.'); return; }
+        const branding = {
+          facilityName: appName,
+          brandLogoDataUrl: appEditLogoDataUrl,
+          brandUseDefaultColors: !customColors,
+          brandPrimaryColor: customColors ? primaryColor : '',
+          brandBackgroundColor: customBackground ? backgroundColor : '',
+        };
         try {
           const res = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(id)}/app`), {
             method: 'PATCH', credentials: 'include', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ appName, packageId, apiUrl }),
+            body: JSON.stringify({ appName, packageId, apiUrl, branding }),
           });
           const data = await res.json();
           if (!res.ok) { showToast(data.message || data.error || 'Falha ao salvar.'); return; }
           document.querySelector('#app-edit-dialog').close();
-          showToast(data.rebuildTriggered ? 'App atualizado. Rebuild iniciado automaticamente.' : 'App atualizado.');
+          showToast(data.rebuildTriggered
+            ? 'Identidade salva. A instalação aplicará automaticamente; rebuild do app iniciado.'
+            : 'Identidade salva. A instalação aplicará automaticamente.');
           await load();
           if (data.rebuildTriggered) { await loadApps(); startApkBuildPolling(); }
         } catch { showToast('Falha ao salvar.'); }
@@ -5489,6 +5654,40 @@
       document.querySelector('#ri-start').addEventListener('click', startRemoteInstall);
       document.querySelector('#app-edit-cancel').addEventListener('click', () => document.querySelector('#app-edit-dialog').close());
       document.querySelector('#app-edit-save').addEventListener('click', saveAppEdit);
+      document.querySelector('#app-edit-name').addEventListener('input', updateAppBrandPreview);
+      document.querySelector('#app-edit-custom-colors').addEventListener('change', updateAppBrandPreview);
+      document.querySelector('#app-edit-custom-background').addEventListener('change', updateAppBrandPreview);
+      document.querySelector('#app-edit-primary').addEventListener('input', () => syncBrandColor('app-edit-primary', 'app-edit-primary-hex', 'picker'));
+      document.querySelector('#app-edit-primary-hex').addEventListener('input', () => syncBrandColor('app-edit-primary', 'app-edit-primary-hex', 'text'));
+      document.querySelector('#app-edit-background').addEventListener('input', () => syncBrandColor('app-edit-background', 'app-edit-background-hex', 'picker'));
+      document.querySelector('#app-edit-background-hex').addEventListener('input', () => syncBrandColor('app-edit-background', 'app-edit-background-hex', 'text'));
+      document.querySelector('#app-edit-brand-default').addEventListener('click', resetAppBrandingToDefault);
+      document.querySelector('#app-edit-logo-remove').addEventListener('click', () => {
+        appEditLogoDataUrl = '';
+        document.querySelector('#app-edit-logo-file').value = '';
+        updateAppBrandPreview();
+      });
+      document.querySelector('#app-edit-logo-file').addEventListener('change', (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+          event.target.value = '';
+          showToast('Use um logo PNG, JPG ou WebP.');
+          return;
+        }
+        if (file.size > 400 * 1024) {
+          event.target.value = '';
+          showToast('O logo deve ter no máximo 400 KB.');
+          return;
+        }
+        const reader = new FileReader();
+        reader.addEventListener('load', () => {
+          appEditLogoDataUrl = String(reader.result || '');
+          updateAppBrandPreview();
+        });
+        reader.addEventListener('error', () => showToast('Não foi possível ler o logo.'));
+        reader.readAsDataURL(file);
+      });
       document.querySelector('#technical-access-cancel').addEventListener('click', () => {
         state.pendingTechnicalAccess = null;
         document.querySelector('#technical-access-dialog').close();

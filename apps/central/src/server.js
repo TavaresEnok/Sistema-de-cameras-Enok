@@ -1387,6 +1387,10 @@ function licenseResponse(item) {
     restrictions: applyAiPolicyToRestrictions(restrictions, item.aiPolicy),
     cloudStorage,
     cloudStorageState: cloudStorageState(item, status),
+    // Identidade visual desejada. A instalação a aplica pelo mesmo canal
+    // autenticado do heartbeat; a Central nunca precisa conhecer a senha de um
+    // administrador local nem alcançar uma porta atrás de NAT/CGNAT.
+    branding: item.branding || null,
     // Storages EXCLUÍDOS aqui. Excluir na Central quer dizer "este destino
     // acabou e o conteúdo dele já foi embora" — a instalação usa esta lista
     // para expurgar do banco tudo que apontava para ele. É LISTA, e não um
@@ -2148,6 +2152,64 @@ function deriveAppPackageId(item) {
 }
 
 const PKG_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
+const BRAND_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const BRAND_LOGO_MAX_CHARS = 550_000;
+const BRAND_LOGO_RE = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/i;
+
+// A Central expõe só a personalização que realmente interessa no dia a dia.
+// A paleta completa continua existindo na instalação, mas não deve transformar
+// uma troca de logo/cor em um formulário técnico com dezenas de decisões.
+function validateManagedBranding(raw, fallbackName) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, message: 'Identidade visual inválida.' };
+  }
+  const facilityName = String(raw.facilityName || fallbackName || '').trim().slice(0, 200);
+  const brandLogoDataUrl = String(raw.brandLogoDataUrl || '').trim();
+  const brandUseDefaultColors = raw.brandUseDefaultColors === true;
+  const brandPrimaryColor = String(raw.brandPrimaryColor || '').trim().toLowerCase();
+  const brandBackgroundColor = String(raw.brandBackgroundColor || '').trim().toLowerCase();
+  if (!facilityName) return { ok: false, message: 'Informe o nome exibido no sistema.' };
+  if (brandLogoDataUrl && (brandLogoDataUrl.length > BRAND_LOGO_MAX_CHARS || !BRAND_LOGO_RE.test(brandLogoDataUrl))) {
+    return { ok: false, message: 'Logo inválido. Use PNG, JPG ou WebP com até aproximadamente 400 KB.' };
+  }
+  if (!brandUseDefaultColors && !BRAND_COLOR_RE.test(brandPrimaryColor)) {
+    return { ok: false, message: 'Escolha uma cor principal válida no formato #RRGGBB.' };
+  }
+  if (brandBackgroundColor && !BRAND_COLOR_RE.test(brandBackgroundColor)) {
+    return { ok: false, message: 'A cor de fundo deve usar o formato #RRGGBB.' };
+  }
+  return {
+    ok: true,
+    value: {
+      facilityName,
+      brandLogoDataUrl,
+      brandUseDefaultColors,
+      brandPrimaryColor: brandUseDefaultColors ? '' : brandPrimaryColor,
+      brandBackgroundColor: brandUseDefaultColors ? '' : brandBackgroundColor,
+    },
+  };
+}
+
+function managedBrandingFromInstallation(item, remoteBranding = null) {
+  if (item.branding) return item.branding;
+  const candidate = remoteBranding && typeof remoteBranding === 'object' ? remoteBranding : {};
+  const fallback = {
+    facilityName: effectiveAppName(item),
+    brandLogoDataUrl: '',
+    brandUseDefaultColors: true,
+    brandPrimaryColor: '',
+    brandBackgroundColor: '',
+    ...candidate,
+  };
+  const checked = validateManagedBranding(fallback, effectiveAppName(item));
+  return checked.ok ? checked.value : {
+    facilityName: effectiveAppName(item),
+    brandLogoDataUrl: '',
+    brandUseDefaultColors: true,
+    brandPrimaryColor: '',
+    brandBackgroundColor: '',
+  };
+}
 
 // Nome e package efetivos (override do usuário tem prioridade sobre o padrão).
 function effectiveAppName(item) {
@@ -2163,9 +2225,10 @@ function safeApkFilename(name) {
   return `${n || 'app'}.apk`;
 }
 
-async function fetchClientBranding(apiUrl) {
+async function fetchClientBranding(apiUrl, timeoutMs = 8000) {
+  if (!apiUrl) return null;
   try {
-    const res = await fetch(`${apiUrl}/settings/branding`, { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${apiUrl}/settings/branding`, { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return null;
     return await res.json();
   } catch { return null; }
@@ -2190,12 +2253,11 @@ async function pushAppToBuildAgent(item, actor, req, db, installationId) {
   const slug = deriveAppSlug(item);
   const appName = effectiveAppName(item);
   const packageId = effectiveAppPackageId(item);
-  const branding = await fetchClientBranding(apiUrl);
+  const remoteBranding = item.branding ? null : await fetchClientBranding(apiUrl);
+  const branding = managedBrandingFromInstallation(item, remoteBranding);
   const payload = { slug, appName, apiUrl, packageId };
-  if (branding) {
-    if (branding.brandPrimaryColor) payload.primaryColor = branding.brandPrimaryColor;
-    if (branding.brandLogoDataUrl) payload.logoBase64 = branding.brandLogoDataUrl;
-  }
+  if (!branding.brandUseDefaultColors && branding.brandPrimaryColor) payload.primaryColor = branding.brandPrimaryColor;
+  if (branding.brandLogoDataUrl) payload.logoBase64 = branding.brandLogoDataUrl;
   const created = await agentFetch('/clients', { method: 'POST', body: JSON.stringify(payload) });
   if (created.status >= 400) return { status: created.status, data: created.data };
   const build = await agentFetch('/builds', { method: 'POST', body: JSON.stringify({ slug }) });
@@ -2239,6 +2301,27 @@ async function handlePatchApp(req, res, db, actor, installationId) {
   if (apiUrl) item.app.apiUrlOverride = addrToApiUrl(apiUrl); // override manual do servidor
   addAuditEvent(db, req, { type: 'apk.app_edited', actor: actor.email, result: 'accepted', installationId });
 
+  let brandingChanged = false;
+  if (Object.prototype.hasOwnProperty.call(body, 'branding')) {
+    const checked = validateManagedBranding(body.branding, appName || effectiveAppName(item));
+    if (!checked.ok) return json(req, res, 400, { error: 'invalid_branding', message: checked.message });
+    brandingChanged = JSON.stringify(item.branding || null) !== JSON.stringify(checked.value);
+    item.branding = checked.value;
+    if (brandingChanged) {
+      bumpConfigRevision(item);
+      item.updatedAt = new Date().toISOString();
+      addAuditEvent(db, req, {
+        type: 'installation.branding_changed',
+        actor: actor.email,
+        result: 'accepted',
+        installationId,
+        primaryColor: checked.value.brandPrimaryColor || 'default',
+        customBackground: Boolean(checked.value.brandBackgroundColor),
+        customLogo: Boolean(checked.value.brandLogoDataUrl),
+      });
+    }
+  }
+
   let rebuild = null;
   if (hadBuild) rebuild = await pushAppToBuildAgent(item, actor, req, db, installationId);
   await saveDb(db);
@@ -2250,6 +2333,9 @@ async function handlePatchApp(req, res, db, actor, installationId) {
     appName: effectiveAppName(item),
     packageId: effectiveAppPackageId(item),
     apiUrl: deriveClientApiUrl(item),
+    branding: managedBrandingFromInstallation(item),
+    brandingChanged,
+    configRevision: Number(item.configRevision || 0) || 0,
     rebuildTriggered: !!rebuild,
     rebuild: rebuild ? rebuild.data : null,
   });
@@ -2943,16 +3029,25 @@ async function handleInstallationApp(req, res, db, installationId) {
   const item = db.installations[installationId];
   if (!item) return json(req, res, 404, { error: 'installation_not_found' });
   const slug = deriveAppSlug(item);
-  let client = null;
-  try {
-    const r = await agentFetch('/clients');
-    client = (r.data?.clients || []).find((c) => c.slug === slug) || null;
-  } catch { /* agente indisponível */ }
+  // As duas origens podem estar indisponíveis; consultá-las em paralelo evita
+  // somar timeouts e deixar o clique em "Editar" parecendo travado.
+  const [agentResult, remoteBranding] = await Promise.all([
+    agentFetch('/clients').catch(() => null),
+    item.branding ? Promise.resolve(null) : fetchClientBranding(deriveClientApiUrl(item), 3000),
+  ]);
+  const client = (agentResult?.data?.clients || []).find((c) => c.slug === slug) || null;
   return json(req, res, 200, {
     slug,
     apiUrl: deriveClientApiUrl(item),
     appName: effectiveAppName(item),
     packageId: effectiveAppPackageId(item),
+    branding: managedBrandingFromInstallation(item, remoteBranding),
+    brandingDelivery: {
+      desiredRevision: Number(item.configRevision || 0) || 0,
+      appliedRevision: Number(item.appliedConfigRevision || 0) || 0,
+      status: item.configApplyStatus || 'UNKNOWN',
+      error: item.configApplyError || null,
+    },
     client,
   });
 }
