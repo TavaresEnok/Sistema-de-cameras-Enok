@@ -72,6 +72,13 @@ test('câmera privada: app oferece edição, endereço RTMP e exclusão confirma
   assert(list.includes('Editar ou excluir'), 'a ação precisa ser visível e acessível na lista e no mural');
 });
 
+test('poster inicial usa última gravação e é promovido para snapshot ao vivo', () => {
+  const source = readFileSync('App.tsx', 'utf8');
+  assert(source.includes('&fresh=1'), 'a segunda leitura deve solicitar o frame atual ao servidor');
+  assert(source.includes('setStreamPosters((current) => ({ ...current, [item.cameraId]: liveUrl }))'), 'o frame atual deve substituir o fallback no mesmo tile');
+  assert(source.includes('void Promise.all'), 'a atualização ao vivo não pode bloquear a abertura do aplicativo');
+});
+
 test('stream WHEP: Location externo nunca recebe token de reprodução', () => {
   const source = readFileSync('src/components/WebRtcVideo.tsx', 'utf8');
   assert(source.includes('resolved.origin !== original.origin'), 'sessão WHEP deve permanecer na origem autorizada');

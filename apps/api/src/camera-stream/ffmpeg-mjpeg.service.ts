@@ -54,6 +54,7 @@ type StreamAttempt = {
 type PosterCacheEntry = {
   buffer: Buffer;
   generatedAt: number;
+  source: 'recording' | 'live';
 };
 
 @Injectable()
@@ -369,90 +370,89 @@ export class FfmpegMjpegService {
     ];
   }
 
-  // Thumbnail mais recente da gravação, no disco. É INSTANTÂNEO (só lê arquivo)
-  // e existe sempre que a câmera está gravando — o pipeline gera um `.thumb.jpg`
-  // por segmento. Serve de poster imediato: antes, a 1ª carga esperava o FFmpeg
-  // conectar no RTSP e pescar um keyframe (vários segundos), e o editor de
-  // perímetro ficava em "Carregando imagem…". Cai para o grab RTSP só quando
-  // NÃO há thumbnail recente (câmera sem gravação).
+  // Último thumbnail de gravação no disco. É o fallback IMEDIATO enquanto o
+  // frame ao vivo conecta. Ele pode ser antigo: ainda representa a última cena
+  // conhecida e é melhor que manter uma foto arbitrária no cache do aparelho.
+  // Assim que o fallback é entregue, o grab live começa em segundo plano.
   private async latestDiskThumbnail(cameraId: string): Promise<PosterCacheEntry | null> {
     const root = this.configService.get<string>('recordingsRoot') ?? process.env.RECORDINGS_ROOT ?? './storage/recordings';
-    const maxAgeMs = 15 * 60 * 1000; // até 15 min: fundo estável, não precisa ser "ao vivo"
-    const maiorSubpasta = async (dir: string): Promise<string | null> => {
-      const subs = (await readdir(dir, { withFileTypes: true }))
-        .filter((e) => e.isDirectory() && /^\d+$/.test(e.name))
-        .map((e) => e.name)
-        .sort();
-      return subs.length ? join(dir, subs[subs.length - 1]) : null;
-    };
-    try {
-      // Desce até o DIA (YYYY/MM/DD) pela pasta de maior nome.
-      let dia: string | null = join(root, `camera-${cameraId}`);
-      for (let nivel = 0; nivel < 3 && dia; nivel += 1) dia = await maiorSubpasta(dia);
-      if (!dia) return null;
-      // Dentro do dia, varre as HORAS da mais NOVA para a mais antiga — assim
-      // uma pasta de hora vazia (recém-criada) não engana a busca.
-      const horas = (await readdir(dia, { withFileTypes: true }))
-        .filter((e) => e.isDirectory() && /^\d+$/.test(e.name))
-        .map((e) => e.name)
+    const newestThumbnail = async (dir: string, remainingDateLevels: number): Promise<string | null> => {
+      const entries = await readdir(dir, { withFileTypes: true });
+      if (remainingDateLevels === 0) {
+        const thumbnails = entries
+          .filter((entry) => entry.isFile() && entry.name.endsWith('.thumb.jpg'))
+          .map((entry) => entry.name)
+          .sort()
+          .reverse();
+        return thumbnails[0] ? join(dir, thumbnails[0]) : null;
+      }
+      const directories = entries
+        .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+        .map((entry) => entry.name)
         .sort()
         .reverse();
-      for (const hora of horas) {
-        const dir = join(dia, hora);
-        const thumbs = (await readdir(dir)).filter((n) => n.endsWith('.thumb.jpg')).sort();
-        if (!thumbs.length) continue;
-        const caminho = join(dir, thumbs[thumbs.length - 1]);
-        const info = await stat(caminho);
-        if (Date.now() - info.mtimeMs > maxAgeMs) return null; // o mais novo já é velho → grab ao vivo
-        const buffer = await readFile(caminho);
-        return buffer.length ? { buffer, generatedAt: info.mtimeMs } : null;
+      // Faz backtracking: se a hora/dia mais novo ainda não ganhou thumbnail,
+      // procura a gravação anterior em vez de concluir incorretamente que não há.
+      for (const child of directories) {
+        const found = await newestThumbnail(join(dir, child), remainingDateLevels - 1);
+        if (found) return found;
       }
       return null;
+    };
+    try {
+      const caminho = await newestThumbnail(join(root, `camera-${cameraId}`), 4);
+      if (!caminho) return null;
+      const info = await stat(caminho);
+      const buffer = await readFile(caminho);
+      return buffer.length ? { buffer, generatedAt: info.mtimeMs, source: 'recording' } : null;
     } catch {
       return null; // sem pasta/arquivo → cai para o RTSP
     }
   }
 
-  async getLivePosterFrame(cameraId: string): Promise<PosterCacheEntry> {
+  private refreshLivePoster(cameraId: string, fallback?: PosterCacheEntry): Promise<PosterCacheEntry> {
+    const current = this.posterInFlight.get(cameraId);
+    if (current) return current;
+    const refresh = this.withPosterCaptureSlot(() => this.generateLivePosterFrame(cameraId))
+      .catch((error) => {
+        if (fallback) {
+          this.logger.debug(`Falha ao atualizar poster live camera=${cameraId}: ${(error as Error).message}`);
+          return fallback;
+        }
+        throw error;
+      })
+      .finally(() => {
+        this.posterInFlight.delete(cameraId);
+      });
+    this.posterInFlight.set(cameraId, refresh);
+    return refresh;
+  }
+
+  async getLivePosterFrame(cameraId: string, preferLive = false): Promise<PosterCacheEntry> {
     const now = Date.now();
-    const cached = this.posterCache.get(cameraId);
-    if (cached && now - cached.generatedAt < this.posterCacheTtlMs) {
+    let cached = this.posterCache.get(cameraId);
+    if (cached?.source === 'live' && now - cached.generatedAt < this.posterCacheTtlMs) {
       return cached;
     }
 
-    // Sem cache fresco: um thumbnail recente do disco responde NA HORA, sem
-    // esperar o FFmpeg. Só quando não há é que se paga o grab RTSP.
+    // Primeira resposta: última gravação imediatamente, ao mesmo tempo em que
+    // uma captura atual é disparada. O app pede `fresh=1` em seguida e aguarda
+    // esse mesmo trabalho, sem abrir dois FFmpegs para a câmera.
     if (!cached) {
       const disco = await this.latestDiskThumbnail(cameraId);
       if (disco) {
         this.posterCache.set(cameraId, disco);
-        return disco;
+        cached = disco;
       }
     }
 
-    const inFlight = this.posterInFlight.get(cameraId);
     if (cached) {
-      if (!inFlight) {
-        const refresh = this.withPosterCaptureSlot(() => this.generateLivePosterFrame(cameraId))
-          .catch((error) => {
-            this.logger.debug(`Falha ao atualizar poster live camera=${cameraId}: ${(error as Error).message}`);
-            return cached;
-          })
-          .finally(() => {
-            this.posterInFlight.delete(cameraId);
-          });
-        this.posterInFlight.set(cameraId, refresh);
-      }
+      const refresh = this.refreshLivePoster(cameraId, cached);
+      if (preferLive) return refresh;
       return cached;
     }
 
-    if (inFlight) return inFlight;
-
-    const promise = this.withPosterCaptureSlot(() => this.generateLivePosterFrame(cameraId)).finally(() => {
-      this.posterInFlight.delete(cameraId);
-    });
-    this.posterInFlight.set(cameraId, promise);
-    return promise;
+    return this.refreshLivePoster(cameraId);
   }
 
   private async withPosterCaptureSlot<T>(capture: () => Promise<T>): Promise<T> {
@@ -516,7 +516,7 @@ export class FfmpegMjpegService {
             timeout: Math.max(2500, Math.ceil(this.config.stimeoutUs / 1000) + 1000),
           });
           if (Buffer.isBuffer(stdout) && stdout.length > 0) {
-            const entry = { buffer: stdout, generatedAt: Date.now() };
+            const entry: PosterCacheEntry = { buffer: stdout, generatedAt: Date.now(), source: 'live' };
             this.posterCache.set(cameraId, entry);
             return entry;
           }

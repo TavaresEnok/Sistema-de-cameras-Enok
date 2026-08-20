@@ -678,6 +678,7 @@ export class CameraStreamController {
     @Query('token') token: string | undefined,
     @Req() req: Request,
     @Res() res: Response,
+    @Query('fresh') fresh?: string,
   ) {
     const bearerToken = this.extractBearerToken(req);
     const tokenValue = token?.trim() || bearerToken;
@@ -692,12 +693,15 @@ export class CameraStreamController {
     const tokenUser = await this.authService.me(payload.sub);
     await this.accessControlService.assertCanViewCamera(tokenUser, cameraId);
 
-    const poster = await this.ffmpegMjpegService.getLivePosterFrame(cameraId);
+    // A primeira chamada pode responder instantaneamente com a última gravação.
+    // `fresh=1` aguarda a captura live já iniciada por ela, sem duplicar FFmpeg.
+    const poster = await this.ffmpegMjpegService.getLivePosterFrame(cameraId, fresh === '1');
     res.status(200);
     res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Content-Length', String(poster.buffer.length));
     res.setHeader('Cache-Control', 'private, max-age=10, stale-while-revalidate=20');
     res.setHeader('X-Poster-Generated-At', new Date(poster.generatedAt).toISOString());
+    res.setHeader('X-Poster-Source', poster.source);
     res.end(poster.buffer);
   }
 

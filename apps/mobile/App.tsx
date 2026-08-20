@@ -702,8 +702,9 @@ function AppInner() {
 
   // Snapshot (poster) em TODOS os tiles, não só nos que abrem o stream. Usa o
   // endpoint em lote /camera-stream/poster-tokens (só emite token, NÃO inicia
-  // restream) e publica os posters em lotes escalonados para não disparar muitos
-  // frames ffmpeg de uma vez no servidor. Best-effort: falha = tiles com gradiente.
+  // restream). A primeira imagem é a última gravação disponível, instantânea;
+  // logo depois fazemos uma segunda leitura com `fresh=1`, que aguarda o frame
+  // live já iniciado pelo servidor e substitui o fallback sem piscar a tela.
   const loadAllPosters = async (cams: Camera[]) => {
     if (!session || cams.length === 0) return;
     const onlineCameras = cams.filter((camera) => camera.status?.toUpperCase() === 'ONLINE');
@@ -740,6 +741,26 @@ function AppInner() {
         }
       };
       await Promise.all(Array.from({ length: Math.min(3, items.length) }, () => worker()));
+
+      // Não bloqueia a abertura do app: os thumbnails de gravação já estão na
+      // tela. Cada worker abaixo troca seu tile assim que o snapshot online
+      // chega; se a câmera falhar, o último frame conhecido permanece visível.
+      let liveCursor = 0;
+      const liveWorker = async () => {
+        while (liveCursor < items.length) {
+          const item = items[liveCursor++];
+          if (sessionTokenRef.current !== token || posterRequestRef.current !== generation) return;
+          const liveUrl = `${cameraPosterUrl(session.apiUrl, item.cameraId, item.streamToken)}&fresh=1`;
+          try {
+            await Image.prefetch(liveUrl);
+            if (sessionTokenRef.current !== token || posterRequestRef.current !== generation) return;
+            setStreamPosters((current) => ({ ...current, [item.cameraId]: liveUrl }));
+          } catch {
+            // Mantém a miniatura da última gravação e tenta novamente na renovação.
+          }
+        }
+      };
+      void Promise.all(Array.from({ length: Math.min(3, items.length) }, () => liveWorker()));
     } catch {
       // sem posters: os tiles caem no gradiente placeholder.
     }
