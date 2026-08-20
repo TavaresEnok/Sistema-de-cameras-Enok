@@ -340,7 +340,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
 
   const title = useMemo(() => ({
     home: 'Adicionar dispositivo', discover: 'Câmeras por perto', qr: 'Ler QR Code',
-    provision: 'Conectar câmera nova', details: 'Configurar câmera',
+    provision: 'Preparar câmera nova', details: 'Configurar câmera',
     review: 'Confirmar instalação', success: 'Câmera adicionada',
   })[screen], [screen]);
 
@@ -393,7 +393,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
             <View style={styles.qrRoot}>
               <CameraView style={StyleSheet.absoluteFill} facing="back" enableTorch={torch}
                 barcodeScannerSettings={{ barcodeTypes: ['qr'] }} onBarcodeScanned={qrLocked ? undefined : onQrScanned} />
-              <View style={styles.qrShadeTop}><Text style={styles.qrHint}>Aponte para o QR Code na etiqueta da câmera</Text></View>
+              <View style={styles.qrShadeTop}><Text style={styles.qrHint}>Leia um QR de integração com endereço IP ou RTSP</Text></View>
               <View style={styles.qrFrame}><View style={styles.qrInner} /></View>
               <View style={styles.qrActions}>
                 <Pressable accessibilityRole="button" accessibilityLabel={torch ? 'Desligar lanterna' : 'Ligar lanterna'} style={styles.qrAction} onPress={() => setTorch((value) => !value)}><Icon name="sun" size={22} color="#fff" /><Text style={styles.qrActionText}>{torch ? 'Desligar luz' : 'Ligar luz'}</Text></Pressable>
@@ -423,12 +423,12 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
 
               {screen === 'provision' ? (
                 <>
-                  <Text style={[styles.heroTitle, { color: theme.text }]}>Vamos colocar a câmera na rede</Text>
-                  <Text style={[styles.heroSub, { color: theme.textSub }]}>Os passos variam por modelo. O app só envia senha Wi-Fi diretamente quando existir um driver oficial compatível.</Text>
+                  <Text style={[styles.heroTitle, { color: theme.text }]}>Prepare a câmera para o Wi-Fi</Text>
+                  <Text style={[styles.heroSub, { color: theme.textSub }]}>A instalação direta de SSID e senha ainda depende do SDK oficial de cada fabricante. Nesta versão, o app orienta o primeiro pareamento e assume a configuração assim que a câmera entra na rede.</Text>
                   <Step theme={theme} number="1" title="Ligue e restaure a câmera" text="Segure o botão RESET até ouvir o aviso ou o LED começar a piscar." />
                   <Step theme={theme} number="2" title="Faça o primeiro pareamento" text="Se ainda não estiver no Wi-Fi, use o app do fabricante e habilite RTSP/ONVIF quando a opção existir." />
                   <Step theme={theme} number="3" title="Volte para o AjustCam" text="Depois disso, encontramos IP, portas, perfis e codec automaticamente." />
-                  <InfoBanner theme={theme} text="Intelbras, Tuya/Positivo e outros terão instalação direta conforme os drivers e SDKs forem homologados por modelo." />
+                  <InfoBanner theme={theme} text="Isto não é pareamento Wi-Fi automático: Intelbras, Tuya/Positivo e outros precisam de drivers e credenciais oficiais homologados por modelo." />
                   <PrimaryButton theme={theme} icon="search" label="A câmera já está conectada" onPress={() => void startDiscovery()} />
                   <SecondaryButton theme={theme} icon="qrCode" label="Ler QR da câmera" onPress={() => void openQr()} />
                 </>
@@ -493,8 +493,8 @@ function HomeStep({ theme, quota, quotaLoading, onDiscover, onQr, onProvision, o
     </Pressable>
     <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>OUTRAS FORMAS</Text>
     <View style={[styles.methodList, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-      <MethodRow theme={theme} icon="qrCode" title="Ler QR Code" subtitle="Use a etiqueta da câmera" onPress={onQr} />
-      <MethodRow theme={theme} icon="wifi" title="Conectar câmera nova" subtitle="Primeiro uso ou troca de Wi-Fi" onPress={onProvision} />
+      <MethodRow theme={theme} icon="qrCode" title="Ler QR Code" subtitle="QR com endereço IP ou RTSP" onPress={onQr} />
+      <MethodRow theme={theme} icon="wifi" title="Preparar câmera nova" subtitle="Guia para primeiro uso ou troca de Wi-Fi" onPress={onProvision} />
       <MethodRow theme={theme} icon="radio" title="Câmera 4G ou remota" subtitle="A câmera envia o vídeo ao sistema" onPress={onRemote} last />
     </View>
     <Pressable accessibilityRole="button" accessibilityLabel="Adicionar câmera por endereço IP" style={styles.manualLink} onPress={onManual}>

@@ -183,3 +183,38 @@ test('lista vazia de resultado não quebra a contagem', async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('exclusão da câmera percorre o acervo em lotes e informa gravações restantes', async () => {
+  const svc: any = Object.create(RetentionService.prototype);
+  const ids = Array.from({ length: 205 }, (_, index) => ({ id: `r-${String(index).padStart(3, '0')}` }));
+  const batches: string[][] = [];
+  svc.prisma = {
+    recording: {
+      findMany: async ({ where }: any) => {
+        assert.equal(where.cameraId, 'cam-privada');
+        return ids;
+      },
+      count: async ({ where }: any) => {
+        assert.equal(where.cameraId, 'cam-privada');
+        return 1;
+      },
+    },
+  };
+  svc.excluirGravacoesEscolhidas = async (batch: string[]) => {
+    batches.push(batch);
+    return {
+      solicitadas: batch.length,
+      excluidas: batch.length,
+      protegidas: 0,
+      emAndamento: 0,
+      naoEncontradas: 0,
+      bytesLiberados: String(batch.length * 10),
+    };
+  };
+
+  const result = await svc.excluirAcervoDaCamera('cam-privada');
+  assert.deepEqual(batches.map((batch) => batch.length), [100, 100, 5]);
+  assert.equal(result.excluidas, 205);
+  assert.equal(result.bytesLiberados, '2050');
+  assert.equal(result.restantes, 1, 'uma prova protegida deve impedir a câmera de ser apagada por cascata');
+});

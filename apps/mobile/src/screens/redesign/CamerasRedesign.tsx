@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { LiveVideo } from '../../components/VideoPlayers';
+import { CameraManagementSheet } from '../../components/CameraManagementSheet';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useLibrary } from '../../state/LibraryProvider';
 import { Icon } from '../../components/Icon';
@@ -36,13 +37,17 @@ interface Props {
   /** Pede as URLs de stream (modo grade) das câmeras que vão tocar ao vivo. */
   onRequestStreams: (cameraIds: string[]) => void;
   onRefreshStream: (cameraId: string) => void;
+  apiUrl: string;
+  token: string | null;
+  onCamerasChanged: () => void;
 }
 
-export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep, refreshing, onRefresh, onOpenCamera, onRequestStreams, onRefreshStream }: Props) {
+export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep, refreshing, onRefresh, onOpenCamera, onRequestStreams, onRefreshStream, apiUrl, token, onCamerasChanged }: Props) {
   const { theme } = useTheme();
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('Todas');
   const [view, setView] = useState<'list' | 'mosaic'>('list');
+  const [managedCamera, setManagedCamera] = useState<Camera | null>(null);
   const { width: windowWidth } = useWindowDimensions();
   // ── UMA FONTE DE FAVORITAS ───────────────────────────────────────────────
   // Esta tela mantinha a própria lista em `@drac:cam-favs:v1`, GLOBAL — sem
@@ -82,6 +87,12 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
   useEffect(() => {
     if (liveIds.length) onRequestStreams(liveIds);
   }, [liveIds.join('|')]);
+
+  const managementChanged = (cameraId: string, action: 'updated' | 'deleted') => {
+    if (action === 'deleted' && favs.includes(cameraId)) toggleFav(cameraId);
+    setManagedCamera(null);
+    onCamerasChanged();
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -144,7 +155,7 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
         {/* Lista */}
         {view === 'list' ? (
           <View style={{ gap: 10, marginTop: 14 }}>
-            {filtered.map((cam) => <ListRow key={cam.id} cam={cam} poster={streamPosters[cam.id]} theme={theme} s={s} fav={favs.includes(cam.id)} onToggleFav={() => toggleFav(cam.id)} onOpen={() => onOpenCamera(cam)} />)}
+            {filtered.map((cam) => <ListRow key={cam.id} cam={cam} poster={streamPosters[cam.id]} theme={theme} s={s} fav={favs.includes(cam.id)} onToggleFav={() => toggleFav(cam.id)} onOpen={() => onOpenCamera(cam)} onManage={() => setManagedCamera(cam)} />)}
           </View>
         ) : (
           <View style={s.grid}>
@@ -158,18 +169,26 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
                 whepUrl={streamWhep[cam.id] ?? null}
                 onRefreshStream={() => onRefreshStream(cam.id)}
                 theme={theme} s={s}
-                fav={favs.includes(cam.id)} onToggleFav={() => toggleFav(cam.id)} onOpen={() => onOpenCamera(cam)}
+                fav={favs.includes(cam.id)} onToggleFav={() => toggleFav(cam.id)} onOpen={() => onOpenCamera(cam)} onManage={() => setManagedCamera(cam)}
               />
             ))}
           </View>
         )}
         {filtered.length === 0 ? <Text style={s.empty}>Nenhuma câmera encontrada.</Text> : null}
       </ScrollView>
+      <CameraManagementSheet
+        visible={Boolean(managedCamera)}
+        camera={managedCamera}
+        apiUrl={apiUrl}
+        token={token}
+        onClose={() => setManagedCamera(null)}
+        onChanged={managementChanged}
+      />
     </View>
   );
 }
 
-function ListRow({ cam, poster, theme, s, fav, onToggleFav, onOpen }: any) {
+function ListRow({ cam, poster, theme, s, fav, onToggleFav, onOpen, onManage }: any) {
   const isOn = isOnlineStatus(cam.status);
   const res = cam.detectedHeight ? `${cam.detectedHeight}p` : null;
   const fps = cam.detectedFps ? `${Math.round(cam.detectedFps)} fps` : null;
@@ -204,7 +223,7 @@ function ListRow({ cam, poster, theme, s, fav, onToggleFav, onOpen }: any) {
         <TouchableOpacity accessibilityRole="button" accessibilityLabel={fav ? `Remover ${cam.name} dos favoritos` : `Favoritar ${cam.name}`} accessibilityState={{ selected: fav }} onPress={(event) => { event.stopPropagation(); onToggleFav(); }} hitSlop={10}>
           <Icon name="star" size={20} color={fav ? theme.warning : theme.textMuted} />
         </TouchableOpacity>
-        <Icon name="forward" size={15} color={theme.textMuted} />
+        {cam.canSelfManage ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Editar ou excluir ${cam.name}`} onPress={(event) => { event.stopPropagation(); onManage(); }} hitSlop={10}><Icon name="edit" size={19} color={theme.accent} /></TouchableOpacity> : <Icon name="forward" size={15} color={theme.textMuted} />}
       </View>
     </TouchableOpacity>
   );
@@ -215,7 +234,7 @@ function t2(theme: any): string {
   return theme.surfaceAlt;
 }
 
-function MosaicTile({ cam, poster, live, hlsUrl, whepUrl, onRefreshStream, theme, s, fav, onToggleFav, onOpen }: any) {
+function MosaicTile({ cam, poster, live, hlsUrl, whepUrl, onRefreshStream, theme, s, fav, onToggleFav, onOpen, onManage }: any) {
   const isOn = isOnlineStatus(cam.status);
   return (
     <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Abrir câmera ${cam.name}. ${isOn ? 'Online' : 'Offline'}`} style={s.tile} activeOpacity={0.85} onPress={onOpen}>
@@ -246,6 +265,7 @@ function MosaicTile({ cam, poster, live, hlsUrl, whepUrl, onRefreshStream, theme
       <TouchableOpacity accessibilityRole="button" accessibilityLabel={fav ? `Remover ${cam.name} dos favoritos` : `Favoritar ${cam.name}`} accessibilityState={{ selected: fav }} style={s.tileStar} onPress={(event) => { event.stopPropagation(); onToggleFav(); }} hitSlop={8}>
         <Icon name="star" size={16} color={fav ? theme.warning : '#fff'} />
       </TouchableOpacity>
+      {cam.canSelfManage ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Editar ou excluir ${cam.name}`} style={s.tileEdit} onPress={(event) => { event.stopPropagation(); onManage(); }} hitSlop={8}><Icon name="edit" size={15} color="#fff" /></TouchableOpacity> : null}
       <View style={s.tileFooter}>
         <View style={{ flex: 1 }}>
           <Text style={s.tileName} numberOfLines={1}>{cam.name}</Text>
@@ -304,6 +324,7 @@ function makeStyles(t: any, windowWidth: number) {
     tileVideo: { flex: 1, backgroundColor: '#000' },
     tileShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%', backgroundColor: 'rgba(4,7,13,0.02)', borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
     tileStar: { position: 'absolute', top: 8, right: 8, width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(5,8,14,0.4)', alignItems: 'center', justifyContent: 'center' },
+    tileEdit: { position: 'absolute', top: 8, right: 42, width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(5,8,14,0.55)', alignItems: 'center', justifyContent: 'center' },
     tileFooter: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 10, paddingBottom: 8, paddingTop: 18, backgroundColor: 'rgba(4,7,13,0.55)' },
     tileName: { color: '#fff', fontFamily: UI, fontSize: 12.5, fontWeight: '700' },
     tileArea: { color: 'rgba(255,255,255,0.72)', fontFamily: UI, fontSize: 10.5, marginTop: 1 },

@@ -54,6 +54,13 @@ export type Camera = {
   canView?: boolean;
   canControl?: boolean;
   canRecord?: boolean;
+  /** Dono da câmera privada pode editar/excluir pelo autoatendimento do app. */
+  canSelfManage?: boolean;
+  isPrivate?: boolean;
+  sourceMode?: 'rtsp_pull' | 'rtmp_push';
+  rtspPort?: number;
+  username?: string;
+  rtspPath?: string | null;
   ptzCapable?: boolean;
   /** Gravação armada para esta câmera (a API já devolve; o app não tipava). */
   recordingEnabled?: boolean;

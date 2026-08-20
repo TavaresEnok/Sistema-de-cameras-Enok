@@ -45,6 +45,13 @@ test('cadastro de câmera: porta RTSP é automática e o preenchimento manual s�
   assert(source.includes('Caminho do vídeo (se houver)'), 'a correção manual deve permitir informar o caminho do stream');
 });
 
+test('provisionamento Wi-Fi não promete pareamento proprietário inexistente', () => {
+  const source = readFileSync('src/components/AddCameraSheet.tsx', 'utf8');
+  assert(source.includes('Isto não é pareamento Wi-Fi automático'), 'tela deve separar guia de instalação de pareamento real');
+  assert(source.includes('SDK oficial de cada fabricante'), 'dependência de driver oficial deve ficar explícita');
+  assert(source.includes('QR com endereço IP ou RTSP'), 'QR genérico não pode fingir aceitar QR proprietário');
+});
+
 test('cadastro de câmera: Voltar preserva a jornada e não fecha o fluxo inteiro', () => {
   const source = readFileSync('src/components/AddCameraSheet.tsx', 'utf8');
   assert(source.includes('const historyRef = useRef<Screen[]>([]);'), 'o cadastro deve manter histórico das etapas visitadas');
@@ -52,6 +59,17 @@ test('cadastro de câmera: Voltar preserva a jornada e não fecha o fluxo inteir
   assert(source.includes('onRequestClose={handleSystemBack}'), 'o botão físico do Android deve usar a mesma navegação');
   assert(!source.includes('onRequestClose={onClose}'), 'o botão físico não pode fechar o cadastro a partir de QR/detalhes');
   assert(source.includes('operationRef.current += 1;'), 'voltar/fechar deve invalidar respostas assíncronas atrasadas');
+});
+
+test('câmera privada: app oferece edição, endereço RTMP e exclusão confirmada', () => {
+  const sheet = readFileSync('src/components/CameraManagementSheet.tsx', 'utf8');
+  const list = readFileSync('src/screens/redesign/CamerasRedesign.tsx', 'utf8');
+  assert(sheet.includes("method: 'PATCH'"), 'edição precisa salvar no backend');
+  assert(sheet.includes("method: 'DELETE'"), 'exclusão precisa chamar o backend');
+  assert(sheet.includes('/rtmp-ingest'), 'dono deve conseguir recuperar o endereço RTMP');
+  assert(sheet.includes("Alert.alert(\n      'Excluir esta câmera?'"), 'exclusão destrutiva precisa de confirmação');
+  assert(list.includes('cam.canSelfManage'), 'ação só deve aparecer para o proprietário autorizado');
+  assert(list.includes('Editar ou excluir'), 'a ação precisa ser visível e acessível na lista e no mural');
 });
 
 test('stream WHEP: Location externo nunca recebe token de reprodução', () => {

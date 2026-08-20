@@ -917,6 +917,38 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /**
+   * Limpa fisicamente todo o acervo de uma câmera antes da exclusão do cadastro.
+   * Usa o mesmo caminho transacional da retenção (arquivo local, derivados,
+   * clips e objeto remoto). Provas protegidas e segmentos ainda abertos ficam
+   * no banco e fazem o controlador recusar a exclusão da câmera.
+   */
+  async excluirAcervoDaCamera(cameraId: string): Promise<{
+    excluidas: number;
+    protegidas: number;
+    emAndamento: number;
+    restantes: number;
+    bytesLiberados: string;
+  }> {
+    let excluidas = 0;
+    let protegidas = 0;
+    let emAndamento = 0;
+    let bytes = BigInt(0);
+    const ids = await this.prisma.recording.findMany({
+      where: { cameraId }, select: { id: true }, orderBy: { id: 'asc' },
+    });
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const page = ids.slice(offset, offset + 100);
+      const result = await this.excluirGravacoesEscolhidas(page.map((item) => item.id));
+      excluidas += result.excluidas;
+      protegidas += result.protegidas;
+      emAndamento += result.emAndamento;
+      bytes += BigInt(result.bytesLiberados);
+    }
+    const restantes = await this.prisma.recording.count({ where: { cameraId } });
+    return { excluidas, protegidas, emAndamento, restantes, bytesLiberados: bytes.toString() };
+  }
+
   async handleRetention(source = 'manual'): Promise<CleanupResult> {
     const result: CleanupResult = {
       skipped: false,

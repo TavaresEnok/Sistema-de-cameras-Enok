@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { CameraPermissionLevel, Prisma, UserRole } from '@prisma/client';
 import { CamerasService } from '../src/cameras/cameras.service';
 import { CameraPermissionsService } from '../src/camera-permissions/camera-permissions.service';
@@ -63,6 +63,41 @@ test('transferência troca owner e revoga somente a permissão direta do dono an
     `grant:owner-new:${CameraPermissionLevel.ADMIN}`,
     'owner:owner-new',
   ]);
+});
+
+test('autoatendimento da câmera privada aceita somente o proprietário real', async () => {
+  const service = new CamerasService(
+    {
+      camera: {
+        findUnique: async ({ where }: any) => ({
+          id: where.id,
+          isPrivate: true,
+          ownerUserId: 'owner-real',
+          sourceMode: 'rtmp_push',
+        }),
+      },
+    } as any,
+    { get: () => undefined } as any,
+    {} as any,
+    {} as any,
+    {} as any,
+  );
+
+  const owned = await service.assertPrivateCameraOwner('cam-private', 'owner-real');
+  assert.equal(owned.sourceMode, 'rtmp_push');
+  await assert.rejects(
+    () => service.assertPrivateCameraOwner('cam-private', 'usuario-com-admin-compartilhado'),
+    ForbiddenException,
+  );
+});
+
+test('rotas mine permitem editar, reler RTMP e excluir sem exigir papel global ADMIN', () => {
+  const source = readFileSync('src/cameras/cameras.controller.ts', 'utf8');
+  assert.match(source, /@Patch\('mine\/:id'\)/);
+  assert.match(source, /@Get\('mine\/:id\/rtmp-ingest'\)/);
+  assert.match(source, /@Delete\('mine\/:id'\)/);
+  assert.match(source, /assertPrivateCameraOwner\(id, user\.id\)/);
+  assert.match(source, /stopCameraBeforeRemoval\(id\)/);
 });
 
 test('exclusão definitiva recusa usuário que ainda possui câmera privada', async () => {

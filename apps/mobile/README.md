@@ -23,6 +23,18 @@ que ainda use HTTP, gere o app explicitamente com `ALLOW_CLEARTEXT_TRAFFIC=true`
 - Gravacao manual quando a API retornar permissao `canRecord`.
 - Playback com gravacoes do dia, abrir video e baixar/compartilhar MP4.
 - Alarme/relay apenas quando `/ptz/:cameraId/relays` retornar saida acionavel.
+- Cadastro privado por RTMP push ou RTSP pull, com descoberta local por ONVIF,
+  mDNS, SSDP e busca limitada à sub-rede privada do telefone.
+- Edição e exclusão da câmera privada pelo proprietário, com limpeza do acervo
+  e confirmação antes da ação destrutiva.
+
+## Limite atual do provisionamento Wi-Fi
+
+O app encontra e configura câmeras que já entraram na rede. Enviar SSID e senha
+diretamente a uma câmera zerada ainda exige driver/SDK oficial homologado por
+fabricante e modelo (por exemplo, Intelbras ou Tuya/Positivo). A tela móvel não
+simula esse pareamento: enquanto não houver o SDK, orienta o primeiro vínculo no
+aplicativo do fabricante e depois assume descoberta, vídeo e cadastro.
 
 ## Android nativo
 

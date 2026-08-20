@@ -771,6 +771,7 @@ test('cameras controller: usuario comum lista somente cameras acessiveis com cap
     canControl: true,
     canRecord: false,
     canAdmin: false,
+    canSelfManage: false,
   });
 });
 

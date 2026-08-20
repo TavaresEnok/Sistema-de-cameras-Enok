@@ -1770,6 +1770,9 @@ function AppInner() {
               onOpenCamera={openLive}
               onRequestStreams={(cameraIds) => { void Promise.all(cameraIds.map((id) => loadStream(id, 'grid'))); }}
               onRefreshStream={(cameraId) => { void loadStream(cameraId, 'grid', true); }}
+              apiUrl={session.apiUrl}
+              token={session.token}
+              onCamerasChanged={() => { void loadAll(true); }}
             />
           ) : (
           <MosaicScreen

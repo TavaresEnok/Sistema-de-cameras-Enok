@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ModuleRef } from '@nestjs/core';
 import { temZonaDeArea, validarZonasDeDeteccao } from './helpers/validar-zonas.helper';
@@ -502,7 +502,9 @@ export class CamerasService {
         preferredLiveProtocol: this.normalizeLiveProtocol(dto.preferredLiveProtocol) === 'mjpeg'
           ? 'webrtc'
           : this.normalizeLiveProtocol(dto.preferredLiveProtocol),
-        streamVideoCodec: 'h264',
+        // Editar apenas o nome de uma câmera RTMP não pode rebatizar o codec
+        // detectado como H.264. No push, o codec pertence à publicação recebida.
+        streamVideoCodec: pushSourced ? existing.streamVideoCodec : 'h264',
         streamWidth: normalizedProfile.streamWidth,
         streamHeight: normalizedProfile.streamHeight,
         streamFps: normalizedProfile.streamFps,
@@ -610,9 +612,25 @@ export class CamerasService {
     });
   }
 
+  /** Somente o dono — uma permissão ADMIN compartilhada não transfere propriedade. */
+  async assertPrivateCameraOwner(id: string, ownerUserId: string) {
+    const camera = await this.prisma.camera.findUnique({
+      where: { id },
+      select: { id: true, isPrivate: true, ownerUserId: true, sourceMode: true },
+    });
+    if (!camera) throw new NotFoundException(`Camera ${id} não encontrada.`);
+    if (!camera.isPrivate || camera.ownerUserId !== ownerUserId) {
+      throw new ForbiddenException('Somente o proprietário pode administrar esta câmera pelo aplicativo.');
+    }
+    return camera;
+  }
+
   async remove(id: string) {
-    const camera = await this.getCameraOrThrow(id);
-    return this.prisma.camera.delete({ where: { id } });
+    await this.getCameraOrThrow(id);
+    const deleted = await this.prisma.camera.delete({ where: { id } });
+    // DELETE também é resposta HTTP: não devolver ciphertext de senha/chave só
+    // porque a linha acabou de sair do banco.
+    return sanitizeCamera(deleted);
   }
 
   async updateStatus(id: string, status: CameraStatus, lastSeenAt?: string) {

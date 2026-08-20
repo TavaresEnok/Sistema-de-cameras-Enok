@@ -1,5 +1,5 @@
 import { PendingIngestRegistry } from './pending-ingest.registry';
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { UserRole, CameraStatus, AlarmPriority, AlarmSource } from '@prisma/client';
 import { type Request, type Response } from 'express';
@@ -15,6 +15,7 @@ import { CameraPreviewFrameDto } from './dto/camera-preview-frame.dto';
 import { CreateCameraDto } from './dto/create-camera.dto';
 import { TestCameraConnectionDto } from './dto/test-camera-connection.dto';
 import { UpdateCameraDto } from './dto/update-camera.dto';
+import { UpdateMyCameraDto } from './dto/update-my-camera.dto';
 import { TransferCameraOwnerDto } from './dto/transfer-camera-owner.dto';
 import { Public } from '../auth/decorators/public.decorator';
 import { ServiceTokenGuard } from '../auth/guards/service-token.guard';
@@ -26,6 +27,7 @@ import { AiService } from '../ai/ai.service';
 import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
 import { envNumber } from '../common/config/env-number.helper';
 import { eventoDeveGravar } from './helpers/gatilho-de-gravacao.helper';
+import { RetentionService } from '../recordings/retention.service';
 
 @Controller('cameras')
 export class CamerasController {
@@ -38,6 +40,7 @@ export class CamerasController {
     private readonly moduleRef: ModuleRef,
     private readonly commercialPolicy: CommercialPolicyService,
     private readonly pendingIngest: PendingIngestRegistry,
+    private readonly retentionService: RetentionService,
   ) {}
 
   private schedulePostCreateProvisioning(cameraId: string) {
@@ -81,7 +84,7 @@ export class CamerasController {
       // Atalho de admin só para câmeras NORMAIS. Numa câmera PRIVADA, `canView`
       // precisa refletir a regra real (admin não vê conteúdo do cliente) para o
       // frontend mostrar o aviso de privacidade em vez de tentar montar o player.
-      return { ...camera, canView: true, canControl: true, canRecord: true, canAdmin: true };
+      return { ...camera, canView: true, canControl: true, canRecord: true, canAdmin: true, canSelfManage: false };
     }
     const [canView, canControl, canRecord, canAdmin] = await Promise.all([
       this.accessControlService.canViewCamera(user, camera.id),
@@ -89,7 +92,8 @@ export class CamerasController {
       this.accessControlService.canRecordCamera(user, camera.id),
       this.accessControlService.canAdminCamera(user, camera.id),
     ]);
-    return { ...camera, canView, canControl, canRecord, canAdmin };
+    const canSelfManage = camera.isPrivate === true && camera.ownerUserId === user.id;
+    return { ...camera, canView, canControl, canRecord, canAdmin, canSelfManage };
   }
 
   @Roles(UserRole.ADMIN)
@@ -163,6 +167,86 @@ export class CamerasController {
       ip: dto.ip, ok: result.ok, source: result.source, bytes: result.bytes,
     }, req);
     return result;
+  }
+
+  /** Edição limitada da câmera privada pelo próprio dono no aplicativo. */
+  @Roles(UserRole.VIEWER)
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @Patch('mine/:id')
+  async updateMine(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateMyCameraDto,
+    @Req() req: Request,
+  ) {
+    const owned = await this.camerasService.assertPrivateCameraOwner(id, user.id);
+    const normalizedName = dto.name?.trim();
+    if (dto.name !== undefined && !normalizedName) {
+      throw new BadRequestException('Informe um nome válido para a câmera.');
+    }
+    const hasNetworkFields = dto.ip !== undefined
+      || dto.rtspPort !== undefined
+      || dto.username !== undefined
+      || dto.password !== undefined
+      || dto.rtspPath !== undefined;
+    if (owned.sourceMode === 'rtmp_push' && hasNetworkFields) {
+      throw new BadRequestException('Esta câmera RTMP permite editar somente o nome.');
+    }
+    const camera = await this.camerasService.update(id, {
+      ...dto,
+      ...(normalizedName !== undefined ? { name: normalizedName } : {}),
+    });
+    await this.auditService.log(user.id, 'camera.update_private', 'Camera', id, { name: camera.name }, req);
+    return this.withCapabilities(user, camera as any);
+  }
+
+  /** Reexibe o endereço RTMP somente ao proprietário da câmera. */
+  @Roles(UserRole.VIEWER)
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @Get('mine/:id/rtmp-ingest')
+  async getMineRtmpIngest(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+    await this.camerasService.assertPrivateCameraOwner(id, user.id);
+    const target = await this.camerasService.getRtmpIngestTarget(id);
+    await this.auditService.log(user.id, 'camera.rtmp_ingest.view_private', 'Camera', id, {}, req);
+    return target ?? { sourceMode: 'rtsp_pull', serverUrl: null, streamKey: null, fullUrl: null };
+  }
+
+  /** Exclusão definitiva da câmera privada pelo proprietário. */
+  @Roles(UserRole.VIEWER)
+  @Throttle({ default: { limit: 6, ttl: 60000 } })
+  @Delete('mine/:id')
+  async removeMine(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+    await this.camerasService.assertPrivateCameraOwner(id, user.id);
+    await this.stopCameraBeforeRemoval(id);
+    const camera = await this.camerasService.remove(id);
+    await this.auditService.log(user.id, 'camera.delete_private', 'Camera', camera.id, { name: camera.name }, req);
+    return { id: camera.id, name: camera.name, deleted: true };
+  }
+
+  private async stopCameraBeforeRemoval(id: string) {
+    // Impede watchdogs de reabrirem processos enquanto a exclusão está em curso.
+    await this.camerasService.update(id, { enabled: false }).catch(() => undefined);
+    await this.recordingManager.stop(id).catch(() => undefined);
+    try {
+      const aiService = this.moduleRef.get(AiService, { strict: false });
+      await aiService.stopAnalysis(id).catch(() => undefined);
+    } catch {
+      // IA opcional/indisponível não deve impedir a exclusão.
+    }
+    try {
+      const mediamtx = this.moduleRef.get(MediamtxProxyService, { strict: false });
+      await mediamtx.teardownPathsForCamera(id).catch(() => undefined);
+    } catch {
+      // Sem MediaMTX não há path ativo para derrubar.
+    }
+    const cleanup = await this.retentionService.excluirAcervoDaCamera(id);
+    if (cleanup.restantes > 0) {
+      throw new ConflictException(
+        cleanup.protegidas > 0
+          ? 'Esta câmera possui gravações protegidas por investigação ou retenção legal. Remova a proteção antes de excluir.'
+          : 'Ainda existe uma gravação sendo finalizada. Aguarde alguns segundos e tente excluir novamente.',
+      );
+    }
   }
 
   @Roles(UserRole.ADMIN)
@@ -891,6 +975,7 @@ export class CamerasController {
   @Delete(':id')
   async remove(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
     await this.accessControlService.assertCanAdminCamera(user, id);
+    await this.stopCameraBeforeRemoval(id);
     const camera = await this.camerasService.remove(id);
     await this.auditService.log(user.id, 'camera.delete', 'Camera', camera.id, { name: camera.name }, req);
     return camera;
