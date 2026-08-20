@@ -329,7 +329,41 @@ export class CamerasService {
       );
     }
 
-    const created = await this.create({ ...dto, groupId }, { isPrivate: true, ownerUserId: owner.id });
+    // Política obrigatória do autoatendimento móvel: câmera RTMP do cliente
+    // nasce ARMADA por movimento, nunca em gravação contínua. Não confiamos no
+    // payload do app para essa decisão — versões antigas ou uma chamada manual
+    // podem mandar `continuous`, mas o servidor continua impondo a regra.
+    //
+    // Se houver grupo, materializamos a retenção atual e deixamos a câmera
+    // seguindo-o, para futuras alterações também valerem. Registros legados
+    // sem grupo/sem retenção válida recebem a política segura de 3 dias.
+    let cameraDto: CreateCameraDto = { ...dto, groupId };
+    if (dto.sourceMode === SOURCE_MODE_PUSH) {
+      const group = groupId
+        ? await this.prisma.cameraGroup.findUnique({
+            where: { id: groupId },
+            select: { retentionDays: true },
+          })
+        : null;
+      const configuredRetention = Number(group?.retentionDays);
+      const groupRetentionDays = Number.isFinite(configuredRetention) && configuredRetention >= 1
+        ? Math.floor(configuredRetention)
+        : null;
+      cameraDto = {
+        ...dto,
+        groupId,
+        recordingMode: 'motion',
+        // Em modo motion este campo representa o processo gravando AGORA, não
+        // o armamento. Começa false e o detector liga durante o evento.
+        recordingEnabled: false,
+        motionTrigger: 'SYSTEM',
+        aiEnabled: true,
+        retentionDays: groupRetentionDays ?? 3,
+        retentionFollowsGroup: groupRetentionDays !== null,
+      };
+    }
+
+    const created = await this.create(cameraDto, { isPrivate: true, ownerUserId: owner.id });
 
     // Permissão direta de ADMIN para o dono: o gate de conteúdo (canViewCamera)
     // reconhece o dono por ownerUserId, mas a permissão direta também o habilita
@@ -1651,6 +1685,8 @@ export class CamerasService {
           aiEnabled: dto.aiEnabled ?? true,
         }),
         alarmsEnabled: dto.alarmsEnabled ?? true,
+        hasEdgeAi: dto.hasEdgeAi ?? false,
+        motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
         ...(privacy?.isPrivate ? { isPrivate: true, ownerUserId: privacy.ownerUserId } : {}),
       },
     });

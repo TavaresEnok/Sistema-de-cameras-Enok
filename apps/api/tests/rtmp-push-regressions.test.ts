@@ -2,9 +2,127 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ServiceUnavailableException } from '@nestjs/common';
 import { CamerasService } from '../src/cameras/cameras.service';
+import { ClipCaptureService } from '../src/camera-stream/clip-capture.service';
 import { FfmpegMjpegService } from '../src/camera-stream/ffmpeg-mjpeg.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { generateIngestKey } from '../src/cameras/helpers/rtmp-ingest.helper';
+import type { AuthUser } from '../src/common/types/auth-user.type';
+import { UserRole } from '@prisma/client';
+
+test('botão Gravar usa a publicação interna da RTMP e nunca tenta 0.0.0.0', async () => {
+  let decryptCalls = 0;
+  const resolveCalls: any[] = [];
+  const service = new ClipCaptureService(
+    { get: () => undefined } as any,
+    {} as any,
+    { decrypt: () => { decryptCalls += 1; throw new Error('não deveria descriptografar RTMP'); } } as any,
+    {
+      resolve: async (camera: any, options: any) => {
+        resolveCalls.push({ camera, options });
+        return {
+          sourceUrl: 'rtsp://internal-user:internal-pass@mediamtx:8554/d/abcdefghijklmnopqrstuv',
+        };
+      },
+    } as any,
+  );
+
+  const input = await (service as any).resolveClipInput({
+    id: 'push-clip-1',
+    sourceMode: 'rtmp_push',
+    ip: '0.0.0.0',
+    passwordEncrypted: 'marcador-cifrado',
+  });
+
+  assert.equal(decryptCalls, 0);
+  assert.equal(resolveCalls.length, 1);
+  assert.deepEqual(resolveCalls[0].options, { requireReady: true });
+  assert.equal(input.transport, 'tcp');
+  assert.equal(input.url.includes('0.0.0.0'), false);
+  assert.match(input.url, /^rtsp:\/\/.*@mediamtx:8554\//);
+});
+
+test('RTMP privada criada pelo app ignora continuous e herda 3 dias do grupo', async () => {
+  const writes: any[] = [];
+  const owner: AuthUser = {
+    id: 'cliente-1',
+    email: 'cliente@example.test',
+    name: 'Cliente',
+    role: UserRole.VIEWER,
+  };
+  const service = Object.create(CamerasService.prototype) as any;
+  service.vinculosDeGrupo = async () => [{
+    groupId: 'grupo-3-dias',
+    level: 'CONTROL',
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+  }];
+  service.getPrivateCameraQuota = async () => ({ used: 0, limit: 2 });
+  service.prisma = {
+    cameraGroup: {
+      findUnique: async () => ({ retentionDays: 3 }),
+    },
+    cameraPermission: {
+      create: async () => ({ id: 'permissao-1' }),
+    },
+  };
+  service.create = async (dto: any, privacy: any) => {
+    writes.push({ dto, privacy });
+    return { id: 'camera-1', ...dto };
+  };
+
+  await service.createPrivateForOwner({
+    name: 'Câmera do cliente',
+    sourceMode: 'rtmp_push',
+    recordingMode: 'continuous',
+    recordingEnabled: true,
+    retentionDays: 99,
+    retentionFollowsGroup: false,
+    motionTrigger: 'CAMERA',
+    aiEnabled: false,
+  }, owner);
+
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].privacy, { isPrivate: true, ownerUserId: owner.id });
+  assert.equal(writes[0].dto.groupId, 'grupo-3-dias');
+  assert.equal(writes[0].dto.recordingMode, 'motion');
+  assert.equal(writes[0].dto.recordingEnabled, false);
+  assert.equal(writes[0].dto.motionTrigger, 'SYSTEM');
+  assert.equal(writes[0].dto.aiEnabled, true);
+  assert.equal(writes[0].dto.retentionDays, 3);
+  assert.equal(writes[0].dto.retentionFollowsGroup, true);
+});
+
+test('RTMP privada sem grupo recebe retenção própria padrão de 3 dias', async () => {
+  let written: any = null;
+  const owner: AuthUser = {
+    id: 'cliente-sem-grupo',
+    email: 'sem-grupo@example.test',
+    name: 'Cliente sem grupo',
+    role: UserRole.VIEWER,
+  };
+  const service = Object.create(CamerasService.prototype) as any;
+  service.vinculosDeGrupo = async () => [];
+  service.getPrivateCameraQuota = async () => ({ used: 0, limit: 1 });
+  service.prisma = {
+    cameraGroup: { findUnique: async () => { throw new Error('não deve consultar sem grupo'); } },
+    cameraPermission: { create: async () => ({}) },
+  };
+  service.create = async (dto: any) => {
+    written = dto;
+    return { id: 'camera-sem-grupo', ...dto };
+  };
+
+  await service.createPrivateForOwner({
+    name: 'Câmera sem grupo',
+    sourceMode: 'rtmp_push',
+    recordingMode: 'continuous',
+    retentionDays: 365,
+  }, owner);
+
+  assert.equal(written.recordingMode, 'motion');
+  assert.equal(written.recordingEnabled, false);
+  assert.equal(written.retentionDays, 3);
+  assert.equal(written.retentionFollowsGroup, false);
+});
 
 test('poster de câmera RTMP offline não tenta RTSP direto nem descriptografa marcador', async () => {
   let decryptCalls = 0;

@@ -9,6 +9,8 @@ import { CamerasService } from '../cameras/cameras.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { sanitizeSensitiveText } from '../common/security/sensitive-text.helper';
 import { buildRtspUrl, resolveRecordingRtspProfile } from '../cameras/helpers/rtsp-url.helper';
+import { isPushSourced } from '../cameras/helpers/rtmp-ingest.helper';
+import { RtmpIngestSourceService } from '../cameras/rtmp-ingest-source.service';
 import { spawnWithSecretUrl } from '../common/process/secret-url-process.helper';
 
 type ClipState = {
@@ -47,6 +49,7 @@ export class ClipCaptureService {
     private readonly configService: ConfigService,
     private readonly camerasService: CamerasService,
     private readonly cryptoService: CryptoService,
+    private readonly rtmpIngestSource: RtmpIngestSourceService,
   ) {
     fs.mkdirSync(this.dir, { recursive: true });
     this.maxMs = Number(this.configService.get<number>('clipMaxSeconds') ?? 300) * 1000; // 5min padrão
@@ -65,24 +68,58 @@ export class ClipCaptureService {
     return n;
   }
 
+  /**
+   * Resolve a entrada real do clipe sem confundir o marcador de uma câmera
+   * push (`0.0.0.0`) com um endereço RTSP alcançável.
+   *
+   * RTMP chega primeiro ao MediaMTX e é consumido pela URL RTSP INTERNA já
+   * autenticada. RTSP pull conserva exatamente o caminho anterior. Exigir a
+   * publicação pronta aqui evita criar um clipe vazio e devolver sucesso falso
+   * para o aplicativo quando a câmera RTMP está desconectada.
+   */
+  private async resolveClipInput(
+    camera: Awaited<ReturnType<CamerasService['getCameraOrThrow']>>,
+  ): Promise<{ url: string; transport: string }> {
+    if (isPushSourced(camera)) {
+      try {
+        const source = await this.rtmpIngestSource.resolve(camera, { requireReady: true });
+        return { url: source.sourceUrl, transport: 'tcp' };
+      } catch (error) {
+        throw new ServiceUnavailableException(
+          error instanceof Error && error.message
+            ? error.message
+            : 'Câmera RTMP ainda não está publicando vídeo.',
+        );
+      }
+    }
+
+    const password = this.cryptoService.decrypt(camera.passwordEncrypted);
+    const profile = resolveRecordingRtspProfile(camera);
+    return {
+      url: buildRtspUrl({
+        username: camera.username,
+        password,
+        ip: camera.ip,
+        rtspPort: camera.rtspPort,
+        rtspPath: camera.rtspPath ?? undefined,
+        channel: profile.channel,
+        subtype: profile.subtype,
+      }),
+      transport: camera.preferredRtspTransport
+        ?? this.configService.get<string>('ffmpegRtspTransport')
+        ?? 'tcp',
+    };
+  }
+
   async start(cameraId: string, userId: string): Promise<{ clipId: string }> {
     if (!this.checkFfmpeg()) throw new ServiceUnavailableException('FFmpeg não está instalado no servidor.');
     if (this.activeCount() >= this.maxConcurrent) {
       throw new ServiceUnavailableException('Muitas gravações de clipe em andamento. Tente novamente em instantes.');
     }
     const camera = await this.camerasService.getCameraOrThrow(cameraId);
-    const password = this.cryptoService.decrypt(camera.passwordEncrypted);
-    const profile = resolveRecordingRtspProfile(camera);
-    const rtsp = buildRtspUrl({
-      username: camera.username,
-      password,
-      ip: camera.ip,
-      rtspPort: camera.rtspPort,
-      rtspPath: camera.rtspPath ?? undefined,
-      channel: profile.channel,
-      subtype: profile.subtype,
-    });
-    const transport = camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp';
+    const input = await this.resolveClipInput(camera);
+    const rtsp = input.url;
+    const transport = input.transport;
     const clipId = randomUUID();
     const maxSeconds = Math.ceil(this.maxMs / 1000);
     // SEM transcode (cópia do codec original) = instantâneo, CPU quase zero,
