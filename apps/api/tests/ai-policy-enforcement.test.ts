@@ -224,6 +224,21 @@ function watchdogFake(opts: { active: string[]; armadas: string[] }) {
   return { mgr, stopped, started };
 }
 
+test('watchdog: sincronização em andamento não vira tempestade de starts concorrentes', async () => {
+  const { mgr, started } = watchdogFake({ active: [], armadas: ['cam-armada'] });
+  let healthCalls = 0;
+  mgr.syncInFlight = Promise.resolve({ started: 0 });
+  mgr.aiService.getHealth = async () => {
+    healthCalls += 1;
+    return { status: 'online', active_processors: [], degraded_processors: [] };
+  };
+
+  await mgr.recoverDegradedProcessors();
+
+  assert.equal(healthCalls, 0, 'nem consulta um estado intermediário que sabe ser incompleto');
+  assert.deepEqual(started, [], 'o sync é o único dono dos starts enquanto estiver em voo');
+});
+
 test('watchdog: processador de câmera DESARMADA é parado no 2º tick (não no 1º)', async () => {
   const { mgr, stopped } = watchdogFake({ active: ['cam-orfa', 'cam-armada'], armadas: ['cam-armada'] });
 

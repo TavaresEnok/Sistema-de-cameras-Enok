@@ -197,6 +197,25 @@ test('grade: câmera com sub 1 já em H.264 continua custando UM probe (escada p
   assert.equal(probes, 1, 'sub 1 H.264 encontrado → nenhum degrau extra é sondado');
 });
 
+test('grade: falso substream 1080p procura /media/video2 sem ligar busca profunda global', async () => {
+  const mgr = makeProxy();
+  mgr.isEnabled = () => true;
+  mgr.deepSubSearchEnabled = false;
+  mgr.gridPathLooksDead = async () => false;
+  const sondados: string[] = [];
+  mgr.probeStreamVideoMetadata = async (url: string) => {
+    sondados.push(url);
+    if (url.includes('/media/video2')) {
+      return { codec: 'h264', width: 640, height: 360, hasDataTrack: false };
+    }
+    return { codec: 'h265', width: 1920, height: 1080, hasDataTrack: false };
+  };
+  const r = await mgr.chooseGridSource('cam-falso-sub', gridCamera(), 'senha', 'tcp');
+  assert.ok(sondados.some((url) => url.includes('/media/video2')));
+  assert.match(r.sourceUrl, /\/media\/video2$/);
+  assert.equal(r.isHevc, false);
+});
+
 test('grade: /media/videoN (streams reais das OEM) está na escada de busca', async () => {
   // Descoberto em produção via ONVIF GetProfiles: a câmera declara
   // "perfil 2: H264 640x360 -> /media/video2", endpoint que NENHUM degrau

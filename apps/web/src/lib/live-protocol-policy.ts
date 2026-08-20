@@ -2,6 +2,11 @@ export type LiveProtocol = 'auto' | 'flv' | 'hls' | 'webrtc' | 'mjpeg' | 'llhls'
 export type LiveDeliveryMode = 'selected' | 'grid' | 'grid-hevc' | 'original';
 export type VideoCodecFamily = 'avc' | 'hevc' | 'unknown';
 
+export type WebrtcInboundSample = {
+  bytesReceived: number;
+  framesDecoded: number | null;
+};
+
 export function videoCodecFamily(codec?: string | null): VideoCodecFamily {
   const normalized = String(codec ?? '').trim().toLowerCase();
   if (/h265|hevc|hvc1|hev1|\b265\b/.test(normalized)) return 'hevc';
@@ -20,6 +25,34 @@ type ProtocolPolicyInput = {
 
 const isUsableProtocol = (protocol?: LiveProtocol | null): protocol is 'webrtc' | 'llhls' | 'hls' =>
   protocol === 'webrtc' || protocol === 'llhls' || protocol === 'hls';
+
+/**
+ * Sinal de vida do WebRTC vindo do RTP, e não do compositor do navegador.
+ *
+ * `requestVideoFrameCallback` pode ser suspenso quando há dezenas de elementos
+ * de vídeo, quando a janela perde foco ou quando o compositor está ocupado. Isso
+ * não significa que a mídia parou. O contador do receptor RTP continua sendo a
+ * evidência correta. Quando o navegador expõe frames decodificados, ele é mais
+ * forte; em implementações que não expõem, bytes recebidos são o fallback.
+ */
+export function hasWebrtcInboundProgress(
+  previous: WebrtcInboundSample | null,
+  current: WebrtcInboundSample,
+) {
+  if (!previous) return true;
+  if (previous.framesDecoded !== null && current.framesDecoded !== null) {
+    return current.framesDecoded > previous.framesDecoded;
+  }
+  return current.bytesReceived > previous.bytesReceived;
+}
+
+/** Uma conexão que chegou ao WHEP mas perdeu o primeiro quadro merece uma
+ * segunda tentativa WebRTC antes de consumir o fallback HLS. Erros definitivos
+ * de configuração/HTTP não entram neste retry curto. */
+export function shouldRetryWebrtcStartup(reason: string, attempt: number) {
+  if (attempt > 0) return false;
+  return /conectou.*n[aã]o entregou|primeiro frame|cold start|demorou demais/i.test(reason);
+}
 
 /**
  * Uma única política decide a abertura inicial e toda recuperação posterior.

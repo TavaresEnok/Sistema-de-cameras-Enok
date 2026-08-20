@@ -42,18 +42,19 @@ test('IA, live, grade e poster PODEM usar a origem interna (só precisam de quad
   }
 });
 
-// ── O consumidor da IA de fato consulta o gateway ────────────────────────────
-// Teste de estrutura (o buildAiSource depende de câmera/cripto/proxy reais):
-// prova que o ponto de decisão existe, ANTES do retorno direto, e que o retorno
-// direto continua sendo o caminho quando o gateway não redireciona.
-test('ai-manager: consulta o gateway antes de cair no RTSP direto', async () => {
+// ── O consumidor da IA de fato obedece ao gate ───────────────────────────────
+// O resolve antigo exigia uma lease ativa ANTES de o primeiro consumidor abrir
+// a fonte e, portanto, respondia `no_active_source` para sempre. Agora a IA usa
+// o path garantido diretamente quando o gateway está ligado: ler o path é o ato
+// que abre a fonte sob demanda.
+test('ai-manager: usa a origem garantida quando o gateway está ligado', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync('src/ai/ai-manager.service.ts', 'utf8');
-  const gatewayAt = src.indexOf('this.sourceGateway?.resolveSourceUrl');
+  const gatewayAt = src.indexOf('this.sourceGateway?.isEnabled() === true');
   const directAt = src.indexOf("sourceKind: 'direct_camera'");
-  assert.notEqual(gatewayAt, -1, 'o ai-manager precisa consultar o Source Gateway');
-  assert.ok(gatewayAt < directAt, 'a consulta ao gateway tem de vir ANTES do retorno direto');
-  assert.match(src.slice(gatewayAt, gatewayAt + 400), /consumer: 'ai'/, 'deve se identificar como consumidor ai');
+  assert.notEqual(gatewayAt, -1, 'o ai-manager precisa obedecer à chave do Source Gateway');
+  assert.ok(gatewayAt < directAt, 'a origem interna tem de ser tentada ANTES do retorno direto');
+  assert.match(src.slice(gatewayAt, gatewayAt + 1800), /rtspUrl: sharedUrl/);
 });
 
 test('mediamtx-proxy: registra a origem publicada ao preparar o path', async () => {
@@ -70,14 +71,14 @@ test('mediamtx-proxy: registra a origem publicada ao preparar o path', async () 
 // porque a IA resolvia a fonte ANTES de qualquer origem ser publicada — sem
 // origem, o gateway (corretamente) caía no direto, e a economia nunca acontecia.
 // A IA passa a GARANTIR o path antes de perguntar.
-test('ai-manager: GARANTE o path do MediaMTX antes de consultar o gateway', async () => {
+test('ai-manager: GARANTE o path do MediaMTX antes de obedecer ao gateway', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync('src/ai/ai-manager.service.ts', 'utf8');
-  const ensureAt = src.indexOf("ensurePathForCamera(cam.id, 'grid')");
-  const gatewayAt = src.indexOf('this.sourceGateway?.resolveSourceUrl');
+  const ensureAt = src.indexOf('const ensured = await this.withTimeout');
+  const gatewayAt = src.indexOf('this.sourceGateway?.isEnabled() === true');
   assert.notEqual(ensureAt, -1, 'a IA precisa garantir a origem antes de perguntar');
-  assert.ok(ensureAt < gatewayAt, 'o ensure tem de vir ANTES da consulta ao gateway');
-  // E sem path garantido não se pergunta nada (evita URL interna inválida).
+  assert.ok(ensureAt < gatewayAt, 'o ensure tem de vir ANTES de usar a origem interna');
+  // E sem path garantido não se monta URL interna inválida.
   assert.match(src.slice(ensureAt, gatewayAt + 200), /ensured\?\.pathName/);
 });
 
@@ -90,9 +91,9 @@ test('ai-manager: o ensure do gateway tem PRAZO (otimização não segura a IA)'
   const { readFileSync } = await import('node:fs');
   const src = readFileSync('src/ai/ai-manager.service.ts', 'utf8');
   // O fallback de HEVC também chama ensurePathForCamera (e vem antes no arquivo),
-  // então olhamos a chamada do GATEWAY: a que alimenta resolveSourceUrl.
-  const gatewayAt = src.indexOf('this.sourceGateway?.resolveSourceUrl');
-  const trecho = src.slice(Math.max(0, gatewayAt - 700), gatewayAt);
+  // então olhamos a chamada do GATEWAY pelo nome da variável que a recebe.
+  const gatewayAt = src.indexOf('const ensured = await this.withTimeout');
+  const trecho = src.slice(gatewayAt, gatewayAt + 500);
   assert.match(trecho, /withTimeout\(/, 'o ensure do gateway precisa correr contra um prazo');
   assert.match(trecho, /ensurePathForCamera\(cam\.id, 'grid'\)/, 'e ser o ensure do path de grade');
   assert.match(src, /private withTimeout<T>/, 'o helper de prazo precisa existir');

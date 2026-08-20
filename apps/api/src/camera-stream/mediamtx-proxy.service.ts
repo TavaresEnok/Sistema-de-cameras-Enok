@@ -1410,6 +1410,39 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         hasDataTrack: c2.hasDataTrack,
       });
     }
+
+    // O endpoint se chama "sub", mas devolve o MAIN: medido na Cam-01, tanto
+    // N02 quanto o protocolo alternativo entregavam HEVC 1920x1080. Tratar isso
+    // como substream criava o pior pipeline da frota (decode 1080p + scale +
+    // x264), 20,6% de um núcleo. Nessa anomalia específica vale UM probe extra
+    // em /media/video2, endpoint declarado por vários OEM via ONVIF. Não liga a
+    // busca profunda global nem atrasa câmeras cujo substream já é realmente leve.
+    const smallestCandidatePixels = found.reduce(
+      (smallest, candidate) => Math.min(smallest, this.streamPixels(candidate) || Number.MAX_SAFE_INTEGER),
+      Number.MAX_SAFE_INTEGER,
+    );
+    if (!has264()
+      && !this.deepSubSearchEnabled
+      && smallestCandidatePixels >= 1280 * 720) {
+      const lightweightOemUrl =
+        `rtsp://${encodeURIComponent(camera.username)}:${encodeURIComponent(password)}@` +
+        `${camera.ip}:${camera.rtspPort}/media/video${subProfile.channel + 1}`;
+      const lightweightOem = await this.probeStreamVideoMetadata(lightweightOemUrl, transport);
+      if (lightweightOem?.codec) {
+        found.push({
+          url: lightweightOemUrl,
+          codec: lightweightOem.codec,
+          width: lightweightOem.width,
+          height: lightweightOem.height,
+          hasDataTrack: lightweightOem.hasDataTrack,
+        });
+        this.logger.log(
+          `Grade de ${cameraId}: endpoint substream devolvia resolução principal; ` +
+          `/media/video${subProfile.channel + 1} respondeu ` +
+          `${lightweightOem.width ?? '?'}x${lightweightOem.height ?? '?'} ${lightweightOem.codec}.`,
+        );
+      }
+    }
     // TERCEIRO degrau: o SUB 2. Muitas câmeras têm TRÊS streams, e o operador
     // que configura "o segundo stream em H.264 para o live" pode tê-lo no
     // índice 2 (Dahua subtype=2, Hikvision canal N03) — enquanto o sub 1

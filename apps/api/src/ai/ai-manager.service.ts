@@ -249,6 +249,16 @@ export class AiManagerService implements OnModuleInit {
   }
 
   private async recoverDegradedProcessors() {
+    // A sincronização de boot começa com stopAll e recria as câmeras em série.
+    // Nesse intervalo, "processador ausente" é o estado ESPERADO, não uma
+    // falha. Deixar o watchdog entrar aqui fazia ele iniciar as câmeras em
+    // paralelo com o sync, duplicando probes/sessões RTSP e podendo estourar o
+    // limite do DVR — exatamente o problema que o restream compartilhado evita.
+    // No tick seguinte, após o sync, a autocura volta a trabalhar normalmente.
+    if (this.syncInFlight) {
+      this.logger.debug('Watchdog de IA aguardando a sincronização em andamento.');
+      return;
+    }
     try {
       const health: any = await this.aiService.getHealth();
       const degraded: string[] = Array.isArray(health?.degraded_processors) ? health.degraded_processors : [];
@@ -1090,6 +1100,7 @@ export class AiManagerService implements OnModuleInit {
       analyticsSource: asString(process.env.AI_ANALYTICS_SOURCE) ?? 'direct_camera',
       latestFrameOnly: String(process.env.AI_LATEST_FRAME_ONLY ?? 'true') !== 'false',
       hevcFallbackEnabled: String(process.env.AI_ANALYTICS_HEVC_FALLBACK ?? 'true').toLowerCase() !== 'false',
+      directHevcEnabled: String(process.env.AI_ANALYTICS_DIRECT_HEVC_ENABLED ?? 'false').toLowerCase() === 'true',
       cpuReservePercent: asNullableNumber(process.env.AI_CPU_RESERVE_PERCENT),
       inferenceThreadsOverride: asNullableNumber(process.env.AI_INFERENCE_THREADS_OVERRIDE),
       inferenceWorkerCount: asNullableNumber(process.env.AI_INFERENCE_WORKER_COUNT),
@@ -1209,6 +1220,7 @@ export class AiManagerService implements OnModuleInit {
     const analyticsCodec = await this.mediamtxProxy.probeStreamVideoCodec(rtspUrl, rtspTransport).catch(() => null);
     const analyticsIsHevc = isHevcCodec(analyticsCodec);
     const hevcFallbackEnabled = String(process.env.AI_ANALYTICS_HEVC_FALLBACK ?? 'true').toLowerCase() !== 'false';
+    const directHevcEnabled = String(process.env.AI_ANALYTICS_DIRECT_HEVC_ENABLED ?? 'false').toLowerCase() === 'true';
 
     // A sonda diz o que o codec É; a cegueira repetida diz o que o detector
     // CONSEGUE ler. Quando o watchdog já reiniciou a análise várias vezes sem
@@ -1218,12 +1230,31 @@ export class AiManagerService implements OnModuleInit {
     // nunca entrava e a câmera ficava presa na fonte que não se decodifica).
     await this.carregarFontesForcadas();
     const forcarInterno = this.fontesForcadasInternas.has(cam.id);
-    if ((analyticsIsHevc || forcarInterno) && hevcFallbackEnabled) {
+    if (forcarInterno || (analyticsIsHevc && hevcFallbackEnabled)) {
       const fallback = await this.mediamtxProxy.ensurePathForCamera(cam.id, 'grid');
       const fallbackRtspUrl = this.mediamtxProxy.buildInternalRtspUrl(fallback.pathName);
-      if (fallbackRtspUrl) {
+      // Três câmeras reais provaram 469 frames HEVC/15 s no mesmo OpenCV do
+      // ai-service. Converter todo HEVC preventivamente criava
+      // decode+encode+decode sem necessidade. O bitstream segue HEVC, mas passa
+      // pelo restream compartilhado do MediaMTX: IA + navegador reutilizam uma
+      // conexão com a câmera. Abrir o RTSP direto aqui estourou o limite de
+      // sessões de equipamentos reais quando o laboratório também capturava o
+      // substream, deixando cinco detectores cegos apesar de o decoder aceitar
+      // HEVC perfeitamente.
+      //
+      // Exceção melhor ainda: se a busca da grade achou substream H.264 NATIVO
+      // (Cam-01 /media/video2), consumimos esse path sem transcode. Assim a IA
+      // fica leve e o main H.265 de gravação permanece intocado.
+      const gridHasNativeH264 = !isHevcCodec(fallback.sourceVideoCodec)
+        && !fallback.transcodedForLive;
+      const shouldUseInternalFallback = forcarInterno
+        || !directHevcEnabled
+        || gridHasNativeH264;
+      if (fallbackRtspUrl && shouldUseInternalFallback) {
         const fallbackRtspUrlSanitized = sanitizeRtspUrl(fallbackRtspUrl);
-        this.logger.warn(forcarInterno && !analyticsIsHevc
+        this.logger.warn(gridHasNativeH264 && !forcarInterno
+          ? `IA analytics de ${cam.name} encontrou substream H.264 nativo no MediaMTX (${fallback.pathName}); usando cópia sem transcode.`
+          : forcarInterno && !analyticsIsHevc
           ? `IA analytics de ${cam.name} usando path interno do MediaMTX (${fallback.pathName}) por captura direta ilegível — sonda dizia ${analyticsCodec ?? 'codec desconhecido'}.`
           : `IA analytics de ${cam.name} esta em HEVC (${analyticsCodec}); usando path H.264 reduzido do MediaMTX: ${fallback.pathName}`);
         return {
@@ -1240,27 +1271,56 @@ export class AiManagerService implements OnModuleInit {
             analyticsSourceCodec: analyticsCodec,
             analyticsTranscodedForAi: Boolean(fallback.transcodedForLive),
             analyticsMediaMtxPath: fallback.pathName,
-            analyticsFallbackReason: forcarInterno && !analyticsIsHevc
+            analyticsFallbackReason: gridHasNativeH264 && !forcarInterno
+              ? 'native_h264_substream'
+              : forcarInterno && !analyticsIsHevc
               ? 'direct_capture_blind_after_restarts'
               : 'hevc_direct_capture_unstable',
           },
         };
       }
+      if (analyticsIsHevc && directHevcEnabled && !forcarInterno) {
+        const sharedHevc = await this.withTimeout(
+          this.mediamtxProxy.ensurePathForCamera(cam.id, 'grid-hevc'),
+          envNumber('AI_SOURCE_GATEWAY_ENSURE_TIMEOUT_MS', 4000),
+        ).catch(() => null);
+        const sharedHevcUrl = sharedHevc?.pathName
+          ? this.mediamtxProxy.buildInternalRtspUrl(sharedHevc.pathName)
+          : null;
+        if (sharedHevc && sharedHevcUrl) {
+          const sharedHevcUrlSanitized = sanitizeRtspUrl(sharedHevcUrl);
+          this.logger.log(
+            `IA analytics de ${cam.name} usando HEVC compartilhado sem transcode ` +
+            `pelo MediaMTX (${sharedHevc.pathName}); fallback H.264 fica reservado à captura comprovadamente cega.`,
+          );
+          return {
+            rtspUrl: sharedHevcUrl,
+            info: {
+              ...infoBase,
+              sourceKind: 'mediamtx_delivery_hevc_passthrough',
+              usesMediaMtx: true,
+              audioRequested: false,
+              analyticsRtspUrl: sharedHevcUrlSanitized,
+              analyticsSourceUrlSanitized: sharedHevcUrlSanitized,
+              analyticsOriginalRtspUrl: sourceUrlSanitized,
+              analyticsSourceCodec: sharedHevc.sourceVideoCodec ?? analyticsCodec,
+              analyticsTranscodedForAi: false,
+              analyticsMediaMtxPath: sharedHevc.pathName,
+              analyticsFallbackReason: 'shared_hevc_passthrough',
+            },
+          };
+        }
+        this.logger.warn(
+          `MediaMTX não preparou o passthrough HEVC de ${cam.name} dentro do prazo; ` +
+          'usando a câmera diretamente nesta tentativa e mantendo a autocura ativa.',
+        );
+      }
     }
 
-    // Source Gateway (flag CAMERA_SOURCE_GATEWAY_ENABLED, default OFF): quando
-    // ligado E já existe origem republicada, a IA lê do MediaMTX em vez de abrir
-    // MAIS uma conexão na câmera. É o consumidor mais seguro para migrar primeiro:
-    // a IA só precisa de QUADROS (não do bitstream original, como a gravação), e o
-    // fail-safe da IA já trata fonte indisponível gravando assim mesmo.
-    // Com a flag OFF, resolveSourceUrl devolve `rtspUrl` sem tocar em nada.
-    // GARANTE a origem antes de perguntar. Sem isto havia uma corrida de ordem: se
-    // ninguém tivesse aberto o live daquela câmera ainda, não existia origem
-    // publicada, o gateway caía no fallback direto e a economia de conexão NUNCA
-    // acontecia (medido em produção: 0 reroteamentos). É o mesmo mecanismo que o
-    // fallback de HEVC logo acima já usa há tempos — a diferença é que agora vale
-    // para toda câmera, não só as HEVC. Best-effort: falhar aqui só significa
-    // seguir no direto, que é o comportamento de antes.
+    // Source Gateway: quando ligado, a IA lê do MediaMTX em vez de abrir MAIS
+    // uma conexão na câmera. É o consumidor mais seguro para compartilhar:
+    // precisa de quadros, não de um bitstream exclusivo. Primeiro garantimos a
+    // origem; sem path interno, o direto continua sendo a contingência segura.
     // ⚠️ COM TIMEOUT, obrigatoriamente. `ensurePathForCamera` compartilha uma
     // promessa em voo por (câmera, modo): se essa promessa travar (MediaMTX lento
     // ou fora), TODO chamador seguinte fica pendurado nela para sempre — e um
@@ -1272,35 +1332,54 @@ export class AiManagerService implements OnModuleInit {
       this.mediamtxProxy.ensurePathForCamera(cam.id, 'grid'),
       envNumber('AI_SOURCE_GATEWAY_ENSURE_TIMEOUT_MS', 4000),
     ).catch(() => null);
-    const gatewayDecision = ensured?.pathName
-      ? this.sourceGateway?.resolveSourceUrl({
-        cameraId: cam.id,
-        profile: 'sub',
-        consumer: 'ai',
-        directUrl: rtspUrl,
-        internalUrl: this.mediamtxProxy.buildInternalRtspUrl(ensured.pathName),
-      })
-      : undefined;
-    if (gatewayDecision && gatewayDecision.url !== rtspUrl) {
-      const gatewayUrlSanitized = sanitizeRtspUrl(gatewayDecision.url);
-      this.logger.log(`IA roteada pelo Source Gateway para a origem interna de ${cam.name}: ${gatewayUrlSanitized}`);
-      return {
-        rtspUrl: gatewayDecision.url,
-        info: {
-          ...infoBase,
-          sourceKind: 'source_gateway_internal',
-          usesMediaMtx: true,
-          audioRequested: false,
-          analyticsRtspUrl: gatewayUrlSanitized,
-          analyticsSourceUrlSanitized: sourceUrlSanitized,
-          analyticsOriginalRtspUrl: sourceUrlSanitized,
-          analyticsSourceCodec: analyticsCodec,
-          analyticsTranscodedForAi: false,
-          analyticsGatewayReason: gatewayDecision.reason,
-        },
-      };
+    // O gateway estava sendo apenas CONSULTADO aqui, sem acquire/lease. Como a
+    // origem recém-configurada ainda não tinha consumidor ativo, a resposta era
+    // `no_active_source` e a IA abria outra sessão DIRETA na câmera — justamente
+    // o oposto do teto que o gateway promete. Para IA, o ensure já é a prova de
+    // que existe uma entrega interna válida: consumi-la é o próprio acquire, pois
+    // o MediaMTX abre a fonte sob demanda e a compartilha com os demais leitores.
+    // Mantemos o gate operacional: desligar o Source Gateway restaura o direto.
+    if (ensured?.pathName && this.sourceGateway?.isEnabled() === true) {
+      let shared = ensured;
+      // Se a sonda direta falhou por limite de sessões, analyticsCodec é null,
+      // mas a descoberta da grade ainda pode ter identificado HEVC. Preserva o
+      // codec nesse caso também, em vez de ligar silenciosamente um transcode.
+      if (directHevcEnabled && isHevcCodec(ensured.sourceVideoCodec)) {
+        shared = await this.withTimeout(
+          this.mediamtxProxy.ensurePathForCamera(cam.id, 'grid-hevc'),
+          envNumber('AI_SOURCE_GATEWAY_ENSURE_TIMEOUT_MS', 4000),
+        ).catch(() => ensured);
+      }
+      const sharedPathName = shared.pathName;
+      const sharedUrl = this.mediamtxProxy.buildInternalRtspUrl(sharedPathName);
+      if (sharedUrl) {
+        const sharedUrlSanitized = sanitizeRtspUrl(sharedUrl);
+        const sharedIsHevc = isHevcCodec(shared.sourceVideoCodec)
+          && Boolean(sharedPathName?.endsWith('_grid_hevc'));
+        this.logger.log(
+          `IA roteada para a origem compartilhada de ${cam.name}: ${sharedPathName} ` +
+          `(${sharedIsHevc ? 'HEVC passthrough' : shared.transcodedForLive ? 'H.264 compatível' : 'cópia nativa'}).`,
+        );
+        return {
+          rtspUrl: sharedUrl,
+          info: {
+            ...infoBase,
+            sourceKind: sharedIsHevc
+              ? 'mediamtx_delivery_hevc_passthrough'
+              : 'source_gateway_internal',
+            usesMediaMtx: true,
+            audioRequested: false,
+            analyticsRtspUrl: sharedUrlSanitized,
+            analyticsSourceUrlSanitized: sharedUrlSanitized,
+            analyticsOriginalRtspUrl: sourceUrlSanitized,
+            analyticsSourceCodec: shared.sourceVideoCodec ?? analyticsCodec,
+            analyticsTranscodedForAi: Boolean(shared.transcodedForLive),
+            analyticsMediaMtxPath: sharedPathName,
+            analyticsGatewayReason: 'ensured_shared_source',
+          },
+        };
+      }
     }
-
     this.logger.debug(`IA usando RTSP direto analytics para ${cam.name}: ${sourceUrlSanitized}${analyticsCodec ? ` codec=${analyticsCodec}` : ''}`);
     return {
       rtspUrl,

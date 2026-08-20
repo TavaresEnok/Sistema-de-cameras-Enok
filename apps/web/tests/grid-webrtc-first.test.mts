@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildLiveProtocolOrder,
+  hasWebrtcInboundProgress,
   liveProtocolStorageKey,
+  shouldRetryWebrtcStartup,
   shouldUseGridH264Fallback,
   videoCodecFamily,
 } from '../src/lib/live-protocol-policy.ts';
@@ -67,4 +69,29 @@ test('modo original testa HEVC por WebRTC mesmo sem declaração do navegador', 
     sourceCodec: 'h265',
     mseDecodesHevc: false,
   }), ['webrtc']);
+});
+
+test('vivacidade do WebRTC usa frames RTP e recorre a bytes quando necessário', () => {
+  assert.equal(hasWebrtcInboundProgress(null, { bytesReceived: 100, framesDecoded: 2 }), true);
+  assert.equal(hasWebrtcInboundProgress(
+    { bytesReceived: 100, framesDecoded: 2 },
+    { bytesReceived: 200, framesDecoded: 3 },
+  ), true);
+  assert.equal(hasWebrtcInboundProgress(
+    { bytesReceived: 100, framesDecoded: 2 },
+    { bytesReceived: 200, framesDecoded: 2 },
+  ), false, 'bytes não escondem um decoder que parou quando a métrica de frames existe');
+  assert.equal(hasWebrtcInboundProgress(
+    { bytesReceived: 100, framesDecoded: null },
+    { bytesReceived: 200, framesDecoded: null },
+  ), true);
+});
+
+test('primeiro quadro ausente repete WebRTC uma vez antes do HLS', () => {
+  assert.equal(shouldRetryWebrtcStartup(
+    'WebRTC conectou, mas não entregou imagem dentro do tempo limite.',
+    0,
+  ), true);
+  assert.equal(shouldRetryWebrtcStartup('Falha ao conectar WebRTC (400).', 0), false);
+  assert.equal(shouldRetryWebrtcStartup('WebRTC conectou, mas não entregou imagem.', 1), false);
 });
