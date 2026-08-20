@@ -1,9 +1,12 @@
 import { envNumber } from '../../common/config/env-number.helper';
 
 // 'original' = "máxima qualidade": serve o stream PRINCIPAL da câmera em
-// PASSTHROUGH (sem transcode, inclusive H.265) via HLS. Custo ~0 de CPU no
-// servidor; o celular decodifica o HEVC no hardware. Latência maior que WebRTC.
-export type LiveViewMode = 'selected' | 'grid' | 'original';
+// PASSTHROUGH (sem transcode, inclusive H.265). O cliente prioriza WebRTC e usa
+// HLS como contingência; o dispositivo decodifica HEVC, sem encode no servidor.
+// `grid-hevc` usa a mesma fonte leve de `grid`, mas preserva o codec recebido.
+// Ele tem path próprio para poder coexistir com o fallback H.264 sem que dois
+// navegadores reconfigurem o mesmo path um por cima do outro.
+export type LiveViewMode = 'selected' | 'grid' | 'grid-hevc' | 'original';
 
 // TILE DE MOSAICO NÃO É TELA CHEIA — e o bitrate é o que chega no espectador.
 //
@@ -57,6 +60,7 @@ export const GRID_LIVE_BITRATE_KBPS = envNumber('GRID_LIVE_BITRATE_KBPS', 900, {
 export function normalizeLiveViewMode(value?: string | null): LiveViewMode {
   const v = String(value ?? '').trim().toLowerCase();
   if (v === 'grid') return 'grid';
+  if (v === 'grid-hevc') return 'grid-hevc';
   if (v === 'original') return 'original';
   return 'selected';
 }

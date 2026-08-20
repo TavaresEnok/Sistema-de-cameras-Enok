@@ -1829,7 +1829,7 @@ export class CamerasService {
     const base = `cam_${cameraId.replace(/[^a-zA-Z0-9]/g, '')}`;
     // Os três caminhos que uma câmera pode publicar: principal, grade e
     // original. Basta um estar recebendo para a câmera estar viva.
-    for (const caminho of [base, `${base}_grid`, `${base}_orig`]) {
+    for (const caminho of [base, `${base}_grid`, `${base}_grid_hevc`, `${base}_orig`]) {
       try {
         if (await this.ingestPathIsLive(caminho)) return true;
       } catch {

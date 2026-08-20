@@ -106,9 +106,17 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   // assistindo. O padrão sai da medição — ~10 transcodes por núcleo deixa a
   // máquina em ~66% de CPU só com transcode, com folga para gravação e IA.
   private activeTranscodes = 0;
+  // Diagnósticos da frota consultavam somente o path base, embora a grade use
+  // paths próprios. Isso gerava centenas de 404 no MediaMTX e informava zero
+  // leitores com o mosaico aberto. Uma listagem curta, compartilhada entre as
+  // câmeras do relatório, dá a visão correta sem transformar a sonda em carga.
+  private runtimePathListCache: { at: number; items: any[] } | null = null;
+  private runtimePathListInFlight: Promise<any[]> | null = null;
   private readonly maxTranscodes = envNumber(
     'MEDIAMTX_MAX_CONCURRENT_TRANSCODES',
-    Math.max(8, (os.cpus()?.length ?? 4) * 10),
+    // Reserva CPU para API, banco, gravação e IA. Em máquinas pequenas o teto
+    // antigo (10 por núcleo) aceitava conversões suficientes para saturar tudo.
+    Math.max(4, (os.cpus()?.length ?? 4) * 5),
     { min: 1, max: 2000, integer: true },
   );
   // AUTOCURA DA GRADE: DESLIGADA por padrão (restaura o comportamento de 21/07).
@@ -760,13 +768,22 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     }
   }
 
-  /** Inverte pathNameFromCameraId: `cam_<32hex>[_grid|_orig]` → { cameraId(UUID), mode }. */
+  /** Inverte pathNameFromCameraId: `cam_<32hex>[_grid|_grid_hevc|_orig]` → câmera/modo. */
   private cameraIdFromPathName(pathName: string): { cameraId: string; deliveryMode: LiveViewMode } | null {
-    const match = pathName.match(/^cam_([0-9a-fA-F]{32})(_grid|_orig)?$/);
+    const match = pathName.match(/^cam_([0-9a-fA-F]{32})(_grid|_grid_hevc|_orig)?$/);
     if (!match) return null;
     const h = match[1];
     const cameraId = `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-    return { cameraId, deliveryMode: match[2] === '_grid' ? 'grid' : match[2] === '_orig' ? 'original' : 'selected' };
+    return {
+      cameraId,
+      deliveryMode: match[2] === '_grid'
+        ? 'grid'
+        : match[2] === '_grid_hevc'
+          ? 'grid-hevc'
+          : match[2] === '_orig'
+            ? 'original'
+            : 'selected',
+    };
   }
 
   /**
@@ -846,6 +863,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // dois espectadores em modos diferentes ficariam reconfigurando o mesmo path
     // (transcode ↔ passthrough) um por cima do outro.
     if (deliveryMode === 'grid') return `${base}_grid`;
+    if (deliveryMode === 'grid-hevc') return `${base}_grid_hevc`;
     if (deliveryMode === 'original') return `${base}_orig`;
     return base;
   }
@@ -883,7 +901,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // orçamento (ver hot-grid-sources.helper.ts). Quente para todas as 21
     // câmeras desta instalação cabe no orçamento default; quente para 2.000
     // seria nós atacando os DVRs da própria frota.
-    const isGridSource = pathName.endsWith('_grid');
+    const isGridSource = pathName.endsWith('_grid') || pathName.endsWith('_grid_hevc');
     const parsedForHot = isGridSource ? this.cameraIdFromPathName(pathName) : null;
     const sourceOnDemand = !(isGridSource && parsedForHot && this.isGridSourceHot(parsedForHot.cameraId));
     const desired = {
@@ -1682,6 +1700,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
   async getPathRuntimeSummaryForCamera(cameraId: string) {
     const pathName = this.pathNameFromCameraId(cameraId);
+    const candidateNames = new Set<LiveViewMode>(['selected', 'grid', 'grid-hevc', 'original']);
+    const expectedPaths = new Set([...candidateNames].map((mode) => this.pathNameFromCameraId(cameraId, mode)));
     if (!this.isEnabled()) {
       return {
         pathName,
@@ -1696,14 +1716,13 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     }
 
     try {
-      const encodedPath = encodeURIComponent(pathName);
-      const text = await this.apiRequest('GET', `/v3/paths/get/${encodedPath}`);
-      const data = JSON.parse(text) as Record<string, any>;
-      const rawReaders = Array.isArray(data.readers)
+      const allItems = await this.getRuntimePathItems();
+      const paths = allItems.filter((item: any) => expectedPaths.has(String(item?.name ?? '')));
+      const rawReaders = paths.flatMap((data: any) => Array.isArray(data.readers)
         ? data.readers
         : data.readers && typeof data.readers === 'object'
           ? Object.values(data.readers)
-          : [];
+          : []);
 
       const readers = rawReaders.map((reader: any) => ({
         id: typeof reader?.id === 'string' ? reader.id : null,
@@ -1719,12 +1738,17 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
       return {
         pathName,
-        available: true,
-        ready: Boolean(data.ready ?? data.sourceReady ?? data.source?.ready),
+        pathNames: paths.map((item: any) => String(item.name)),
+        available: paths.length > 0,
+        ready: paths.some((data: any) => Boolean(data.ready ?? data.sourceReady ?? data.source?.ready)),
         readerCount: readers.length,
         readers,
-        bytesReceived: Number.isFinite(Number(data.bytesReceived)) ? Number(data.bytesReceived) : null,
-        bytesSent: Number.isFinite(Number(data.bytesSent)) ? Number(data.bytesSent) : null,
+        bytesReceived: paths.length
+          ? paths.reduce((sum: number, data: any) => sum + (Number(data.bytesReceived) || 0), 0)
+          : null,
+        bytesSent: paths.length
+          ? paths.reduce((sum: number, data: any) => sum + (Number(data.bytesSent) || 0), 0)
+          : null,
         error: null as string | null,
       };
     } catch (error) {
@@ -1739,6 +1763,23 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         error: error instanceof Error ? error.message : 'Falha ao consultar runtime do MediaMTX.',
       };
     }
+  }
+
+  private async getRuntimePathItems(): Promise<any[]> {
+    const cached = this.runtimePathListCache;
+    if (cached && Date.now() - cached.at < 2000) return cached.items;
+    if (this.runtimePathListInFlight) return this.runtimePathListInFlight;
+    this.runtimePathListInFlight = this.apiRequest('GET', '/v3/paths/list?itemsPerPage=1000')
+      .then((text) => {
+        const parsed = JSON.parse(text);
+        const items = Array.isArray(parsed?.items) ? parsed.items : [];
+        this.runtimePathListCache = { at: Date.now(), items };
+        return items;
+      })
+      .finally(() => {
+        this.runtimePathListInFlight = null;
+      });
+    return this.runtimePathListInFlight;
   }
 
   private async warmCameraPaths() {
@@ -1807,7 +1848,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
    * closeAfter do on-demand). Best-effort: path inexistente é ignorado. */
   async teardownPathsForCamera(cameraId: string): Promise<void> {
     if (!this.isEnabled()) return;
-    for (const mode of ['selected', 'grid', 'original'] as const) {
+    for (const mode of ['selected', 'grid', 'grid-hevc', 'original'] as const) {
       const pathName = this.pathNameFromCameraId(cameraId, mode);
       this.pathEnsureCache.delete(this.buildEnsureKey(cameraId, mode));
       await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(pathName)}`).catch(() => undefined);
@@ -1987,7 +2028,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // sub-stream quando existe (mais leve e rápido); ver chooseGridSource.
     const selected = pushSourced
       ? await this.resolvePushLiveSource(camera, rtspTransport)
-      : deliveryMode === 'grid'
+      : deliveryMode === 'grid' || deliveryMode === 'grid-hevc'
         ? await this.chooseGridSource(cameraId, camera, password, rtspTransport)
         : await this.chooseLiveSource(cameraId, camera, password, rtspTransport);
     const liveProfile = selected.profile;
@@ -2012,8 +2053,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // principal como está (H.265 inclusive) direto pro HLS. O custo de CPU no
     // servidor é ~0; o celular decodifica o HEVC no hardware. Só HLS (WebRTC não
     // reproduz H.265), com latência maior — é o trade-off assumido pelo usuário.
-    const needsPublisher =
-      deliveryMode === 'original' ? false : (isHevc || transcodeAudioForWebrtc || sanitizeGridSource);
+    const codecPassthroughMode = deliveryMode === 'original' || deliveryMode === 'grid-hevc';
+    const needsPublisher = codecPassthroughMode
+      ? false
+      : (isHevc || transcodeAudioForWebrtc || sanitizeGridSource);
 
     // FREIO: passado o teto, recusa o transcode NOVO em vez de degradar todos.
     //
@@ -2083,7 +2126,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // 'original' é sempre sob demanda; 'selected' segue a env global.
       sourceOnDemand: deliveryMode === 'original'
         ? true
-        : deliveryMode === 'grid'
+        : deliveryMode === 'grid' || deliveryMode === 'grid-hevc'
           ? this.resolveGridSourceOnDemand(cameraId)
           : sourceOnDemand,
       sourceOnDemandStartTimeout,
@@ -2117,9 +2160,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           sourceOnDemandCloseAfter,
         )}`
         : sourceUrl;
-      // Navegadores não reproduzem H.265 via WebRTC/HLS, e WebRTC não aceita o AAC
-      // vindo dessas câmeras neste pipeline. O source vira 'publisher' e runOnDemand
-      // sobe um ffmpeg que publica H.264 + Opus quando áudio estiver habilitado.
+      // Este ramo é a contingência H.264 ou a normalização de áudio. Clientes que
+      // reproduzem H.265 usam `grid-hevc`/`original` e não chegam aqui. Quando o
+      // publisher é necessário, ele publica H.264 + Opus para ampla compatibilidade.
       desiredPath.source = 'publisher';
       // O publisher tambem normaliza H.264 quando ja precisa abrir FFmpeg para
       // o audio. Copiar um stream com fragmentos RTP perdidos repassa quadros

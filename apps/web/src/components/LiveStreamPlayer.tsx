@@ -78,7 +78,7 @@ type LiveProtocol = 'auto' | 'flv' | 'hls' | 'webrtc' | 'mjpeg' | 'llhls';
 //               idêntica à câmera; WebRTC quando o navegador decodifica H.265, senão
 //               LL-HLS/HLS (~1–3s de atraso); sem suporte nenhum → volta a balanced.
 type LiveQualityMode = 'instant' | 'balanced' | 'max';
-type LiveDeliveryMode = 'selected' | 'grid' | 'original';
+type LiveDeliveryMode = 'selected' | 'grid' | 'grid-hevc' | 'original';
 
 function getStoredLiveQuality(cameraId: string): LiveQualityMode {
   try {
@@ -460,12 +460,18 @@ export function LiveStreamPlayer({
   }, []);
   // Qualidade da câmera única (1x1): persistida por câmera; na grade é sempre 'grid'.
   const [qualityMode, setQualityMode] = useState<LiveQualityMode>(() => getStoredLiveQuality(cameraId));
+  // A grade começa sempre pelo bitstream original do substream. Só muda para o
+  // path H.264 depois que este cliente realmente falhar em WebRTC/H.265 (e no
+  // HLS/H.265, quando MSE estiver disponível). A detecção declarativa de codec
+  // dos navegadores é incompleta; o teste real de reprodução é autoritativo.
+  const [gridUsesH264Fallback, setGridUsesH264Fallback] = useState(false);
   useEffect(() => {
     setQualityMode(getStoredLiveQuality(cameraId));
+    setGridUsesH264Fallback(false);
   }, [cameraId]);
   const deliveryMode: LiveDeliveryMode = liveViewMode === 'selected'
     ? (qualityMode === 'instant' ? 'grid' : qualityMode === 'max' ? 'original' : 'selected')
-    : 'grid';
+    : gridUsesH264Fallback ? 'grid' : 'grid-hevc';
 
   const changeQuality = useCallback((next: LiveQualityMode) => {
     // Guard: "Máxima" numa câmera H.265 + navegador sem HEVC não pode funcionar.
@@ -678,6 +684,7 @@ export function LiveStreamPlayer({
     if (previousLiveViewModeRef.current === liveViewMode) return;
     previousLiveViewModeRef.current = liveViewMode;
     failedProtocolsRef.current.clear();
+    if (liveViewMode === 'grid') setGridUsesH264Fallback(false);
     // O reboot do stream acontece pelo próprio effect de boot (deliveryMode nas
     // dependências). Aqui só preparamos a transição: mensagem amigável e
     // preservação do último frame — sem bump de nonce, senão o boot rodaria DUAS
@@ -778,6 +785,17 @@ export function LiveStreamPlayer({
       failedProtocolsRef.current.add(normalizeActiveProtocol(active));
       const transitionReason = `${active} falhou: ${reason}. Alternando para o próximo protocolo.`;
       setProtocolReason(transitionReason);
+      if (deliveryMode === 'grid-hevc') {
+        const h265Protocols: LiveProtocol[] = MSE_DECODES_HEVC
+          ? ['webrtc', 'llhls', 'hls']
+          : ['webrtc'];
+        if (h265Protocols.every((protocol) => failedProtocolsRef.current.has(protocol))) {
+          failedProtocolsRef.current.clear();
+          setProtocolReason('H.265 não foi reproduzido neste cliente; ativando a contingência H.264.');
+          setGridUsesH264Fallback(true);
+          return;
+        }
+      }
       if (failedProtocolsRef.current.has('webrtc') && failedProtocolsRef.current.has('llhls') && failedProtocolsRef.current.has('hls')) {
         scheduleFastRetry('Reconectando transmissão...', true);
         return;
@@ -786,7 +804,7 @@ export function LiveStreamPlayer({
       return;
     }
     scheduleFastRetry('Reconectando transmissão...', true);
-  }, [requestFreshLiveBoot, scheduleFastRetry]);
+  }, [deliveryMode, requestFreshLiveBoot, scheduleFastRetry]);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -869,7 +887,7 @@ export function LiveStreamPlayer({
             preferredLiveProtocol?: 'auto' | 'flv' | 'hls' | 'llhls' | 'webrtc' | 'mjpeg' | null;
             detectedVideoCodec?: string | null;
             sourceVideoCodec?: string | null;
-            deliveryMode?: 'selected' | 'grid';
+            deliveryMode?: LiveDeliveryMode;
             deliveryTarget?: Record<string, unknown> | null;
             smartLive?: {
               enabled?: boolean;
@@ -926,10 +944,27 @@ export function LiveStreamPlayer({
           data?.smartLive?.protocolOrder ?? null,
         );
         let protocolOrder: LiveProtocol[] = orderedProtocols.filter((protocol) => !failedProtocolsRef.current.has(protocol));
-        if (!protocolOrder.length) {
+        if (!protocolOrder.length && deliveryMode !== 'grid-hevc') {
           failedProtocolsRef.current.clear();
           protocolOrder = orderedProtocols;
           setProtocolReason('Reconectando transmissão.');
+        }
+
+        // Política da grade: tenta o substream no codec original por WebRTC
+        // mesmo quando getCapabilities() não anuncia H.265 (há navegadores que
+        // reproduzem e não o declaram). Se falhar de verdade, tenta HLS/HEVC
+        // apenas quando o MSE aceita HEVC; H.264 é o último recurso.
+        if (deliveryMode === 'grid-hevc' && /h265|hevc|hvc1|265/i.test(String(sourceCodec ?? ''))) {
+          const capable: LiveProtocol[] = ['webrtc'];
+          if (MSE_DECODES_HEVC) capable.push('llhls', 'hls');
+          protocolOrder = capable.filter((protocol) => !failedProtocolsRef.current.has(protocol));
+          if (!protocolOrder.length) {
+            failedProtocolsRef.current.clear();
+            streamUrlsCache.clear(cacheKey);
+            setProtocolReason('H.265 não foi reproduzido neste cliente; ativando a contingência H.264.');
+            setGridUsesH264Fallback(true);
+            return;
+          }
         }
 
         // Modo "Máxima qualidade" com fonte H.265: só protocolos que este navegador
@@ -1543,6 +1578,14 @@ export function LiveStreamPlayer({
               activeProtocolRef.current = null;
             }
           }
+        }
+
+        if (deliveryMode === 'grid-hevc') {
+          failedProtocolsRef.current.clear();
+          streamUrlsCache.clear(cacheKey);
+          setProtocolReason('H.265 não foi reproduzido neste cliente; ativando a contingência H.264.');
+          setGridUsesH264Fallback(true);
+          return;
         }
 
         failedProtocolsRef.current.clear();

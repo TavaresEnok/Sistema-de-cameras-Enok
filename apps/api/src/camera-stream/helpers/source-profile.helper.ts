@@ -22,7 +22,7 @@ import { type LiveViewMode } from './live-delivery-profile.helper';
 export type SourceProfile = 'main' | 'sub';
 
 export function liveViewModeToSourceProfile(mode: LiveViewMode): SourceProfile {
-  return mode === 'grid' ? 'sub' : 'main';
+  return mode === 'grid' || mode === 'grid-hevc' ? 'sub' : 'main';
 }
 
 /**

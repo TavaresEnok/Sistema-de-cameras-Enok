@@ -58,8 +58,8 @@ type SrsPublishHookRequest = {
 export function isLoopbackMediaWorkerAuthorized(body: MediaMtxAuthRequest) {
   const action = String(body?.action ?? '');
   const path = String(body?.path ?? '');
-  const sourcePath = /^cam_[0-9a-f]{32}(?:_grid|_orig)?_source$/i.test(path);
-  const outputPath = /^cam_[0-9a-f]{32}(?:_grid|_orig)?$/i.test(path);
+  const sourcePath = /^cam_[0-9a-f]{32}(?:_grid|_grid_hevc|_orig)?_source$/i.test(path);
+  const outputPath = /^cam_[0-9a-f]{32}(?:_grid|_grid_hevc|_orig)?$/i.test(path);
   const loopback =
     body?.ip === '127.0.0.1'
     || body?.ip === '::1'
@@ -297,7 +297,7 @@ export class CameraStreamController {
       return deny('Ação de mídia não autorizada.');
     }
 
-    const match = /^cam_([0-9a-f]{32})(?:_grid|_orig)?$/i.exec(String(body?.path ?? ''));
+    const match = /^cam_([0-9a-f]{32})(?:_grid|_grid_hevc|_orig)?$/i.exec(String(body?.path ?? ''));
     if (!match) return deny('Caminho de mídia inválido.');
 
     const token = String(body?.token ?? '').trim();
@@ -442,7 +442,9 @@ export class CameraStreamController {
         // ESPECTADOR marca (este endpoint). Warm-up e watchdog chamam o ensure
         // por dentro do serviço e não marcam — senão o boot "veria" a frota
         // inteira e a política viraria "quente para sempre" de novo.
-        if (viewMode === 'grid') this.mediamtxProxyService.markGridViewed(cameraId);
+        if (viewMode === 'grid' || viewMode === 'grid-hevc') {
+          this.mediamtxProxyService.markGridViewed(cameraId);
+        }
         const ensured = await this.mediamtxProxyService.ensurePathForCamera(cameraId, viewMode);
         mediaBridge = this.mediamtxProxyService.buildPublicUrls(req, ensured.pathName, ensured.sourceUrl);
         measuredLiveCodec = ensured.sourceVideoCodec;
@@ -519,12 +521,12 @@ export class CameraStreamController {
       originalProfile,
       deliveryProfile,
       deliveryMode: viewMode,
-      deliveryTarget: viewMode === 'grid'
+      deliveryTarget: viewMode === 'grid' || viewMode === 'grid-hevc'
         ? {
             maxWidth: GRID_LIVE_MAX_WIDTH,
             maxHeight: GRID_LIVE_MAX_HEIGHT,
             targetFps: GRID_LIVE_TARGET_FPS,
-            browserCodec: 'h264',
+            browserCodec: viewMode === 'grid-hevc' ? sourceCodec : 'h264',
           }
         : {
             originalResolution: true,
@@ -536,7 +538,9 @@ export class CameraStreamController {
         supportsOriginalOnClient,
         recommendedProtocol: protocolOrder[0],
         protocolOrder,
-        reason: smartOriginalEnabled
+        reason: viewMode === 'grid-hevc'
+          ? 'A grade recebe o substream no codec original e prioriza WebRTC; H.264 é apenas contingência do cliente.'
+          : smartOriginalEnabled
           ? 'Perfil Live recebido em HEVC; navegador recebe H.264, enquanto gravação permanece no perfil H.265 dedicado.'
           : configuredPreferred === 'webrtc'
             ? 'WebRTC configurado como protocolo principal; LL-HLS/HLS ficam apenas como contingência técnica.'
@@ -576,7 +580,7 @@ export class CameraStreamController {
               : 'Este navegador não decodifica H.265, então o servidor converte para H.264.',
             hint: supportsOriginalOnClient
               ? 'O modo "Máxima qualidade" entrega H.265 sem conversão.'
-              : 'Safari e Edge reproduzem H.265 direto, sem custo de conversão.',
+              : 'Um cliente com H.265/WebRTC reproduz o codec direto, sem custo de conversão.',
           }
           : null,
         liveProfile,

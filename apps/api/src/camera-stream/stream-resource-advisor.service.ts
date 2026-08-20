@@ -391,8 +391,8 @@ export class StreamResourceAdvisorService {
       this.addFinding(findings, {
         code: 'hevc_live_transcode',
         severity: livePixels && livePixels > 2_000_000 ? 'critical' : 'warning',
-        message: 'O stream de live é HEVC/H.265 e o navegador exige entrega H.264/WebRTC.',
-        action: 'Manter transcode on-demand ou configurar um perfil live H.264 quando a câmera permitir.',
+        message: 'O stream de live é HEVC/H.265; clientes incompatíveis ainda podem exigir contingência H.264.',
+        action: 'Priorizar H.265/WebRTC e manter transcode on-demand apenas para clientes incompatíveis.',
       });
     }
 

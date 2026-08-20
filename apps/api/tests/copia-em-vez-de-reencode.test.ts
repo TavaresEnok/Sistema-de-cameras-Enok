@@ -23,7 +23,7 @@ test('fonte menor que o teto também é copiada', () => {
   assert.equal(decidirCopiaDeVideo({ codec: 'h264', largura: 528, altura: 360, fps: 15 }, GRADE).copiar, true);
 });
 
-test('H.265 NUNCA passa direto — o navegador não toca no mosaico', () => {
+test('no path de contingência H.264, H.265 não pode passar sem conversão', () => {
   const d = decidirCopiaDeVideo({ codec: 'h265', largura: 640, altura: 360, fps: 20 }, GRADE);
   assert.equal(d.copiar, false);
   assert.equal(d.motivo, 'codec-incompativel');

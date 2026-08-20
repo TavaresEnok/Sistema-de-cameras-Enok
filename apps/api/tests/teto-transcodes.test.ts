@@ -26,11 +26,18 @@ function makeProxy(overrides: Record<string, unknown> = {}) {
   return mgr;
 }
 
-test('o teto padrão sai da medição: ~10 transcodes por núcleo', () => {
+test('o teto padrão preserva metade do orçamento: ~5 transcodes por núcleo', () => {
   const mgr = makeProxy();
   const nucleos = require('node:os').cpus().length;
-  assert.equal(mgr.maxTranscodes, Math.max(8, nucleos * 10),
+  assert.equal(mgr.maxTranscodes, Math.max(4, nucleos * 5),
     'o padrão precisa acompanhar o tamanho da máquina, não ser um número fixo');
+});
+
+test('grade HEVC tem path próprio para coexistir com a contingência H.264', () => {
+  const mgr = makeProxy();
+  const cameraId = '12345678-1234-1234-1234-123456789abc';
+  assert.equal(mgr.pathNameFromCameraId(cameraId, 'grid'), 'cam_12345678123412341234123456789abc_grid');
+  assert.equal(mgr.pathNameFromCameraId(cameraId, 'grid-hevc'), 'cam_12345678123412341234123456789abc_grid_hevc');
 });
 
 test('o watchdog conta só os paths que REALMENTE transcodificam', () => {

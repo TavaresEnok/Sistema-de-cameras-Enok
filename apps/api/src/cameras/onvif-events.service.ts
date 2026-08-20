@@ -76,7 +76,16 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   private isDisabled() {
-    return String(process.env.AI_AUTO_START_ENABLED ?? 'true').trim().toLowerCase() === 'false';
+    // Controle independente da detecção de movimento nativa. Desligar este
+    // daemon NÃO desliga ONVIF para PTZ/perfis e NÃO desliga a IA local: apenas
+    // impede auto-probe, assinatura de eventos e a promoção automática de
+    // `motionTrigger` para CAMERA. Assim um benchmark pode prender toda a frota
+    // em SYSTEM sem o ciclo de 15 min desfazer a configuração no meio do teste.
+    const nativeMotionEnabled = String(
+      process.env.AI_ONVIF_MOTION_EVENTS_ENABLED ?? 'true',
+    ).trim().toLowerCase() !== 'false';
+    return !nativeMotionEnabled
+      || String(process.env.AI_AUTO_START_ENABLED ?? 'true').trim().toLowerCase() === 'false';
   }
 
   private resubscribeAfterMs() {
