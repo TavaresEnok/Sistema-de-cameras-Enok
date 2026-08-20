@@ -9,6 +9,14 @@ import { liveDetectionsPoller } from '../lib/live-detections-poller';
 import { SmoothDetectionOverlay } from './SmoothDetectionOverlay';
 import { useRedeStore } from '../store/redeStore';
 import { classificarFalhaDePlayer } from '../lib/qualidade-de-rede';
+import {
+  buildLiveProtocolOrder,
+  liveProtocolStorageKey,
+  shouldUseGridH264Fallback,
+  videoCodecFamily,
+  type LiveDeliveryMode,
+  type LiveProtocol,
+} from '../lib/live-protocol-policy';
 
 type LiveStreamPlayerProps = {
   cameraId: string;
@@ -66,11 +74,11 @@ const LIVE_RENDER_STALL_RECONNECT_MS = 20000;
 const LIVE_BLACK_FRAME_FAILOVER_MS = 6000;
 const LIVE_VIEW_LEASE_TTL_SECONDS = 20;
 const LIVE_VIEW_HEARTBEAT_MS = 7000;
-const LIVE_PROTOCOL_STORAGE_PREFIX = 'drac-live-protocol';
 const LIVE_QUALITY_STORAGE_PREFIX = 'drac-live-quality';
+const WEBRTC_HEVC_PROOF_STORAGE_KEY = 'drac-live-capability:webrtc-hevc:v1';
+const WEBRTC_HEVC_PROOF_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const STREAM_URL_CACHE_TTL_MS = 60 * 1000;
 type ActiveLiveProtocol = 'WEBRTC' | 'LL-HLS' | 'HLS';
-type LiveProtocol = 'auto' | 'flv' | 'hls' | 'webrtc' | 'mjpeg' | 'llhls';
 // Qualidade escolhida pelo operador na visualização de câmera única (1x1):
 //  - instant  → sub-stream (mesmo da grade): latência mínima, zero CPU, imagem reduzida
 //  - balanced → principal transcodificado H.264: latência mínima, 1080p, ~0,6 núcleo
@@ -78,7 +86,21 @@ type LiveProtocol = 'auto' | 'flv' | 'hls' | 'webrtc' | 'mjpeg' | 'llhls';
 //               idêntica à câmera; WebRTC quando o navegador decodifica H.265, senão
 //               LL-HLS/HLS (~1–3s de atraso); sem suporte nenhum → volta a balanced.
 type LiveQualityMode = 'instant' | 'balanced' | 'max';
-type LiveDeliveryMode = 'selected' | 'grid' | 'grid-hevc' | 'original';
+function hasWebrtcHevcProof() {
+  try {
+    const provedAt = Number(window.localStorage.getItem(WEBRTC_HEVC_PROOF_STORAGE_KEY));
+    return Number.isFinite(provedAt) && provedAt > 0 && Date.now() - provedAt <= WEBRTC_HEVC_PROOF_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+function storeWebrtcHevcProof() {
+  try {
+    window.localStorage.setItem(WEBRTC_HEVC_PROOF_STORAGE_KEY, String(Date.now()));
+  } catch {
+  }
+}
 
 function getStoredLiveQuality(cameraId: string): LiveQualityMode {
   try {
@@ -87,9 +109,9 @@ function getStoredLiveQuality(cameraId: string): LiveQualityMode {
     // Sem preferência explícita, navegador com HEVC recebe o bitstream original
     // (zero transcode). O incompatível começa em H.264. A escolha manual segue
     // persistida e sempre prevalece.
-    return BROWSER_DECODES_HEVC ? 'max' : 'balanced';
+    return BROWSER_DECODES_HEVC || hasWebrtcHevcProof() ? 'max' : 'balanced';
   } catch {
-    return BROWSER_DECODES_HEVC ? 'max' : 'balanced';
+    return BROWSER_DECODES_HEVC || hasWebrtcHevcProof() ? 'max' : 'balanced';
   }
 }
 
@@ -194,15 +216,6 @@ function friendlyLiveText(raw: string | null, fallback: string) {
   return TECHNICAL_LIVE_MESSAGE_REGEX.test(raw) ? fallback : raw;
 }
 
-function normalizeCodec(codec?: string | null) {
-  return String(codec ?? '').trim().toLowerCase();
-}
-
-function prefersModernBridge(codec?: string | null) {
-  const normalized = normalizeCodec(codec);
-  return normalized.includes('h265') || normalized.includes('hevc') || normalized.includes('hvc1') || normalized.includes('265');
-}
-
 // A preferência aprendida VENCE. Sem prazo, uma única falha passageira de WebRTC
 // (queda de link, servidor reiniciando) fixava aquela câmera em HLS naquele
 // navegador PARA SEMPRE: como o HLS funciona, o WebRTC nunca mais era tentado, e
@@ -220,13 +233,18 @@ const LIVE_URLS_TIMEOUT_MS = 20_000;
 // pré-requisito: esperar por ela atrasa a PRÓXIMA conexão do operador.
 const WHEP_DELETE_TIMEOUT_MS = 2_000;
 
-function getStoredProtocol(cameraId: string): LiveProtocol | null {
+function getStoredProtocol(
+  cameraId: string,
+  deliveryMode: LiveDeliveryMode,
+  sourceCodec?: string | null,
+): LiveProtocol | null {
   try {
-    const raw = window.localStorage.getItem(`${LIVE_PROTOCOL_STORAGE_PREFIX}:${cameraId}`);
+    const raw = window.localStorage.getItem(liveProtocolStorageKey(cameraId, deliveryMode, sourceCodec));
     if (!raw) return null;
-    // Formato novo: "<protocolo>|<timestamp>". O antigo (só o protocolo) ainda é
-    // aceito uma vez e migra na primeira gravação — ninguém perde a preferência
-    // ao atualizar, mas também ninguém fica preso ao valor eterno de antes.
+    // A chave v2 inclui modo de entrega e família do codec. Valores antigos e
+    // sem contexto são deliberadamente ignorados: foi justamente essa mistura
+    // que fez preferências de HLS da grade contaminarem outras visualizações.
+    // O timestamp ainda impede que uma falha passageira vire preferência eterna.
     const [valor, gravadoEm] = raw.split('|');
     if (gravadoEm) {
       const idade = Date.now() - Number(gravadoEm);
@@ -239,11 +257,16 @@ function getStoredProtocol(cameraId: string): LiveProtocol | null {
   }
 }
 
-function storeProtocol(cameraId: string, protocol: ActiveLiveProtocol) {
+function storeProtocol(
+  cameraId: string,
+  protocol: ActiveLiveProtocol,
+  deliveryMode: LiveDeliveryMode,
+  sourceCodec?: string | null,
+) {
   try {
     const normalized = protocol === 'LL-HLS' ? 'llhls' : protocol.toLowerCase();
     window.localStorage.setItem(
-      `${LIVE_PROTOCOL_STORAGE_PREFIX}:${cameraId}`,
+      liveProtocolStorageKey(cameraId, deliveryMode, sourceCodec),
       `${normalized}|${Date.now()}`,
     );
   } catch {
@@ -254,52 +277,6 @@ function normalizeActiveProtocol(protocol: ActiveLiveProtocol): LiveProtocol {
   if (protocol === 'WEBRTC') return 'webrtc';
   if (protocol === 'LL-HLS') return 'llhls';
   return 'hls';
-}
-
-function buildProtocolOrder(
-  cameraId: string,
-  preferred: LiveProtocol | null | undefined,
-  codec?: string | null,
-  smartOrder?: LiveProtocol[] | null,
-): LiveProtocol[] {
-  const stored = getStoredProtocol(cameraId);
-  const order: LiveProtocol[] = [];
-  const push = (protocol?: LiveProtocol | null) => {
-    if (!protocol || protocol === 'mjpeg' || protocol === 'auto' || protocol === 'flv') return;
-    if (!order.includes(protocol)) order.push(protocol);
-  };
-
-  if (smartOrder && smartOrder.length) {
-    // O QUE JÁ FUNCIONOU NESTA CÂMERA VEM PRIMEIRO.
-    //
-    // `smartOrder` é o palpite do servidor a partir do codec; `stored` é o
-    // protocolo que REALMENTE entregou vídeo aqui da última vez. Colocar o
-    // palpite antes do fato observado fazia toda montagem repetir a mesma
-    // tentativa fracassada — câmera que nunca fecha WebRTC pagava o timeout
-    // dele em cada abertura, em cada tile, para sempre. Fato observado ganha
-    // de heurística; o smartOrder continua logo atrás como plano B.
-    push(stored);
-    for (const protocol of smartOrder) push(protocol);
-    if (!order.includes('hls')) push('hls');
-    if (!order.includes('webrtc')) push('webrtc');
-    return order;
-  }
-  const normalizedPreferred = preferred === 'flv' ? 'auto' : preferred;
-  if (normalizedPreferred === 'webrtc') return ['webrtc', 'llhls', 'hls'];
-  if (normalizedPreferred === 'hls') return ['hls', 'llhls', 'webrtc'];
-  if (normalizedPreferred === 'llhls') return ['llhls', 'hls', 'webrtc'];
-
-  if (stored === 'llhls' || stored === 'hls') {
-    push(stored);
-    push('llhls');
-    push('hls');
-    push('webrtc');
-    return order;
-  }
-  if (prefersModernBridge(codec)) {
-    return ['webrtc', 'llhls', 'hls'];
-  }
-  return ['webrtc', 'llhls', 'hls'];
 }
 
 function seekVideoToLiveEdge(element: HTMLVideoElement) {
@@ -364,6 +341,7 @@ export function LiveStreamPlayer({
   const retryTimerRef = useRef<number | null>(null);
   const retryAttemptRef = useRef(0);
   const activeProtocolRef = useRef<ActiveLiveProtocol | null>(null);
+  const primaryProtocolRef = useRef<LiveProtocol>('webrtc');
   const hiddenAtRef = useRef<number | null>(null);
   const liveReloadAtRef = useRef(0);
   const preserveFrameOnReloadRef = useRef(false);
@@ -375,6 +353,7 @@ export function LiveStreamPlayer({
   });
   const blackFrameSinceRef = useRef<number | null>(null);
   const failedProtocolsRef = useRef<Set<LiveProtocol>>(new Set());
+  const sourceVideoCodecRef = useRef<string | null>(null);
   const visualCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const liveViewSessionIdRef = useRef<string>(createLiveViewSessionId(cameraId));
   // viewMode atual lido pelo heartbeat do lease sem recriar a sessão a cada
@@ -474,16 +453,10 @@ export function LiveStreamPlayer({
     : gridUsesH264Fallback ? 'grid' : 'grid-hevc';
 
   const changeQuality = useCallback((next: LiveQualityMode) => {
-    // Guard: "Máxima" numa câmera H.265 + navegador sem HEVC não pode funcionar.
-    // Evita o "pulo" do botão e uma reconexão inútil — avisa e mantém o modo atual.
-    if (
-      next === 'max'
-      && !BROWSER_DECODES_HEVC
-      && /h265|hevc|hvc1|265/i.test(String(sourceVideoCodec ?? ''))
-    ) {
-      setNotice('Máxima indisponível neste navegador (não reproduz H.265). Mantido em H.264. No Safari, a Máxima mostra o H.265 original.');
-      return;
-    }
+    // A declaração de codecs do navegador é apenas uma pista: alguns clientes
+    // reproduzem HEVC/WebRTC sem anunciá-lo em getCapabilities(). Uma escolha
+    // explícita por "Máxima" ganha um teste real; se ele falhar, a própria
+    // máquina de estados retorna com segurança ao caminho H.264.
     setQualityMode((current) => {
       if (current === next) return current;
       storeLiveQuality(cameraId, next);
@@ -494,9 +467,10 @@ export function LiveStreamPlayer({
       if (hasFrameRef.current) preserveFrameOnReloadRef.current = true;
       return next;
     });
-  }, [cameraId, sourceVideoCodec]);
+  }, [cameraId]);
 
   const compactLiveOverlay = liveViewMode === 'grid';
+  const browserHevcKnown = BROWSER_DECODES_HEVC || hasWebrtcHevcProof();
   const loadingLabel = compactLiveOverlay
     ? 'Conectando…'
     : retryMessage
@@ -628,6 +602,7 @@ export function LiveStreamPlayer({
     lastBitrateSampleRef.current = null;
     setProtocolReason(null);
     setSourceVideoCodec(null);
+    sourceVideoCodecRef.current = null;
     setIsTranscodedForBrowser(false);
     setMeasuredBitrateKbps(null);
     setLiveLatencySeconds(null);
@@ -785,18 +760,28 @@ export function LiveStreamPlayer({
       failedProtocolsRef.current.add(normalizeActiveProtocol(active));
       const transitionReason = `${active} falhou: ${reason}. Alternando para o próximo protocolo.`;
       setProtocolReason(transitionReason);
-      if (deliveryMode === 'grid-hevc') {
-        const h265Protocols: LiveProtocol[] = MSE_DECODES_HEVC
-          ? ['webrtc', 'llhls', 'hls']
-          : ['webrtc'];
-        if (h265Protocols.every((protocol) => failedProtocolsRef.current.has(protocol))) {
+      const actualCodec = sourceVideoCodecRef.current;
+      const candidates = buildLiveProtocolOrder({
+        deliveryMode,
+        sourceCodec: actualCodec,
+        mseDecodesHevc: MSE_DECODES_HEVC,
+      });
+      const exhausted = candidates.every((protocol) => failedProtocolsRef.current.has(protocol));
+      if (exhausted) {
+        if (shouldUseGridH264Fallback(deliveryMode, actualCodec)) {
           failedProtocolsRef.current.clear();
-          setProtocolReason('H.265 não foi reproduzido neste cliente; ativando a contingência H.264.');
+          setProtocolReason('A fonte original não foi reproduzida neste cliente; ativando a contingência H.264.');
           setGridUsesH264Fallback(true);
           return;
         }
-      }
-      if (failedProtocolsRef.current.has('webrtc') && failedProtocolsRef.current.has('llhls') && failedProtocolsRef.current.has('hls')) {
+        if (deliveryMode === 'original' && videoCodecFamily(actualCodec) === 'hevc') {
+          failedProtocolsRef.current.clear();
+          storeLiveQuality(cameraId, 'balanced');
+          setQualityMode('balanced');
+          setProtocolReason('O teste real de H.265 falhou; usando a contingência H.264.');
+          setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');
+          return;
+        }
         scheduleFastRetry('Reconectando transmissão...', true);
         return;
       }
@@ -804,7 +789,7 @@ export function LiveStreamPlayer({
       return;
     }
     scheduleFastRetry('Reconectando transmissão...', true);
-  }, [deliveryMode, requestFreshLiveBoot, scheduleFastRetry]);
+  }, [cameraId, deliveryMode, requestFreshLiveBoot, scheduleFastRetry]);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -835,7 +820,16 @@ export function LiveStreamPlayer({
       hasFrameRef.current = true;
       setIsLoading(false);
       setHasLiveFrame(true);
-      storeProtocol(cameraId, protocol);
+      const actualCodec = sourceVideoCodecRef.current;
+      storeProtocol(cameraId, protocol, deliveryMode, actualCodec);
+      if (normalizeActiveProtocol(protocol) === primaryProtocolRef.current) {
+        setProtocolReason(null);
+      }
+      if (protocol === 'WEBRTC' && videoCodecFamily(actualCodec) === 'hevc') {
+        // Prova observada vence uma declaração incompleta do navegador. Ela é
+        // local a este navegador e expira, portanto não contamina outros clientes.
+        storeWebrtcHevcProof();
+      }
     };
 
     const scheduleReconnect = (message: string) => {
@@ -934,61 +928,39 @@ export function LiveStreamPlayer({
         const sourceCodec = data?.sourceVideoCodec ?? data?.detectedVideoCodec;
         const liveDiagnostics = data?.liveDiagnostics ?? null;
         mediaAuthTokenRef.current = streamToken;
+        sourceVideoCodecRef.current = sourceCodec ?? null;
         setSourceVideoCodec(sourceCodec ?? null);
         setIsTranscodedForBrowser(Boolean(liveDiagnostics?.liveTranscodedForBrowser));
         setTranscodeCost((liveDiagnostics as { transcodeCost?: typeof transcodeCost } | null)?.transcodeCost ?? null);
-        const orderedProtocols = buildProtocolOrder(
-          cameraId,
-          preferredLiveProtocol,
+        const orderedProtocols = buildLiveProtocolOrder({
+          deliveryMode,
           sourceCodec,
-          data?.smartLive?.protocolOrder ?? null,
-        );
+          preferred: preferredLiveProtocol,
+          smartOrder: data?.smartLive?.protocolOrder ?? null,
+          learned: getStoredProtocol(cameraId, deliveryMode, sourceCodec),
+          mseDecodesHevc: MSE_DECODES_HEVC,
+        });
+        primaryProtocolRef.current = orderedProtocols[0] ?? 'webrtc';
         let protocolOrder: LiveProtocol[] = orderedProtocols.filter((protocol) => !failedProtocolsRef.current.has(protocol));
-        if (!protocolOrder.length && deliveryMode !== 'grid-hevc') {
-          failedProtocolsRef.current.clear();
-          protocolOrder = orderedProtocols;
-          setProtocolReason('Reconectando transmissão.');
-        }
-
-        // Política da grade: TODA fonte tenta WebRTC primeiro, inclusive H.264.
-        // A preferência aprendida por câmera não pode fazer um tile ir direto
-        // para HLS: ela pode ter sido gravada durante uma falha passageira e
-        // deixava a grade permanentemente misturada. Para HEVC, HLS só é uma
-        // contingência quando o MSE do navegador declara que consegue decodificá-lo.
-        if (deliveryMode === 'grid-hevc') {
-          const sourceIsHevc = /h265|hevc|hvc1|265/i.test(String(sourceCodec ?? ''));
-          const capable: LiveProtocol[] = ['webrtc'];
-          if (!sourceIsHevc || MSE_DECODES_HEVC) capable.push('llhls', 'hls');
-          protocolOrder = capable.filter((protocol) => !failedProtocolsRef.current.has(protocol));
-          if (!protocolOrder.length) {
+        if (!protocolOrder.length) {
+          if (shouldUseGridH264Fallback(deliveryMode, sourceCodec)) {
             failedProtocolsRef.current.clear();
             streamUrlsCache.clear(cacheKey);
             setProtocolReason('A fonte original não foi reproduzida neste cliente; ativando a contingência H.264.');
             setGridUsesH264Fallback(true);
             return;
           }
-        }
-
-        // Modo "Máxima qualidade" com fonte H.265: só protocolos que este navegador
-        // decodifica (WebRTC-HEVC quando disponível — latência mínima; senão
-        // LL-HLS/HLS via MSE). Sem nenhum suporte → volta sozinho ao equilibrado.
-        if (deliveryMode === 'original' && /h265|hevc/i.test(String(sourceCodec ?? ''))) {
-          const capable: LiveProtocol[] = [];
-          if (WEBRTC_DECODES_HEVC) capable.push('webrtc');
-          if (MSE_DECODES_HEVC) capable.push('llhls', 'hls');
-          if (!capable.length) {
+          if (deliveryMode === 'original' && videoCodecFamily(sourceCodec) === 'hevc') {
             storeLiveQuality(cameraId, 'balanced');
             setQualityMode('balanced');
             failedProtocolsRef.current.clear();
             setProtocolReason('Este navegador não decodifica H.265 — usando o modo equilibrado (H.264).');
-            setNotice('Máxima indisponível neste navegador (não reproduz H.265). Exibindo em H.264. No Safari, a Máxima mostra o H.265 original.');
+            setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');
             return;
           }
-          protocolOrder = capable.filter((protocol) => !failedProtocolsRef.current.has(protocol));
-          if (!protocolOrder.length) {
-            failedProtocolsRef.current.clear();
-            protocolOrder = capable;
-          }
+          failedProtocolsRef.current.clear();
+          protocolOrder = orderedProtocols;
+          setProtocolReason('Reconectando transmissão.');
         }
 
         if (rawPosterUrl && streamToken) {
@@ -1582,11 +1554,20 @@ export function LiveStreamPlayer({
           }
         }
 
-        if (deliveryMode === 'grid-hevc') {
+        if (shouldUseGridH264Fallback(deliveryMode, sourceCodec)) {
           failedProtocolsRef.current.clear();
           streamUrlsCache.clear(cacheKey);
           setProtocolReason('A fonte original não foi reproduzida neste cliente; ativando a contingência H.264.');
           setGridUsesH264Fallback(true);
+          return;
+        }
+        if (deliveryMode === 'original' && videoCodecFamily(sourceCodec) === 'hevc') {
+          failedProtocolsRef.current.clear();
+          streamUrlsCache.clear(cacheKey);
+          storeLiveQuality(cameraId, 'balanced');
+          setQualityMode('balanced');
+          setProtocolReason('O teste real de H.265 falhou; usando a contingência H.264.');
+          setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');
           return;
         }
 
@@ -2324,9 +2305,9 @@ export function LiveStreamPlayer({
                 [
                   'max',
                   'Máxima',
-                  BROWSER_DECODES_HEVC
+                  browserHevcKnown
                     ? 'Vídeo original da câmera sem conversão (preserva o H.265 quando a câmera usa esse codec). Pode ter 1–3 s de atraso.'
-                    : 'Vídeo original sem conversão. Este navegador NÃO reproduz H.265 — em câmeras H.265 a exibição volta automaticamente ao Equilibrado (H.264). No Safari, mostra o H.265 real.',
+                    : 'Vídeo original sem conversão. O navegador não declarou H.265; o sistema fará um teste real por WebRTC e voltará automaticamente ao Equilibrado (H.264) se não reproduzir.',
                 ],
               ] as const).map(([mode, label, hint]) => {
                 const isActive = qualityMode === mode;
@@ -2334,7 +2315,7 @@ export function LiveStreamPlayer({
                 // decodifica → aí a Máxima cai para H.264. Numa câmera H.264, a Máxima
                 // (passthrough) funciona em qualquer navegador, então não marca nada.
                 const cameraIsHevc = /h265|hevc|hvc1|265/i.test(String(sourceVideoCodec ?? ''));
-                const maxDegraded = mode === 'max' && !BROWSER_DECODES_HEVC && cameraIsHevc;
+                const maxDegraded = mode === 'max' && !browserHevcKnown && cameraIsHevc;
                 return (
                   <button
                     key={mode}
