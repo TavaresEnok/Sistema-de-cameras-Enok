@@ -950,18 +950,20 @@ export function LiveStreamPlayer({
           setProtocolReason('Reconectando transmissão.');
         }
 
-        // Política da grade: tenta o substream no codec original por WebRTC
-        // mesmo quando getCapabilities() não anuncia H.265 (há navegadores que
-        // reproduzem e não o declaram). Se falhar de verdade, tenta HLS/HEVC
-        // apenas quando o MSE aceita HEVC; H.264 é o último recurso.
-        if (deliveryMode === 'grid-hevc' && /h265|hevc|hvc1|265/i.test(String(sourceCodec ?? ''))) {
+        // Política da grade: TODA fonte tenta WebRTC primeiro, inclusive H.264.
+        // A preferência aprendida por câmera não pode fazer um tile ir direto
+        // para HLS: ela pode ter sido gravada durante uma falha passageira e
+        // deixava a grade permanentemente misturada. Para HEVC, HLS só é uma
+        // contingência quando o MSE do navegador declara que consegue decodificá-lo.
+        if (deliveryMode === 'grid-hevc') {
+          const sourceIsHevc = /h265|hevc|hvc1|265/i.test(String(sourceCodec ?? ''));
           const capable: LiveProtocol[] = ['webrtc'];
-          if (MSE_DECODES_HEVC) capable.push('llhls', 'hls');
+          if (!sourceIsHevc || MSE_DECODES_HEVC) capable.push('llhls', 'hls');
           protocolOrder = capable.filter((protocol) => !failedProtocolsRef.current.has(protocol));
           if (!protocolOrder.length) {
             failedProtocolsRef.current.clear();
             streamUrlsCache.clear(cacheKey);
-            setProtocolReason('H.265 não foi reproduzido neste cliente; ativando a contingência H.264.');
+            setProtocolReason('A fonte original não foi reproduzida neste cliente; ativando a contingência H.264.');
             setGridUsesH264Fallback(true);
             return;
           }
@@ -1583,7 +1585,7 @@ export function LiveStreamPlayer({
         if (deliveryMode === 'grid-hevc') {
           failedProtocolsRef.current.clear();
           streamUrlsCache.clear(cacheKey);
-          setProtocolReason('H.265 não foi reproduzido neste cliente; ativando a contingência H.264.');
+          setProtocolReason('A fonte original não foi reproduzida neste cliente; ativando a contingência H.264.');
           setGridUsesH264Fallback(true);
           return;
         }
