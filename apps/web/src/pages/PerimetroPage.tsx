@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
 import { ShieldAlert, Spline, SquareDashed, EyeOff } from 'lucide-react';
 import { SeletorDeCamera } from '../components/SeletorDeCamera';
+import { IlustracaoPerimetro } from '../components/IlustracaoPerimetro';
 import { DetectionZonesEditor, type DetectionZone } from '../components/DetectionZonesEditor';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
@@ -91,6 +92,15 @@ export default function PerimetroPage() {
             <p className="mx-auto mt-2 max-w-md text-[12px] leading-relaxed text-muted-foreground">
               O perímetro (linha e zona) é configurado por câmera, desenhado sobre
               a imagem dela. Cadastre ou ative uma câmera para começar.
+            </p>
+            {/* Sem câmera, o lugar da imagem ficava vazio e ninguém entendia o
+                que iria desenhar ali. O exemplo mostra o resultado antes de
+                existir a primeira câmera. */}
+            <div className="mx-auto mt-5 w-full max-w-sm overflow-hidden rounded-lg border border-border">
+              <IlustracaoPerimetro className="block h-auto w-full" />
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Assim ficará sobre a imagem da sua câmera.
             </p>
           </div>
           <div className="flex justify-center gap-2 px-8 py-4">

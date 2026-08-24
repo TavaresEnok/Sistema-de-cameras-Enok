@@ -12,6 +12,7 @@ const { normalizeComputeNodes, validateComputeNodes, summarizeNodes } = require(
 const { normalizeAiPolicy, validateAiPolicy, applyAiPolicyToRestrictions, describeAiPolicy } = require('./ai-policy');
 const { normalizarTeto, tetoParaHeartbeat } = require('./teto-de-cameras');
 const { decidirMatricula } = require('./matricula');
+const { decidirRemocao } = require('./remocao-de-instalacao');
 const {
   normalizeCloudStorage,
   validateCloudStorage,
@@ -3822,16 +3823,28 @@ async function route(req, res) {
       if (req.method === 'DELETE' && detailMatch) {
         const id = decodeURIComponent(detailMatch[1]);
         const item = db.installations[id];
-        if (!item) return json(req, res, 404, { error: 'installation_not_found' });
-        if (item.lastHeartbeatAt) {
-          return json(req, res, 409, {
-            error: 'installation_already_active',
-            message: 'Não é possível remover por aqui uma instalação que já enviou heartbeat.',
+        // ── REMOVER INSTALAÇÃO, INCLUSIVE ATIVA ─────────────────────────────
+        //
+        // "não deve ter instalação sem central" (dono, 24/08/2026). Antes só
+        // dava para cancelar provisionamento pendente, e cliente que saía
+        // ficava para sempre na frota — a `dguardian` era o caso.
+        //
+        // Não apagamos NADA na máquina do cliente: quem faz o serviço parar é a
+        // licença. Sem registro aqui, ela restringe em 10 dias e suspende em 15.
+        const decisao = decidirRemocao({ existente: item, confirmacao: url.searchParams.get('confirmar') });
+        if (!decisao.permitido) {
+          const mensagens = {
+            'nao-encontrada': 'Instalação não encontrada.',
+            'confirmacao-invalida': 'Para remover uma instalação ATIVA, confirme digitando o código dela.',
+          };
+          return json(req, res, decisao.http, {
+            error: decisao.motivo,
+            message: mensagens[decisao.motivo] || 'Não foi possível remover.',
           });
         }
         delete db.installations[id];
         addAuditEvent(db, req, {
-          type: 'installation.provision_deleted',
+          type: decisao.motivo === 'remover-ativa' ? 'installation.removed' : 'installation.provision_deleted',
           actor: actor.email,
           result: 'accepted',
           installationId: id,

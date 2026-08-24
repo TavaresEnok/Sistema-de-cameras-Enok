@@ -3868,6 +3868,7 @@
                   </div>` : `
                   <div class="license-actions">
                     <button id="copy-selected-diagnostics" class="primary">Copiar diagnóstico</button>
+                    <button id="remove-installation" class="danger">Remover instalação</button>
                     <button id="copy-selected-installer">Copiar reinstalador oficial</button>
                   </div>
                   <div class="subtext">O diagnóstico é sanitizado: não inclui chave de licença, token nem segredos.</div>`}
@@ -4074,6 +4075,7 @@
         els.detail.querySelector('#copy-selected-diagnostics')?.addEventListener('click', () => copyDiagnosticsFor(item.id));
         els.detail.querySelector('#copy-selected-installer')?.addEventListener('click', () => copyInstallerFor(item.id));
         els.detail.querySelector('#delete-pending-install')?.addEventListener('click', () => deletePendingInstallation(item.id));
+        els.detail.querySelector('#remove-installation')?.addEventListener('click', () => removeInstallation(item.id));
         els.detail.querySelector('#request-reactivation-archive')?.addEventListener('click', () => requestReactivationArchive(item.id));
         els.detail.querySelector('#delete-reactivation-archive')?.addEventListener('click', () => deleteReactivationArchive(item.id));
         els.detail.querySelector('#restore-reactivation-archive')?.addEventListener('click', () => prepareReactivation(item.id));
@@ -5098,6 +5100,38 @@
           btn.textContent = 'Gerar instalação oficial';
         }
       }
+      /**
+       * Remove uma instalação ATIVA da Central.
+       *
+       * Não apaga nada na máquina do cliente: quem faz o serviço parar é a
+       * licença — sem registro aqui, ela restringe em 10 dias e suspende em 15.
+       *
+       * Pede o código digitado porque este é o único botão do painel que tira
+       * a licença de um cliente pagante, e o efeito só aparece duas semanas
+       * depois — longe demais para alguém ligar uma coisa à outra.
+       */
+      async function removeInstallation(id) {
+        const digitado = window.prompt(
+          `Remover a instalação "${id}" da Central?\n\n`
+          + 'Ela perde a licença: restringe em 10 dias e SUSPENDE em 15.\n'
+          + 'Nada é apagado na máquina do cliente.\n\n'
+          + `Para confirmar, digite o código da instalação: ${id}`,
+        );
+        if (digitado === null) return;
+        const res = await fetch(
+          centralUrl(`/api/admin/installations/${encodeURIComponent(id)}?confirmar=${encodeURIComponent(digitado.trim())}`),
+          { method: 'DELETE', credentials: 'include' },
+        );
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          showToast(d.message || 'Não foi possível remover a instalação.');
+          return;
+        }
+        showToast('Instalação removida da Central.');
+        state.selected = null;
+        await load();
+      }
+
       async function deletePendingInstallation(id) {
         if (!confirm('Cancelar esta instalação pendente?')) return;
         const res = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(id)}`), { method: 'DELETE', credentials: 'include' });
