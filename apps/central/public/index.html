@@ -3801,6 +3801,15 @@
                         ${Object.entries(contractLabels).map(([value, label]) => `<option value="${value}" ${value === item.licenseStatus ? 'selected' : ''}>${label}</option>`).join('')}
                       </select>
                     </div>
+                    <div class="field"><label for="license-max-cameras">Câmeras contratadas</label>
+                      <input id="license-max-cameras" type="number" min="0" step="1"
+                             placeholder="vazio = sem limite"
+                             value="${item.maxCameras === null || item.maxCameras === undefined ? '' : Number(item.maxCameras)}">
+                      <div class="panel-subtitle" style="margin-top:4px">
+                        Teto total de câmeras desta instalação. Ao atingir, o cadastro de novas é
+                        recusado — nenhuma câmera existente é removida. Vazio = sem limite.
+                      </div>
+                    </div>
                     <div class="field"><label for="license-message">Mensagem administrativa</label>
                       <textarea id="license-message" placeholder="Opcional — fica no histórico do contrato">${escapeHtml(item.licenseMessage || '')}</textarea>
                     </div>
@@ -4060,7 +4069,7 @@
           }
         });
 
-        els.detail.querySelector('#save-license')?.addEventListener('click', () => requestContractChange(item.id, els.detail.querySelector('#license-select').value, els.detail.querySelector('#license-message').value.trim()));
+        els.detail.querySelector('#save-license')?.addEventListener('click', () => requestContractChange(item.id, els.detail.querySelector('#license-select').value, els.detail.querySelector('#license-message').value.trim(), els.detail.querySelector('#license-max-cameras').value.trim()));
         els.detail.querySelector('#suspend-license')?.addEventListener('click', () => requestContractChange(item.id, 'SUSPENDED', els.detail.querySelector('#license-message').value.trim() || 'Suspensão administrativa.'));
         els.detail.querySelector('#copy-selected-diagnostics')?.addEventListener('click', () => copyDiagnosticsFor(item.id));
         els.detail.querySelector('#copy-selected-installer')?.addEventListener('click', () => copyInstallerFor(item.id));
@@ -5029,9 +5038,9 @@
       }
 
       /* ── Contrato ─────────────────────────────────────────────────────── */
-      function requestContractChange(id, status, message) {
+      function requestContractChange(id, status, message, maxCameras) {
         const item = state.installations.find(entry => entry.id === id);
-        state.pendingContract = { id, status, message };
+        state.pendingContract = { id, status, message, maxCameras };
         document.querySelector('#confirm-title').textContent = status === 'SUSPENDED' ? 'Suspender cliente' : 'Alterar política';
         document.querySelector('#confirm-copy').innerHTML = `<strong>${escapeHtml(item ? displayName(item) : id)}</strong><br>A política será alterada para <strong>${escapeHtml(contractLabels[status])}</strong>. ${status === 'SUSPENDED' ? 'Ao vivo, novas gravações e IA serão bloqueados após a próxima sincronização.' : 'A nova política será aplicada na próxima sincronização.'}`;
         document.querySelector('#confirm-apply').className = status === 'SUSPENDED' ? 'danger' : 'primary';
@@ -5043,7 +5052,14 @@
         const res = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(pending.id)}/license`), {
           method: 'PATCH', credentials: 'include',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ licenseStatus: pending.status, licenseMessage: pending.message || null }),
+          body: JSON.stringify({
+            licenseStatus: pending.status,
+            licenseMessage: pending.message || null,
+            // Teto de câmeras. String vazia é enviada de propósito: no servidor
+            // ela significa "sem limite", e é diferente de zero (que é limite
+            // de verdade). Mandar 0 por engano travaria o cliente inteiro.
+            maxCameras: pending.maxCameras === undefined ? undefined : pending.maxCameras,
+          }),
         });
         if (!res.ok) { showToast('Não foi possível salvar a política.'); return; }
         document.querySelector('#confirm-dialog').close();

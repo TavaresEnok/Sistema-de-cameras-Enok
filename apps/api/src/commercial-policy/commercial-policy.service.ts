@@ -2,6 +2,8 @@ import { HttpException, Injectable } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { type AuthUser } from '../common/types/auth-user.type';
+import { decidirLicenca } from './helpers/vencimento-de-licenca.helper';
+import { explicarTeto, podeCadastrarCamera } from './helpers/teto-de-cameras.helper';
 
 // `aiAdvanced` = OBJETO/FACE (pesadas). `aiMotion` = detecção de MOVIMENTO
 // (MOG2), que arma a gravação por movimento e é tratada à parte de propósito:
@@ -74,13 +76,37 @@ export class CommercialPolicyService {
     const rows = await this.prisma.systemSetting.findMany({
       where: {
         key: {
-          in: ['cloud.licenseStatus', 'cloud.licenseMessage', 'cloud.restrictions', 'cloud.lastSyncAt', 'cloud.lastError'],
+          in: [
+            'cloud.licenseStatus', 'cloud.licenseMessage', 'cloud.restrictions',
+            'cloud.lastSyncAt', 'cloud.lastError',
+            // Marca do maior instante já observado: é o que impede atrasar o
+            // relógio da máquina para ganhar dias de licença.
+            'cloud.maiorInstanteVisto',
+            // Teto de câmeras contratado, definido na Central.
+            'cloud.maxCameras',
+          ],
         },
       },
     });
     const settings = Object.fromEntries(rows.map((row) => [row.key, row.value]));
-    const licenseStatus = this.normalizeStatus(settings['cloud.licenseStatus']);
+    const statusDaCentral = this.normalizeStatus(settings['cloud.licenseStatus']);
     const centralRestrictions = this.parseRestrictions(settings['cloud.restrictions']);
+
+    // ── A LICENÇA VENCE SOZINHA ────────────────────────────────────────────
+    //
+    // Antes de 24/08/2026 a instalação só obedecia ao que a Central mandava. Sem
+    // contato, nada mudava — e `UNKNOWN` (o estado de quem nunca falou) liberava
+    // tudo. Bastava tirar a máquina da internet para rodar de graça, completo.
+    //
+    // Agora o silêncio corta sozinho: 10 dias restringe, 15 suspende. Vale o
+    // estado MAIS SEVERO entre o que a Central disse e o que o silêncio impõe.
+    const decisao = decidirLicenca({
+      estadoDaCentral: statusDaCentral,
+      ultimoContatoMs: this.paraMs(settings['cloud.lastSyncAt']),
+      agoraMs: Date.now(),
+      maiorInstanteVistoMs: this.paraMs(settings['cloud.maiorInstanteVisto']),
+    });
+    const licenseStatus = decisao.estado;
 
     const mergedRestrictions = {
       ...DEFAULT_RESTRICTIONS,
@@ -90,6 +116,15 @@ export class CommercialPolicyService {
 
     return {
       licenseStatus,
+      /** Estado que a Central mandou, antes do vencimento por silêncio. */
+      statusDaCentral,
+      /** Dias sem falar com a Central, para o painel explicar o que houve. */
+      diasSemContato: decisao.diasSemContato,
+      diasAteOProximoCorte: decisao.diasAteOProximoCorte,
+      avisarSobreContato: decisao.avisar,
+      motivoDaLicenca: decisao.motivo,
+      /** Teto de câmeras contratado. null = sem teto definido pela Central. */
+      maxCameras: this.paraInteiro(settings['cloud.maxCameras']),
       licenseMessage: settings['cloud.licenseMessage'] || null,
       lastSyncAt: settings['cloud.lastSyncAt'] || null,
       lastError: settings['cloud.lastError'] || null,
@@ -143,6 +178,52 @@ export class CommercialPolicyService {
         feature,
         licenseStatus: policy.licenseStatus,
         userMessage,
+        adminMessage,
+      },
+      423,
+    );
+  }
+
+  /** ISO → milissegundos. Vazio ou ilegível vira null (= nunca falou). */
+  private paraMs(valor: string | undefined): number | null {
+    if (!valor) return null;
+    const t = Date.parse(valor);
+    return Number.isFinite(t) ? t : null;
+  }
+
+  /** Texto → inteiro não negativo. Ausente ou ilegível vira null (= sem teto). */
+  private paraInteiro(valor: string | undefined): number | null {
+    if (valor === undefined || valor === null || String(valor).trim() === '') return null;
+    const n = Number(valor);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+  }
+
+  /**
+   * O teto de câmeras do contrato foi atingido?
+   *
+   * Fica AQUI, e não no serviço de câmeras, porque é regra comercial: quem
+   * decide o número é a Central. Lança 423 (o mesmo código das demais
+   * restrições comerciais) para o painel tratar de um jeito só.
+   *
+   * A contagem é do TOTAL cadastrado, incluindo as desativadas — desativar
+   * câmera é um clique e seria um jeito trivial de furar o contrato.
+   */
+  async assertCameraQuota(quantidade = 1, user?: AuthUser) {
+    const policy = await this.getPolicy();
+    const cadastradas = await this.prisma.camera.count();
+    const decisao = podeCadastrarCamera(cadastradas, policy.maxCameras, quantidade);
+    if (decisao.permitido) return policy;
+
+    const adminMessage = explicarTeto(decisao, policy.maxCameras);
+    throw new HttpException(
+      {
+        error: 'commercial_restriction',
+        code: 'commercial_camera_quota_exceeded',
+        feature: 'addCameras',
+        licenseStatus: policy.licenseStatus,
+        maxCameras: policy.maxCameras,
+        cadastradas,
+        userMessage: 'Não é possível cadastrar mais câmeras nesta instalação. Fale com o administrador.',
         adminMessage,
       },
       423,

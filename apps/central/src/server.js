@@ -10,6 +10,7 @@ const {
 } = require('./technical-documentation');
 const { normalizeComputeNodes, validateComputeNodes, summarizeNodes } = require('./datastore/compute-nodes');
 const { normalizeAiPolicy, validateAiPolicy, applyAiPolicyToRestrictions, describeAiPolicy } = require('./ai-policy');
+const { normalizarTeto, tetoParaHeartbeat } = require('./teto-de-cameras');
 const {
   normalizeCloudStorage,
   validateCloudStorage,
@@ -1383,6 +1384,8 @@ function licenseResponse(item) {
   return {
     licenseStatus: status,
     licenseMessage: item.licenseMessage || null,
+    // Teto de câmeras contratado. null = sem teto; a instalação trata assim.
+    maxCameras: tetoParaHeartbeat(item.maxCameras),
     // A política de IA do painel restringe ABAIXO do teto da licença (nunca acima).
     restrictions: applyAiPolicyToRestrictions(restrictions, item.aiPolicy),
     cloudStorage,
@@ -3808,6 +3811,19 @@ async function route(req, res) {
         item.licenseStatus = body.licenseStatus;
         item.licenseMessage = body.licenseMessage || null;
         item.licenseHistory = licenseHistory;
+        // ── TETO DE CÂMERAS CONTRATADO ────────────────────────────────────
+        //
+        // "se dguardian dizer que vai pagar apenas para 50 cameras, eu tenho
+        //  que limitar pela central" (dono, 24/08/2026)
+        //
+        // Vazio/null = SEM teto. Nunca inventamos um número: campo em branco
+        // travando o cadastro de quem pagou por mais seria pior que cobrar de
+        // menos. Zero é teto de verdade, e só existe se alguém escrever zero.
+        if (Object.prototype.hasOwnProperty.call(body, 'maxCameras')) {
+          const r = normalizarTeto(body.maxCameras);
+          if (!r.ok) return json(req, res, 400, { error: 'invalid_max_cameras' });
+          item.maxCameras = r.valor;
+        }
         item.updatedAt = new Date().toISOString();
         addAuditEvent(db, req, {
           type: 'installation.license_changed',

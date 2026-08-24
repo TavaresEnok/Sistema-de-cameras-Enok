@@ -101,6 +101,8 @@ export class CamerasController {
   @Post()
   async create(@CurrentUser() user: AuthUser, @Body() dto: CreateCameraDto, @Req() req: Request) {
     await this.commercialPolicy.assertFeature('addCameras', user);
+    // Teto contratado: a Central define quantas câmeras esta instalação pode ter.
+    await this.commercialPolicy.assertCameraQuota(1, user);
     const camera = await this.camerasService.create(dto);
     await this.auditService.log(user.id, 'camera.create', 'Camera', camera.id, { name: camera.name }, req);
     this.schedulePostCreateProvisioning(camera.id);
@@ -126,6 +128,8 @@ export class CamerasController {
   @Post('mine')
   async createMine(@CurrentUser() user: AuthUser, @Body() dto: CreateCameraDto, @Req() req: Request) {
     await this.commercialPolicy.assertFeature('addCameras', user);
+    // Teto contratado: a Central define quantas câmeras esta instalação pode ter.
+    await this.commercialPolicy.assertCameraQuota(1, user);
     const camera = await this.camerasService.createPrivateForOwner(dto, user);
     await this.auditService.log(user.id, 'camera.create_private', 'Camera', camera.id, { name: camera.name, private: true }, req);
     this.schedulePostCreateProvisioning(camera.id);
@@ -138,6 +142,8 @@ export class CamerasController {
   @Post('mine/test-connection')
   async testMyCameraConnection(@CurrentUser() user: AuthUser, @Body() dto: TestCameraConnectionDto, @Req() req: Request) {
     await this.commercialPolicy.assertFeature('addCameras', user);
+    // Teto contratado: a Central define quantas câmeras esta instalação pode ter.
+    await this.commercialPolicy.assertCameraQuota(1, user);
     const result = await this.camerasService.testConnectionDraft(dto);
     await this.auditService.log(user.id, 'camera.test_private_connection', 'Camera', null, {
       ip: dto.ip,
@@ -154,6 +160,8 @@ export class CamerasController {
   @Post('mine/preview-frame')
   async previewMyCamera(@CurrentUser() user: AuthUser, @Body() dto: TestCameraConnectionDto, @Req() req: Request) {
     await this.commercialPolicy.assertFeature('addCameras', user);
+    // Teto contratado: a Central define quantas câmeras esta instalação pode ter.
+    await this.commercialPolicy.assertCameraQuota(1, user);
     const result = await this.camerasService.capturePreviewFrame({
       ip: dto.ip,
       rtspPort: dto.rtspPort,

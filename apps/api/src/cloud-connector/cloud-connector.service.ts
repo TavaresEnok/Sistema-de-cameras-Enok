@@ -174,10 +174,20 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       try {
         await Promise.all([
           this.writeSetting('cloud.lastSyncAt', new Date().toISOString()),
+          this.marcarInstante(),
           this.writeSetting('cloud.lastError', ''),
           this.writeSetting('cloud.licenseStatus', licenseStatus),
           this.writeSetting('cloud.licenseMessage', licenseMessage),
           this.writeSetting('cloud.restrictions', JSON.stringify(restrictions)),
+          // Teto de câmeras contratado. Ausente na resposta = sem teto; nunca
+          // inventamos um número, senão um campo esquecido no painel travaria
+          // o cadastro de um cliente que pagou por mais.
+          this.writeSetting(
+            'cloud.maxCameras',
+            Number.isFinite(Number(response.data?.maxCameras)) && Number(response.data?.maxCameras) >= 0
+              ? String(Math.floor(Number(response.data?.maxCameras)))
+              : '',
+          ),
           this.writeSetting('cloud.lastPayloadSummary', JSON.stringify(payload.summary)),
           // A credencial NUNCA em claro no banco: a mesma secret é cifrada na
           // tabela CloudStorage, mas esta cópia ia em texto puro — qualquer
@@ -249,6 +259,9 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.writeSetting('cloud.lastError', message);
+      // A marca do relógio avança MESMO SEM CONTATO — é justamente no período
+      // sem Central que alguém tentaria atrasar a data para ganhar dias.
+      await this.marcarInstante().catch(() => undefined);
       this.logger.warn(`Falha ao enviar heartbeat para DRAC Central: ${message}`);
       return { skipped: false, synced: false, error: message };
     } finally {
@@ -1153,6 +1166,24 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
     } catch {
       return fallback;
     }
+  }
+
+  /**
+   * Registra o MAIOR instante que esta instalação já observou.
+   *
+   * É a defesa contra atrasar o relógio da máquina para ganhar dias de licença:
+   * a conta de "dias sem contato" nunca usa um agora anterior a esta marca.
+   * Só cresce — data menor é ignorada, que é exatamente o caso de quem voltou
+   * o relógio.
+   */
+  private async marcarInstante() {
+    const agora = Date.now();
+    const atual = await this.prisma.systemSetting
+      .findUnique({ where: { key: 'cloud.maiorInstanteVisto' } })
+      .catch(() => null);
+    const anterior = atual?.value ? Date.parse(atual.value) : 0;
+    if (Number.isFinite(anterior) && anterior >= agora) return;
+    await this.writeSetting('cloud.maiorInstanteVisto', new Date(agora).toISOString());
   }
 
   private normalizeLicenseStatus(value: unknown): LicenseStatus {

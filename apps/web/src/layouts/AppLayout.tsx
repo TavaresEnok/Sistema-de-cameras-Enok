@@ -3,6 +3,7 @@ import { useLocation } from 'wouter';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, RefreshCw, Sun, Moon } from 'lucide-react';
 import { Sidebar } from '../components/Sidebar';
+import { AvisoDeLicenca } from '../components/AvisoDeLicenca';
 import { StatusStrip } from '../components/StatusStrip';
 import { CommandPalette } from '../components/CommandPalette';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -135,6 +136,11 @@ export function AppLayout({ children }: AppLayoutProps) {
             </button>
           </div>
         </header>
+
+        {/* Licença vem PRIMEIRO: sistema suspenso explica por que a câmera não
+            grava, e sem esse aviso o operador caçaria defeito onde não há. Só
+            existe no painel web — o aplicativo do cliente não o mostra. */}
+        <AvisoDeLicenca />
 
         {/* Vem ANTES da faixa de "dados desatualizados": quando a internet do
             operador oscila, ela é a CAUSA e a outra é só o sintoma. Ver a
