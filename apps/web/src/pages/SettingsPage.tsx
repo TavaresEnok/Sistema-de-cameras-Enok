@@ -1,30 +1,7 @@
 import type { InputHTMLAttributes, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import {
-  Bell,
-  Camera as CameraIcon,
-  Check,
-  Cpu,
-  Database,
-  HardDrive,
-  Home,
-  LayoutGrid,
-  LoaderCircle,
-  Lock,
-  Moon,
-  Palette,
-  Play,
-  Save,
-  Server,
-  Settings as SettingsIcon,
-  Shield,
-  Sun,
-  Trash2,
-  Upload,
-  Users,
-  VideoOff,
-} from 'lucide-react';
+import { Bell, Camera as CameraIcon, Check, Cpu, Database, HardDrive, Home, LayoutGrid, LoaderCircle, Lock, Monitor, Moon, Palette, Play, Save, Server, Settings as SettingsIcon, Shield, Sun, Trash2, Upload, Users, VideoOff } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Slider } from '@/components/ui/slider';
 import { useThemeStore } from '../store/themeStore';
@@ -40,7 +17,8 @@ const API_URL = getApiBaseUrl();
 
 const SECTIONS = [
   { id: 'general', label: 'Geral', description: 'Identidade e tema', icon: Shield },
-  { id: 'branding', label: 'Aparência', description: 'Logo e cores do app móvel', icon: Palette },
+  { id: 'branding', label: 'Aparência do app', description: 'Logo e cores do aplicativo móvel', icon: Palette },
+  { id: 'system-look', label: 'Aparência do sistema', description: 'Logo e cores deste painel', icon: Monitor },
   { id: 'users', label: 'Usuários', description: 'Contas e acesso', icon: Users },
   { id: 'storage', label: 'Retenção', description: 'Retenção e disco', icon: Database },
   { id: 'gpu', label: 'GPU / Aceleração', description: 'Placa de vídeo', icon: Cpu },
@@ -59,6 +37,15 @@ type SystemSettings = {
   alarmAudioEnabled: boolean;
   brandLogoDataUrl: string;
   brandUseDefaultColors: boolean;
+  // ── Aparência do SISTEMA (este painel), separada da do aplicativo ────────
+  systemLogoDataUrl: string;
+  systemUseDefaultColors: boolean;
+  systemPrimaryColor: string;
+  systemBackgroundColor: string;
+  systemMenuActiveColor: string;
+  systemLightPrimaryColor: string;
+  systemLightBackgroundColor: string;
+  systemLightMenuActiveColor: string;
   brandPrimaryColor: string;
   brandBackgroundColor: string;
   brandBackgroundColor2: string;
@@ -100,6 +87,14 @@ type BrandingColorKey = Exclude<keyof SystemSettings,
   | 'alarmAudioEnabled'
   | 'brandLogoDataUrl'
   | 'brandUseDefaultColors'
+  | 'systemLogoDataUrl'
+  | 'systemUseDefaultColors'
+  | 'systemPrimaryColor'
+  | 'systemBackgroundColor'
+  | 'systemMenuActiveColor'
+  | 'systemLightPrimaryColor'
+  | 'systemLightBackgroundColor'
+  | 'systemLightMenuActiveColor'
 >;
 
 const BRANDING_KEYS = {
@@ -530,7 +525,14 @@ export default function ConfiguracoesPage() {
     setSettings((current) => (current ? { ...current, [key]: value } : current));
   };
 
-  const handleLogoFile = (file: File | undefined) => {
+  // `destino` diz QUAL logo está sendo enviado: o do aplicativo móvel
+  // (`brandLogoDataUrl`) ou o deste painel (`systemLogoDataUrl`). Antes havia um
+  // campo só servindo aos dois produtos, e não dava para dar marcas diferentes
+  // a cada um.
+  const handleLogoFile = (
+    file: File | undefined,
+    destino: 'brandLogoDataUrl' | 'systemLogoDataUrl' = 'brandLogoDataUrl',
+  ) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
       toast({ title: 'Arquivo inválido', description: 'Selecione uma imagem (PNG, JPG ou SVG).', variant: 'destructive' });
@@ -551,10 +553,10 @@ export default function ConfiguracoesPage() {
         canvas.width = img.naturalWidth || 256;
         canvas.height = img.naturalHeight || 256;
         const ctx = canvas.getContext('2d');
-        if (!ctx) { update('brandLogoDataUrl', reader.result as string); return; }
+        if (!ctx) { update(destino, reader.result as string); return; }
         ctx.drawImage(img, 0, 0);
         try {
-          update('brandLogoDataUrl', canvas.toDataURL('image/png'));
+          update(destino, canvas.toDataURL('image/png'));
         } catch {
           update('brandLogoDataUrl', reader.result as string);
         }
@@ -689,6 +691,98 @@ export default function ConfiguracoesPage() {
                         </div>
                       </SettingRow>
                     </Card>
+                  </>
+                )}
+
+                {activeSection === 'system-look' && (
+                  <>
+                    <SectionTitle
+                      eyebrow="Aparência do sistema"
+                      title="Identidade visual deste painel"
+                      description="Vale para a tela de login e o menu deste sistema. É deliberadamente curta: só o que se troca ao instalar num cliente. Campo vazio herda o valor da aparência do aplicativo."
+                    />
+                    <Card className="overflow-hidden">
+                      <SettingRow
+                        label="Logo do sistema"
+                        description="PNG, JPG ou SVG até 400 KB. Aparece no login e no topo do menu. Prefira versão com fundo transparente — o painel tem fundo escuro."
+                      >
+                        <div className="flex items-center gap-3 md:justify-end">
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-background">
+                            {settings.systemLogoDataUrl ? (
+                              <img src={settings.systemLogoDataUrl} alt="Logo do sistema" className="h-full w-full object-contain p-1" />
+                            ) : (
+                              <Monitor className="h-5 w-5 text-muted-foreground" />
+                            )}
+                          </div>
+                          <div className="flex flex-col gap-1.5">
+                            <label className="btn btn-sm btn-primary cursor-pointer">
+                              <Upload className="h-3.5 w-3.5" /> Enviar
+                              <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                                className="hidden"
+                                onChange={(e) => { handleLogoFile(e.target.files?.[0], 'systemLogoDataUrl'); e.target.value = ''; }}
+                              />
+                            </label>
+                            {settings.systemLogoDataUrl && (
+                              <button type="button" className="btn btn-sm btn-ghost" onClick={() => update('systemLogoDataUrl', '')}>
+                                Remover
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </SettingRow>
+
+                      <SettingRow
+                        label="Usar as cores padrão do sistema"
+                        description="Ligado, o painel usa a paleta original e ignora as cores abaixo — elas ficam guardadas e voltam quando você desligar."
+                      >
+                        <Toggle
+                          checked={settings.systemUseDefaultColors}
+                          onChange={(v) => update('systemUseDefaultColors', v)}
+                        />
+                      </SettingRow>
+
+                      <SettingRow
+                        label="Cores do tema escuro"
+                        description="O painel abre no escuro por padrão."
+                      >
+                        <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 md:max-w-md">
+                          <CompactColor label="Principal" fallback="#0B6BD6"
+                            value={settings.systemPrimaryColor}
+                            onChange={(v) => update('systemPrimaryColor', v)} />
+                          <CompactColor label="Fundo" fallback="#0B1220"
+                            value={settings.systemBackgroundColor}
+                            onChange={(v) => update('systemBackgroundColor', v)} />
+                          <CompactColor label="Menu selecionado" fallback="#5AA2F5"
+                            value={settings.systemMenuActiveColor}
+                            onChange={(v) => update('systemMenuActiveColor', v)} />
+                        </div>
+                      </SettingRow>
+
+                      <SettingRow
+                        label="Cores do tema claro"
+                        description="Deixe vazio para o sistema derivar a partir das cores do tema escuro."
+                      >
+                        <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 md:max-w-md">
+                          <CompactColor label="Principal" fallback="#0B6BD6"
+                            value={settings.systemLightPrimaryColor}
+                            onChange={(v) => update('systemLightPrimaryColor', v)} />
+                          <CompactColor label="Fundo" fallback="#F5F7FB"
+                            value={settings.systemLightBackgroundColor}
+                            onChange={(v) => update('systemLightBackgroundColor', v)} />
+                          <CompactColor label="Menu selecionado" fallback="#0B6BD6"
+                            value={settings.systemLightMenuActiveColor}
+                            onChange={(v) => update('systemLightMenuActiveColor', v)} />
+                        </div>
+                      </SettingRow>
+                    </Card>
+
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Deixar &quot;Menu selecionado&quot; vazio é o recomendado: o sistema calcula
+                      uma versão legível da cor principal para cada tema. Preencha só se quiser
+                      uma cor específica ali.
+                    </p>
                   </>
                 )}
 

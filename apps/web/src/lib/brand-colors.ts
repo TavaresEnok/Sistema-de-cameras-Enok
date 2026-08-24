@@ -71,6 +71,8 @@ type ThemeColors = {
   text?: string; // texto sobre a superfície → *-foreground das superfícies
   textSub?: string; // subtexto sobre a superfície → --muted-foreground
   border?: string; // bordas → --border/--card-border/--popover-border
+  /** Cor do item de menu SELECIONADO. Vazio = acento com luminosidade corrigida. */
+  menuActive?: string;
 };
 
 // Declarações `--var:canais` de UM tema. Só emite a var quando a cor do cliente é
@@ -83,11 +85,30 @@ function buildThemeVars(c: ThemeColors, escuro: boolean): string[] {
   const primary = hexToHslChannels(c.primary);
   if (primary) {
     const primaryFg = hexToHslChannels(c.buttonText) ?? readableForegroundChannels(c.primary);
+    // ── O MENU SELECIONADO PRECISA DE COR LEGÍVEL, NÃO DA COR CRUA ──────────
+    //
+    // Relatado em 24/08/2026 na instalação Córtex (roxo #8B5CF6): "essa cor do
+    // texto roxo no menu já escuro ficou difícil de ler".
+    //
+    // `.sidebar-item-active` pinta o TEXTO do item com `--sidebar-primary`. O
+    // tema padrão já resolvia isso sozinho, usando luminosidades diferentes por
+    // tema (44% no claro, 62% no escuro). A marca sobrescrevia ambos com o hex
+    // CRU do cliente — então marca escura sobre menu escuro sumia, e marca clara
+    // sobre menu claro sumia igual.
+    //
+    // A correção reusa a mesma ideia que `--acc-text` já aplicava: o acento vira
+    // texto com a luminosidade puxada para a faixa legível daquele tema. O
+    // acento em si (`--primary`, usado como FUNDO de botão) continua exato — só
+    // o papel de TEXTO é corrigido, que é onde o contraste importa.
+    const acentoParaTexto = escuro
+      ? comLuminosidadeEntre(String(c.primary), 58, 80)
+      : comLuminosidadeEntre(String(c.primary), 28, 48);
+    const menuAtivo = hexToHslChannels(c.menuActive) ?? acentoParaTexto ?? primary;
     decls.push(
       `--primary:${primary}`,
       `--ring:${primary}`,
       `--primary-foreground:${primaryFg}`,
-      `--sidebar-primary:${primary}`,
+      `--sidebar-primary:${menuAtivo}`,
       `--sidebar-ring:${primary}`,
       `--sidebar-primary-foreground:${primaryFg}`,
     );
@@ -194,6 +215,8 @@ export type BrandColorInput = {
   textColor?: string;
   textSubColor?: string;
   borderColor?: string;
+  /** Cor do item de menu selecionado (escuro). Vazio = acento corrigido. */
+  menuActiveColor?: string;
   // Tema claro (:root) — chaves com prefixo Light.
   lightPrimaryColor?: string;
   lightButtonTextColor?: string;
@@ -203,6 +226,8 @@ export type BrandColorInput = {
   lightTextColor?: string;
   lightTextSubColor?: string;
   lightBorderColor?: string;
+  /** Cor do item de menu selecionado (claro). Vazio = acento corrigido. */
+  lightMenuActiveColor?: string;
 };
 
 /**
@@ -222,6 +247,7 @@ export function buildBrandColorCss(input: BrandColorInput): string | null {
     text: input.lightTextColor,
     textSub: input.lightTextSubColor,
     border: input.lightBorderColor,
+    menuActive: input.lightMenuActiveColor,
   }, false);
   const dark = buildThemeVars({
     primary: input.primaryColor,
@@ -232,6 +258,7 @@ export function buildBrandColorCss(input: BrandColorInput): string | null {
     text: input.textColor,
     textSub: input.textSubColor,
     border: input.borderColor,
+    menuActive: input.menuActiveColor,
   }, true);
   if (light.length === 0 && dark.length === 0) return null;
   const rules: string[] = [];

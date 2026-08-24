@@ -21,6 +21,25 @@ const BRANDING_KEYS = [
   'facilityName',
   'brandLogoDataUrl',
   'brandUseDefaultColors',
+  // ── APARÊNCIA DO SISTEMA (painel web), separada da do APLICATIVO ─────────
+  // Pedido em 24/08/2026: "a logo do app tem que ser diferente! isso deve ser
+  // separado!". Até aqui `brandLogoDataUrl` era rotulado como logo do app e
+  // mesmo assim pintava a tela de login e o menu do painel — um campo só
+  // servindo a dois produtos, sem que ninguém conseguisse dar marcas
+  // diferentes a cada um.
+  //
+  // Estas chaves são um conjunto CURTO de propósito: só o que se troca numa
+  // instalação (logo, acento, fundo) mais a cor do item de menu selecionado.
+  // Vazio = cai na chave `brand*` correspondente, então nenhuma instalação já
+  // existente muda de cara ao subir esta versão.
+  'systemLogoDataUrl',
+  'systemUseDefaultColors',
+  'systemPrimaryColor',
+  'systemBackgroundColor',
+  'systemMenuActiveColor',
+  'systemLightPrimaryColor',
+  'systemLightBackgroundColor',
+  'systemLightMenuActiveColor',
   'brandPrimaryColor',
   'brandBackgroundColor',
   'brandSecondaryColor',
@@ -82,6 +101,17 @@ const SETTING_SPECS: Record<string, SettingSpec> = {
   // ── Marca (branding) do app web — aplicado em runtime na interface ──────────
   // Logo em data URL (base64). Vazio = usa o logo padrão DRAC.
   brandLogoDataUrl: { type: 'image', default: '' },
+  // ── Aparência do SISTEMA (painel web) — ver nota na lista pública acima ──
+  systemLogoDataUrl: { type: 'image', default: '' },
+  systemUseDefaultColors: { type: 'boolean', default: true },
+  systemPrimaryColor: { type: 'color', default: '' },
+  systemBackgroundColor: { type: 'color', default: '' },
+  // Cor do item de menu SELECIONADO. Vazio = o acento com a luminosidade
+  // corrigida para o tema (o padrão certo; ver brand-colors.ts).
+  systemMenuActiveColor: { type: 'color', default: '' },
+  systemLightPrimaryColor: { type: 'color', default: '' },
+  systemLightBackgroundColor: { type: 'color', default: '' },
+  systemLightMenuActiveColor: { type: 'color', default: '' },
   // true = o app usa sua paleta original. As cores personalizadas continuam
   // armazenadas para voltarem imediatamente quando o administrador desativar.
   brandUseDefaultColors: { type: 'boolean', default: true },

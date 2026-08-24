@@ -8,6 +8,17 @@ type PublicBranding = {
   facilityName?: string;
   brandLogoDataUrl?: string;
   brandUseDefaultColors?: boolean;
+  // ── APARÊNCIA DO SISTEMA (este painel), separada da do APLICATIVO ────────
+  // Vazio = cai na chave `brand*` equivalente. Sem essa queda, subir esta
+  // versão apagaria a identidade de toda instalação já personalizada.
+  systemLogoDataUrl?: string;
+  systemUseDefaultColors?: boolean;
+  systemPrimaryColor?: string;
+  systemBackgroundColor?: string;
+  systemMenuActiveColor?: string;
+  systemLightPrimaryColor?: string;
+  systemLightBackgroundColor?: string;
+  systemLightMenuActiveColor?: string;
   // Paleta escura (chaves sem prefixo).
   brandPrimaryColor?: string;
   brandButtonTextColor?: string;
@@ -44,23 +55,35 @@ type BrandingState = {
 // Injeta/remove um <style> que sobrescreve o accent (primary/ring) do tema com a
 // cor do cliente. Só age quando há cor válida e o cliente não usa a paleta padrão;
 // caso contrário remove o override (DRAC padrão intocado).
+/** Primeiro valor preenchido. É o que faz o sistema herdar a marca do app. */
+function ou(...valores: Array<string | undefined>): string | undefined {
+  for (const v of valores) if (v && v.trim()) return v;
+  return undefined;
+}
+
 function applyBrandColors(data: PublicBranding) {
   if (typeof document === 'undefined') return;
+  // A aparência do SISTEMA manda; onde ela estiver vazia, herda a do APP.
+  // `systemUseDefaultColors` só desliga quando ele mesmo foi configurado —
+  // instalação antiga (que só tem `brand*`) continua obedecendo ao flag antigo.
+  const sistemaConfigurado = data.systemUseDefaultColors === false;
   const css = buildBrandColorCss({
-    useDefaultColors: data.brandUseDefaultColors,
+    useDefaultColors: sistemaConfigurado ? false : data.brandUseDefaultColors,
+    menuActiveColor: data.systemMenuActiveColor,
+    lightMenuActiveColor: data.systemLightMenuActiveColor,
     // Escuro → bloco .dark
-    primaryColor: data.brandPrimaryColor,
+    primaryColor: ou(data.systemPrimaryColor, data.brandPrimaryColor),
     buttonTextColor: data.brandButtonTextColor,
-    backgroundColor: data.brandBackgroundColor,
+    backgroundColor: ou(data.systemBackgroundColor, data.brandBackgroundColor),
     backgroundTextColor: data.brandBackgroundTextColor,
     surfaceColor: data.brandSecondaryColor,
     textColor: data.brandPrimaryTextColor,
     textSubColor: data.brandSecondaryTextColor,
     borderColor: data.brandBorderColor,
     // Claro → bloco :root
-    lightPrimaryColor: data.brandLightPrimaryColor,
+    lightPrimaryColor: ou(data.systemLightPrimaryColor, data.brandLightPrimaryColor),
     lightButtonTextColor: data.brandLightButtonTextColor,
-    lightBackgroundColor: data.brandLightBackgroundColor,
+    lightBackgroundColor: ou(data.systemLightBackgroundColor, data.brandLightBackgroundColor),
     lightBackgroundTextColor: data.brandLightBackgroundTextColor,
     lightSurfaceColor: data.brandLightSecondaryColor,
     lightTextColor: data.brandLightPrimaryTextColor,
@@ -94,7 +117,9 @@ export const useBrandingStore = create<BrandingState>((set) => ({
       const { data } = await axios.get<PublicBranding>(`${getApiBaseUrl()}/settings/branding`, { timeout: 8_000 });
       set({
         facilityName: normalizeFacilityName(data.facilityName),
-        logoDataUrl: data.brandLogoDataUrl?.trim() || '',
+        // Logo do SISTEMA (login e menu deste painel). Sem ele, herda o do app
+        // — que é o que toda instalação anterior tem preenchido.
+        logoDataUrl: ou(data.systemLogoDataUrl, data.brandLogoDataUrl)?.trim() || '',
         aiFeatureEnabled: data.aiFeatureEnabled === true,
         // "/alarms,/review" → ['/alarms','/review']. Vazio = nada escondido.
         hiddenNavPaths: String(data.hiddenNavPaths ?? '').split(',').map((p) => p.trim()).filter(Boolean),

@@ -207,3 +207,50 @@ test('sem cor de marca válida, nenhum --acc é emitido (o padrão DRAC fica int
   const soFundo = buildBrandColorCss({ backgroundColor: '#0e0c08' }) ?? '';
   assert.doesNotMatch(soFundo, /--acc/, 'cliente que só trocou o fundo não pode ganhar acento novo');
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 24/08/2026 — Córtex (roxo #8B5CF6): "essa cor do texto roxo no menu já escuro
+// ficou difícil de ler".
+//
+// `.sidebar-item-active` pinta o TEXTO do item selecionado com
+// `--sidebar-primary`. O tema padrão já variava a luminosidade por tema (44% no
+// claro, 62% no escuro); a marca sobrescrevia os dois com o hex CRU, e aí marca
+// escura sumia no menu escuro.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function luminosidadeDe(css: string, bloco: '.dark' | ':root:not(.dark)'): number {
+  const regra = css.split('\n').find((l) => l.startsWith(bloco));
+  const m = /--sidebar-primary:(\d+) (\d+)% (\d+)%/.exec(regra ?? '');
+  if (!m) throw new Error(`--sidebar-primary ausente em ${bloco}`);
+  return Number(m[3]);
+}
+
+test('menu selecionado: acento ESCURO é clareado no tema escuro', () => {
+  // #4C1D95 tem luminosidade ~35% — ilegível como texto sobre menu escuro.
+  const css = buildBrandColorCss({ useDefaultColors: false, primaryColor: '#4C1D95' })!;
+  const l = luminosidadeDe(css, '.dark');
+  assert.ok(l >= 58, `esperava >=58% de luminosidade, veio ${l}%`);
+});
+
+test('menu selecionado: acento CLARO é escurecido no tema claro', () => {
+  // #FDE68A (amarelo claro, ~83%) sobre menu branco seria invisível.
+  const css = buildBrandColorCss({ useDefaultColors: false, lightPrimaryColor: '#FDE68A' })!;
+  const l = luminosidadeDe(css, ':root:not(.dark)');
+  assert.ok(l <= 48, `esperava <=48% de luminosidade, veio ${l}%`);
+});
+
+test('o acento em si NÃO é alterado — só o papel de texto do menu', () => {
+  // --primary vira FUNDO de botão; mexer nele mudaria a identidade do cliente.
+  const css = buildBrandColorCss({ useDefaultColors: false, primaryColor: '#4C1D95' })!;
+  const regra = css.split('\n').find((l) => l.startsWith('.dark'))!;
+  const primary = /--primary:(\d+ \d+% \d+%)/.exec(regra)![1];
+  assert.equal(primary, hexToHslChannels('#4C1D95'));
+});
+
+test('cor explícita do menu vence a correção automática', () => {
+  const css = buildBrandColorCss({
+    useDefaultColors: false, primaryColor: '#4C1D95', menuActiveColor: '#00FF00',
+  })!;
+  const regra = css.split('\n').find((l) => l.startsWith('.dark'))!;
+  assert.match(regra, new RegExp(`--sidebar-primary:${hexToHslChannels('#00FF00')}`));
+});
