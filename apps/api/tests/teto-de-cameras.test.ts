@@ -50,3 +50,28 @@ test('valores estranhos não viram permissão silenciosa', () => {
   assert.equal(podeCadastrarCamera(10, -1).motivo, 'sem-teto');
   assert.equal(podeCadastrarCamera(-5, 3).permitido, true, 'contagem negativa vira zero');
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A ARMADILHA QUE ME PEGOU TRÊS VEZES EM UM DIA (24/08/2026).
+//
+// `Number(null)` e `Number('')` devolvem 0 em JavaScript, e 0 aqui significa
+// "nenhuma câmera permitida". A primeira versão do conector gravou `0` na
+// instalação Vibe e travou o cadastro de câmeras de um cliente que não tem teto
+// nenhum. O mesmo tropeço apareceu no helper da Central e no da instalação.
+//
+// Estes casos ficam aqui porque a política de "vazio ≠ zero" é UMA só, e
+// qualquer ponta que a reimplemente vai cair de novo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('O ACIDENTE REAL: null da Central não pode virar teto zero', () => {
+  const d = podeCadastrarCamera(3, null);
+  assert.equal(d.permitido, true, 'null é SEM teto, nunca teto zero');
+  assert.equal(d.motivo, 'sem-teto');
+});
+
+test('as formas de "sem teto" que o JavaScript transforma em zero', () => {
+  for (const enganoso of [null, undefined, '', '   ']) {
+    const d = podeCadastrarCamera(500, enganoso as unknown as number);
+    assert.equal(d.permitido, true, `"${String(enganoso)}" NÃO pode bloquear cadastro`);
+  }
+});

@@ -182,12 +182,7 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
           // Teto de câmeras contratado. Ausente na resposta = sem teto; nunca
           // inventamos um número, senão um campo esquecido no painel travaria
           // o cadastro de um cliente que pagou por mais.
-          this.writeSetting(
-            'cloud.maxCameras',
-            Number.isFinite(Number(response.data?.maxCameras)) && Number(response.data?.maxCameras) >= 0
-              ? String(Math.floor(Number(response.data?.maxCameras)))
-              : '',
-          ),
+          this.writeSetting('cloud.maxCameras', this.tetoDeCameras(response.data?.maxCameras)),
           this.writeSetting('cloud.lastPayloadSummary', JSON.stringify(payload.summary)),
           // A credencial NUNCA em claro no banco: a mesma secret é cifrada na
           // tabela CloudStorage, mas esta cópia ia em texto puro — qualquer
@@ -1176,6 +1171,29 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
    * Só cresce — data menor é ignorada, que é exatamente o caso de quem voltou
    * o relógio.
    */
+  /**
+   * Teto de câmeras vindo da Central, em texto para o `SystemSetting`.
+   *
+   * A ARMADILHA, que me pegou três vezes num dia: `Number(null)` e `Number('')`
+   * devolvem 0 em JavaScript, e 0 aqui significa "nenhuma câmera permitida".
+   * A primeira versão disto gravou `0` na Vibe e travou o cadastro de câmeras
+   * de uma instalação que não tem teto nenhum.
+   *
+   * Só vira número quando a Central mandou um NÚMERO de verdade. Ausente, nulo
+   * ou ilegível vira vazio, que a política lê como "sem teto" — errar para este
+   * lado custa uma cobrança a menos; errar para o outro trava o cliente.
+   */
+  private tetoDeCameras(valor: unknown): string {
+    if (typeof valor === 'number' && Number.isFinite(valor) && valor >= 0) {
+      return String(Math.floor(valor));
+    }
+    if (typeof valor === 'string' && valor.trim() !== '') {
+      const n = Number(valor.trim());
+      if (Number.isFinite(n) && n >= 0) return String(Math.floor(n));
+    }
+    return '';
+  }
+
   private async marcarInstante() {
     const agora = Date.now();
     const atual = await this.prisma.systemSetting
