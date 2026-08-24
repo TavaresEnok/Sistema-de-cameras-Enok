@@ -220,7 +220,7 @@ function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
 
 // Seletor de cor COMPACTO: swatch pequeno + hex editável + limpar. Vários cabem
 // numa linha (grid), diferente do ColorField grande de 1 por linha.
-function CompactColor({ label, value, onChange, fallback }: { label: string; value: string; onChange: (value: string) => void; fallback: string }) {
+function CompactColor({ label, value, onChange, fallback, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; fallback: string }) {
   const isSet = /^#[0-9a-fA-F]{6}$/.test(value);
   const swatch = isSet ? value : fallback;
   return (
@@ -233,7 +233,7 @@ function CompactColor({ label, value, onChange, fallback }: { label: string; val
         <input
           type="text"
           value={value}
-          placeholder="auto"
+          placeholder={placeholder ?? 'auto'}
           onChange={(e) => onChange(e.target.value.trim())}
           className="w-full min-w-0 bg-transparent font-mono text-[11px] uppercase text-foreground outline-none placeholder:normal-case placeholder:text-muted-foreground"
         />
@@ -243,6 +243,22 @@ function CompactColor({ label, value, onChange, fallback }: { label: string; val
       </div>
     </div>
   );
+}
+
+
+// ── O CAMPO VAZIO PRECISA MOSTRAR A COR QUE ESTÁ VALENDO ────────────────────
+//
+// Relatado em 24/08/2026: "as cores que estão no cortex não está na
+// personalização". O painel estava roxo — herdando a paleta do aplicativo —
+// mas a aba "Aparência do sistema" exibia os campos em branco, o que sugere
+// que não há personalização nenhuma. Campo em branco que na verdade herda um
+// valor é informação errada, não campo vazio.
+//
+// Devolve o rótulo do que preencher ali mudaria: o valor herdado quando existe,
+// ou o texto neutro quando o tema padrão é que manda.
+function herdado(valorDoApp: string | undefined): string | undefined {
+  const v = String(valorDoApp ?? '').trim();
+  return v ? `${v.toUpperCase()} (do app)` : undefined;
 }
 
 // Agrupa cores de uma mesma SUPERFÍCIE (ex.: card = cor + textos) num bloco.
@@ -748,13 +764,16 @@ export default function ConfiguracoesPage() {
                         description="O painel abre no escuro por padrão."
                       >
                         <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 md:max-w-md">
-                          <CompactColor label="Principal" fallback="#0B6BD6"
+                          <CompactColor label="Principal" fallback={settings.brandPrimaryColor || '#0B6BD6'}
+                            placeholder={herdado(settings.brandPrimaryColor)}
                             value={settings.systemPrimaryColor}
                             onChange={(v) => update('systemPrimaryColor', v)} />
-                          <CompactColor label="Fundo" fallback="#0B1220"
+                          <CompactColor label="Fundo" fallback={settings.brandBackgroundColor || '#0B1220'}
+                            placeholder={herdado(settings.brandBackgroundColor)}
                             value={settings.systemBackgroundColor}
                             onChange={(v) => update('systemBackgroundColor', v)} />
-                          <CompactColor label="Menu selecionado" fallback="#5AA2F5"
+                          <CompactColor label="Menu selecionado" fallback={settings.systemPrimaryColor || settings.brandPrimaryColor || '#5AA2F5'}
+                            placeholder="calculado"
                             value={settings.systemMenuActiveColor}
                             onChange={(v) => update('systemMenuActiveColor', v)} />
                         </div>
@@ -765,13 +784,16 @@ export default function ConfiguracoesPage() {
                         description="Deixe vazio para o sistema derivar a partir das cores do tema escuro."
                       >
                         <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 md:max-w-md">
-                          <CompactColor label="Principal" fallback="#0B6BD6"
+                          <CompactColor label="Principal" fallback={settings.brandLightPrimaryColor || '#0B6BD6'}
+                            placeholder={herdado(settings.brandLightPrimaryColor)}
                             value={settings.systemLightPrimaryColor}
                             onChange={(v) => update('systemLightPrimaryColor', v)} />
-                          <CompactColor label="Fundo" fallback="#F5F7FB"
+                          <CompactColor label="Fundo" fallback={settings.brandLightBackgroundColor || '#F5F7FB'}
+                            placeholder={herdado(settings.brandLightBackgroundColor)}
                             value={settings.systemLightBackgroundColor}
                             onChange={(v) => update('systemLightBackgroundColor', v)} />
-                          <CompactColor label="Menu selecionado" fallback="#0B6BD6"
+                          <CompactColor label="Menu selecionado" fallback={settings.systemLightPrimaryColor || settings.brandLightPrimaryColor || '#0B6BD6'}
+                            placeholder="calculado"
                             value={settings.systemLightMenuActiveColor}
                             onChange={(v) => update('systemLightMenuActiveColor', v)} />
                         </div>
