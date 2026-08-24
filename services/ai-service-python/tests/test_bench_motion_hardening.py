@@ -2,7 +2,9 @@
 
 import unittest
 
-from tests.bench_motion_hardening import read_reference_frame
+from unittest import mock
+
+from tests.bench_motion_hardening import read_reference_frame, validate_reference_video
 
 
 class _Capture:
@@ -29,6 +31,23 @@ class TestReferenceSampling(unittest.TestCase):
         frame, index = read_reference_frame(capture, -1, 4)
         self.assertIsNone(frame)
         self.assertEqual(index, 1)
+
+    @mock.patch("tests.bench_motion_hardening.cv2.VideoCapture")
+    def test_rejects_a_different_video_cadence(self, video_capture):
+        video_capture.return_value.get.return_value = 30.0
+        with self.assertRaisesRegex(ValueError, "vídeo incompatível"):
+            validate_reference_video(
+                "/captures/cam-01.ts",
+                {"video": "cam-01.mp4", "native_fps": 2.0},
+            )
+
+    @mock.patch("tests.bench_motion_hardening.cv2.VideoCapture")
+    def test_accepts_the_exact_reference_video(self, video_capture):
+        video_capture.return_value.get.return_value = 2.0
+        validate_reference_video(
+            "/proxy/cam-01.mp4",
+            {"video": "cam-01.mp4", "native_fps": 2.0},
+        )
 
 
 if __name__ == "__main__":

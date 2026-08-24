@@ -26,7 +26,11 @@ try:
         _pbass_factory,
         _pybgs_factory,
     )
-    from tests.bench_motion_hardening import events_from_active, read_reference_frame
+    from tests.bench_motion_hardening import (
+        events_from_active,
+        read_reference_frame,
+        validate_reference_video,
+    )
 except ModuleNotFoundError:  # execucao direta
     from bench_common_motion_engines import (
         FastSelfTuningBGS,
@@ -34,7 +38,11 @@ except ModuleNotFoundError:  # execucao direta
         _pbass_factory,
         _pybgs_factory,
     )
-    from bench_motion_hardening import events_from_active, read_reference_frame
+    from bench_motion_hardening import (
+        events_from_active,
+        read_reference_frame,
+        validate_reference_video,
+    )
 
 
 def build_engines() -> dict[str, object]:
@@ -131,6 +139,7 @@ def summarize(name: str, state: dict, refs: list[dict], fps: float, warmup: int)
 
 
 def run(video_path: str, reference: dict) -> dict:
+    validate_reference_video(video_path, reference)
     fps = float(reference["effective_fps"])
     refs = reference["frames"][: int(reference["sampled_frames"])]
     engines = build_engines()

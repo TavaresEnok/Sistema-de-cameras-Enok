@@ -31,12 +31,14 @@ try:
         boxes_overlap,
         events_from_active,
         read_reference_frame,
+        validate_reference_video,
     )
 except ModuleNotFoundError:  # execucao direta: python tests/bench_...py
     from bench_motion_hardening import (
         boxes_overlap,
         events_from_active,
         read_reference_frame,
+        validate_reference_video,
     )
 from detectors.motion import MotionDetector
 from runtime_profiles import MOTION_PROFILE
@@ -229,6 +231,7 @@ def _summarize(
         )
 
     confirmed_product = environmental = low_change = 0
+    product_event_details = []
     classes_total: dict[str, int] = {}
     for start, end in product_events:
         classes = (
@@ -244,6 +247,14 @@ def _summarize(
             environmental += 1
         else:
             low_change += 1
+        product_event_details.append(
+            {
+                "start": start,
+                "end": end,
+                "confirmed_by_semantic_reference": bool(classes),
+                "classes": sorted(classes),
+            }
+        )
 
     semantic_detected = sum(bool(event["detected"]) for event in semantic_details)
     timings = state["timings"]
@@ -257,6 +268,7 @@ def _summarize(
         "active_fraction": round(float(np.mean(state["active"])), 4),
         "product_events": len(product_events),
         "confirmed_product_events": confirmed_product,
+        "product_event_details": product_event_details,
         "environmental_unconfirmed_events": environmental,
         "low_change_unconfirmed_events": low_change,
         "confirmed_event_precision_proxy": round(
@@ -273,6 +285,7 @@ def _summarize(
 
 
 def run(video_path: str, reference: dict, max_frames: int | None = None) -> dict:
+    validate_reference_video(video_path, reference)
     fps = float(reference["effective_fps"])
     refs = reference["frames"][: int(reference["sampled_frames"])]
     if max_frames is not None:

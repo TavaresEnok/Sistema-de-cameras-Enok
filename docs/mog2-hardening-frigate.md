@@ -1,5 +1,13 @@
 # MOG2 endurecido — proteções inspiradas no Frigate
 
+> **Correção de integridade em 24/08/2026:** as rodadas em
+> `extended-filters-v1` e `raw-engines-v2` são inválidas. A referência foi
+> criada sobre proxies MP4 a 2 FPS, mas essas rodadas processaram os TS
+> originais a 30 FPS usando `source_frame` como índice. Assim, por exemplo, o
+> rótulo de 45 s foi comparado aproximadamente ao quadro de 3 s. O executor
+> agora rejeita nome ou FPS incompatível. Somente `validated-filters-v2` e
+> `validated-raw-v3` devem ser usados.
+
 ## Objetivo
 
 Reduzir gravações causadas por nuvem, luz, exposição automática, troca de IR,
@@ -218,3 +226,33 @@ que o motor inicial já encontrou.
 
 Resultados brutos:
 `/home/flashnet/motion-bgs-lab/work/raw-engines-v2/`.
+
+## Rodada corrigida — fonte idêntica à referência
+
+Os sete motores foram repetidos sobre os próprios proxies MP4 de 2 FPS usados
+para gerar a referência YOLO. Cada câmera processou 3.600 quadros, com nome,
+FPS e posição validados antes do replay. Estes números ainda usam referência
+automática; a auditoria humana dos 264 candidatos é o portão para medir falso
+positivo e escolher o motor.
+
+| Motor sob filtros DRAC | Movimentos detectados | Eventos | Confirmados pela referência | Não confirmados* | Quadros ativos | Mediana/frame |
+|---|---:|---:|---:|---:|---:|---:|
+| PBAS | **232/268 (86,6%)** | 181 | **156** | 25 | 32,6% | 9,70 ms |
+| KNN | 220/268 (82,1%) | 173 | 146 | 27 | 30,9% | 4,68 ms |
+| MOG2 | 219/268 (81,7%) | 176 | 153 | 23 | 29,2% | 4,27 ms |
+| ViBe clássico | 219/268 (81,7%) | 173 | 152 | **21** | **27,0%** | 3,85 ms |
+| Frigate core | 219/268 (81,7%) | **172** | 144 | 28 | 32,7% | **3,20 ms** |
+| LOBSTER | 218/268 (81,3%) | 173 | 148 | 25 | 29,7% | 21,67 ms |
+| Fast Self-Tuning | 184/268 (68,7%) | 147 | 119 | 28 | 24,1% | 6,87 ms |
+
+\* Não confirmado não significa falso positivo até a revisão humana.
+
+Na contraprova sem filtros, a recuperação foi: Frigate e Fast Self-Tuning
+264/264; KNN e ViBe 261/264; MOG2 260/264; PBAS 258/264; LOBSTER 239/264. Todos
+ficaram ativos entre 73,2% e 100% do período, portanto nenhum motor cru serve
+como política de gravação.
+
+Resultados válidos:
+
+- `/home/flashnet/motion-bgs-lab/work/validated-filters-v2/`
+- `/home/flashnet/motion-bgs-lab/work/validated-raw-v3/`

@@ -88,6 +88,33 @@ def read_reference_frame(capture, source_index: int, target_index: int):
     return frame, source_index
 
 
+def validate_reference_video(video_path: str, reference: dict) -> None:
+    """Impede comparar rótulos com outro encode/cadência do mesmo vídeo.
+
+    ``source_frame`` pertence exatamente ao arquivo usado para gerar a
+    referência. Um proxy de 2 FPS e o TS original de 30 FPS podem representar
+    o mesmo horário, mas o frame 90 significa 45 s no primeiro e 3 s no
+    segundo. Aceitar essa mistura produz métricas plausíveis, porém falsas.
+    """
+    expected_name = os.path.basename(str(reference.get("video") or ""))
+    actual_name = os.path.basename(video_path)
+    if not expected_name or actual_name != expected_name:
+        raise ValueError(
+            "vídeo incompatível com a referência: "
+            f"esperado {expected_name or '<ausente>'}, recebido {actual_name}"
+        )
+
+    capture = cv2.VideoCapture(video_path)
+    actual_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    capture.release()
+    expected_fps = float(reference.get("native_fps") or 0.0)
+    if expected_fps <= 0 or actual_fps <= 0 or abs(actual_fps - expected_fps) > 0.05:
+        raise ValueError(
+            "cadência incompatível com a referência: "
+            f"esperado {expected_fps:.3f} FPS, recebido {actual_fps:.3f} FPS"
+        )
+
+
 def run_variant(video_path: str, reference_frames, fps: float, profile: dict, name: str) -> dict:
     active: list[bool] = []
     confirmed: list[bool] = []
@@ -219,6 +246,7 @@ def main() -> None:
 
     with open(args.reference, encoding="utf-8") as handle:
         reference = json.load(handle)
+    validate_reference_video(args.video, reference)
     expected = int(reference["sampled_frames"])
     refs = reference["frames"][:expected]
     fps = float(reference["effective_fps"])
