@@ -8,6 +8,7 @@ import { useThemeStore } from '../store/themeStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { useAuthStore } from '../store/authStore';
 import { getApiBaseUrl } from '../lib/api-base';
+import { caixaDoConteudo, comFolga, valeAparar } from '../lib/aparar-logo';
 import { toast } from '../hooks/use-toast';
 import { GpuAccelerationPanel } from '../components/GpuAccelerationPanel';
 import { useBrandingStore } from '../store/brandingStore';
@@ -565,19 +566,55 @@ export default function ConfiguracoesPage() {
       // JPEG/WebP com extensão .png; padronizando em PNG, qualquer upload funciona.
       const img = new Image();
       img.onload = () => {
+        const larguraOriginal = img.naturalWidth || 256;
+        const alturaOriginal = img.naturalHeight || 256;
         const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth || 256;
-        canvas.height = img.naturalHeight || 256;
+        canvas.width = larguraOriginal;
+        canvas.height = alturaOriginal;
         const ctx = canvas.getContext('2d');
         if (!ctx) { update(destino, reader.result as string); return; }
         ctx.drawImage(img, 0, 0);
+
+        // ── APARA A MOLDURA TRANSPARENTE ───────────────────────────────────
+        //
+        // Exportar logo com margem generosa é o normal de quem faz arte. Só que
+        // a caixa do login limita a ALTURA, então a moldura vazia entra na conta
+        // e encolhe a palavra. O arquivo da Córtex tinha 1448x1086 com a arte em
+        // 1269x371: a palavra saía com 51x15 px na tela. Aparada, sai com
+        // 150x44 — sem que o cliente precise reeditar nada.
+        try {
+          const pixels = ctx.getImageData(0, 0, larguraOriginal, alturaOriginal);
+          const caixa = caixaDoConteudo(pixels.data, larguraOriginal, alturaOriginal);
+          if (caixa && valeAparar(caixa, larguraOriginal, alturaOriginal)) {
+            const corte = comFolga(caixa, larguraOriginal, alturaOriginal);
+            const aparado = document.createElement('canvas');
+            aparado.width = corte.largura;
+            aparado.height = corte.altura;
+            const ctx2 = aparado.getContext('2d');
+            if (ctx2) {
+              ctx2.drawImage(
+                canvas,
+                corte.x, corte.y, corte.largura, corte.altura,
+                0, 0, corte.largura, corte.altura,
+              );
+              update(destino, aparado.toDataURL('image/png'));
+              return;
+            }
+          }
+        } catch {
+          // Imagem de outra origem "suja" o canvas e bloqueia getImageData.
+          // Não é motivo para recusar o logo: segue sem aparar.
+        }
+
         try {
           update(destino, canvas.toDataURL('image/png'));
         } catch {
-          update('brandLogoDataUrl', reader.result as string);
+          // `destino`, não a chave fixa: senão o logo do SISTEMA acabava
+          // gravado no campo do APLICATIVO sempre que a conversão falhasse.
+          update(destino, reader.result as string);
         }
       };
-      img.onerror = () => update('brandLogoDataUrl', reader.result as string);
+      img.onerror = () => update(destino, reader.result as string);
       img.src = reader.result;
     };
     reader.onerror = () => toast({ title: 'Falha ao ler a imagem', variant: 'destructive' });
