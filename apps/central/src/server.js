@@ -11,6 +11,7 @@ const {
 const { normalizeComputeNodes, validateComputeNodes, summarizeNodes } = require('./datastore/compute-nodes');
 const { normalizeAiPolicy, validateAiPolicy, applyAiPolicyToRestrictions, describeAiPolicy } = require('./ai-policy');
 const { normalizarTeto, tetoParaHeartbeat } = require('./teto-de-cameras');
+const { decidirMatricula } = require('./matricula');
 const {
   normalizeCloudStorage,
   validateCloudStorage,
@@ -63,6 +64,9 @@ loadEnvFile();
 const HOST = process.env.DRAC_CENTRAL_HOST || '0.0.0.0';
 const PORT = Number(process.env.DRAC_CENTRAL_PORT || 9765);
 const ADMIN_TOKEN = String(process.env.DRAC_CENTRAL_ADMIN_TOKEN || '').trim();
+// Senha combinada que permite uma instalação NOVA se matricular sozinha.
+// Vazia = matrícula desligada (recusa), nunca "aceita todo mundo".
+const ENROLLMENT_TOKEN = String(process.env.DRAC_CENTRAL_ENROLLMENT_TOKEN || '').trim();
 const ADMIN_EMAIL = String(process.env.DRAC_CENTRAL_ADMIN_EMAIL || 'admin@drac.local').trim().toLowerCase();
 const ADMIN_PASSWORD_HASH = String(process.env.DRAC_CENTRAL_ADMIN_PASSWORD_HASH || '').trim();
 const SESSION_TTL_MS = Math.max(1, Number(process.env.DRAC_CENTRAL_SESSION_HOURS || 8)) * 60 * 60 * 1000;
@@ -1609,6 +1613,80 @@ function cloudStorageState(item, status) {
   // Cadastrado e habilitado, mas incompleto (falta bucket, credencial ilegível):
   // é pausa, não exclusão — o operador está no meio de configurar.
   return buildCloudStoragePayload(c) ? 'configured' : 'disabled';
+}
+
+/**
+ * MATRÍCULA de instalação nova, sem precisar provisionar pela tela antes.
+ *
+ * Fecha o buraco de 24/08/2026: o instalador tentava "registrar" mandando um
+ * heartbeat, mas o heartbeat exige que a instalação já exista — então tomava
+ * 403, avisava e seguia. Toda instalação feita direto pelo script nascia órfã,
+ * e com a licença que vence sozinha isso viraria suspensão em 15 dias.
+ *
+ * A decisão de permitir mora em `matricula.js`, testada sem rede nem banco.
+ */
+async function handleEnroll(req, res) {
+  const body = await readBody(req);
+  const tokenApresentado = String(req.headers['x-drac-enrollment-token'] || '').trim();
+  const installationId = slugify(String(body.installationId || body.customerName || '').trim());
+  const customerName = String(body.customerName || '').trim();
+  const chaveApresentada = String(body.licenseKey || '').trim();
+
+  if (!installationId || !customerName) {
+    return json(req, res, 400, { error: 'missing_installation_or_customer' });
+  }
+
+  const db = await loadDb();
+  const existente = db.installations[installationId] || null;
+  const d = decidirMatricula({
+    tokenApresentado,
+    tokenConfigurado: ENROLLMENT_TOKEN,
+    existente,
+    chaveApresentada,
+    comparar: timingSafeTextEquals,
+  });
+
+  if (!d.permitido) {
+    addAuditEvent(db, req, {
+      type: 'agent.enroll_denied',
+      actor: installationId,
+      result: 'denied',
+      reason: d.motivo,
+    });
+    await saveDb(db);
+    return json(req, res, d.http, { error: d.motivo });
+  }
+
+  const agora = new Date().toISOString();
+  // A chave PROPOSTA pela instalação é aceita: ela já a gravou no próprio
+  // `.env` antes de subir os containers, e devolver outra obrigaria o
+  // instalador a reescrever configuração e reiniciar tudo de novo.
+  const licenseKey = (existente && existente.licenseKey)
+    || chaveApresentada
+    || `drac-${crypto.randomBytes(16).toString('hex')}`;
+
+  const item = {
+    ...(existente || {}),
+    id: installationId,
+    name: installationId,
+    customerName,
+    licenseKey,
+    licenseStatus: (existente && existente.licenseStatus) || LICENSE_ACTIVE,
+    serverAddress: String(body.serverAddress || (existente && existente.serverAddress) || '').trim() || null,
+    cameraAllowedCidrs: String(body.cameraAllowedCidrs || (existente && existente.cameraAllowedCidrs) || '').trim() || null,
+    createdAt: (existente && existente.createdAt) || agora,
+    updatedAt: agora,
+  };
+  db.installations[installationId] = item;
+  addAuditEvent(db, req, {
+    type: 'agent.enrolled',
+    actor: installationId,
+    result: 'accepted',
+    reason: d.motivo,
+    installationId,
+  });
+  await saveDb(db);
+  return json(req, res, d.http, { installationId, licenseKey, motivo: d.motivo });
 }
 
 async function handleHeartbeat(req, res) {
@@ -3428,6 +3506,9 @@ async function route(req, res) {
     }
     if (req.method === 'GET' && url.pathname === '/api/auth/me') {
       return handleMe(req, res);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/agent/enroll') {
+      return handleEnroll(req, res);
     }
     if (req.method === 'POST' && url.pathname === '/api/agent/heartbeat') {
       return handleHeartbeat(req, res);

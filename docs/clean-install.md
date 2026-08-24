@@ -16,7 +16,18 @@ cp scripts/instalacao-cliente.exemplo.env cliente.env && chmod 600 cliente.env
 ```
 
 Preencha os três obrigatórios (`DRAC_INSTALLER_COMMIT`, `DRAC_CUSTOMER_NAME`,
-`DRAC_CAMERA_ALLOWED_CIDRS`) — o arquivo explica cada campo — e rode:
+`DRAC_CAMERA_ALLOWED_CIDRS`) — o arquivo explica cada campo — **e resolva o
+registro na Central**, que é o que dá licença à instalação:
+
+- `DRAC_ENROLLMENT_TOKEN` com a senha de matrícula da Central (a instalação se
+  registra sozinha); **ou**
+- provisione o cliente pelo painel da Central antes e copie para cá o
+  `DRAC_INSTALLATION_ID` e o `DRAC_LICENSE_KEY` que ele mostrar.
+
+Sem um dos dois o instalador **para** — instalação sem registro fica sem
+licença e é suspensa em 15 dias.
+
+Depois rode:
 
 ```bash
 sudo bash scripts/install-drac.sh --config cliente.env

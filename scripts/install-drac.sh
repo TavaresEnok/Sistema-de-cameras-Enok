@@ -22,6 +22,9 @@ DRAC_AUTO_YES="${DRAC_AUTO_YES:-false}"
 DRAC_WATCHDOG_ENABLED="${DRAC_WATCHDOG_ENABLED:-true}"
 DRAC_WATCHDOG_INTERVAL_MINUTES="${DRAC_WATCHDOG_INTERVAL_MINUTES:-5}"
 DRAC_CAMERA_ALLOWED_CIDRS="${DRAC_CAMERA_ALLOWED_CIDRS:-}"
+# Senha de matricula na Central. Sem ela, o cliente precisa ter sido
+# provisionado pelo painel antes da instalacao.
+DRAC_ENROLLMENT_TOKEN="${DRAC_ENROLLMENT_TOKEN:-}"
 # Arquivo de respostas: o caminho PADRÃO de instalação. Ver
 # scripts/instalacao-cliente.exemplo.env.
 DRAC_CONFIG_FILE="${DRAC_CONFIG_FILE:-}"
@@ -150,7 +153,7 @@ prompt() {
 DRAC_CHAVES_VALIDAS="
 DRAC_REPO_URL DRAC_INSTALLER_COMMIT DRAC_INSTALL_DIR DRAC_OPERATING_USER
 DRAC_CENTRAL_URL DRAC_ENVIRONMENT DRAC_AUTO_YES
-DRAC_WATCHDOG_ENABLED DRAC_WATCHDOG_INTERVAL_MINUTES DRAC_BUILD_AGENT_EXPECTED
+DRAC_WATCHDOG_ENABLED DRAC_WATCHDOG_INTERVAL_MINUTES DRAC_BUILD_AGENT_EXPECTED DRAC_ENROLLMENT_TOKEN
 DRAC_CAMERA_ALLOWED_CIDRS DRAC_CUSTOMER_NAME DRAC_INSTALLATION_ID
 DRAC_LICENSE_KEY DRAC_SERVER_IP DRAC_RTMP_SHORT_HOST
 DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME
@@ -911,37 +914,66 @@ verify_watchdog() {
 
 register_central_now() {
   local base="${DRAC_CENTRAL_URL%/}"
-  local payload response_file
-  response_file="$(mktemp)"
-  payload="$(printf '{"installation":{"id":"%s","name":"%s","customerName":"%s","version":"%s","launchProfile":"standard"},"summary":{"status":"installing","alerts":[]}}' \
+  local payload response_file http
+
+  # ── MATRÍCULA ANTES DO HEARTBEAT ────────────────────────────────────────
+  #
+  # Até 24/08/2026 esta função "registrava" mandando um heartbeat. Só que o
+  # heartbeat EXIGE que a instalação já exista na Central (ela é criada pelo
+  # provisionamento). Resultado: instalação feita direto por este script tomava
+  # 403, a função imprimia um aviso e seguia como se tivesse dado certo — e a
+  # instalação nascia órfã. A Córtex passou um dia inteiro assim.
+  #
+  # Com a licença que vence sozinha, órfã vira SUSPENSA em 15 dias. Então aqui
+  # não há mais "avisa e segue": ou a instalação fica registrada, ou a
+  # instalação falha.
+  if [ -n "${DRAC_ENROLLMENT_TOKEN:-}" ]; then
+    log "Matriculando a instalacao na DRAC Central"
+    response_file="$(mktemp)"
+    payload="$(printf '{"installationId":"%s","customerName":"%s","licenseKey":"%s","serverAddress":"%s","cameraAllowedCidrs":"%s"}' \
+      "$(json_escape "$DRAC_INSTALLATION_ID")" \
+      "$(json_escape "$DRAC_CUSTOMER_NAME")" \
+      "$(json_escape "$DRAC_LICENSE_KEY")" \
+      "$(json_escape "${DRAC_SERVER_IP:-}")" \
+      "$(json_escape "${DRAC_CAMERA_ALLOWED_CIDRS:-}")")"
+    http="$(curl -s -o "$response_file" -w '%{http_code}' --max-time 15 \
+      -H 'Content-Type: application/json' \
+      -H "X-DRAC-Enrollment-Token: $DRAC_ENROLLMENT_TOKEN" \
+      -d "$payload" "$base/api/agent/enroll" || echo 000)"
+    if [ "$http" != "200" ] && [ "$http" != "201" ]; then
+      local motivo
+      motivo="$(sed -n 's/.*"error":"\([^"]*\)".*/\1/p' "$response_file" | head -1)"
+      rm -f "$response_file"
+      fail "A Central RECUSOU a matricula desta instalacao (HTTP $http${motivo:+, $motivo}).
+  Sem registro na Central a instalacao fica suspensa em 15 dias.
+  Confira DRAC_ENROLLMENT_TOKEN, ou provisione o cliente pelo painel da Central antes de instalar."
+    fi
+    rm -f "$response_file"
+    log "Instalacao matriculada na Central."
+  fi
+
+  # Confirma com um heartbeat de verdade. Se ele nao passar, a instalacao NAO
+  # esta registrada — e dizer o contrario seria mentir para quem instalou.
+  log "Confirmando o registro com um heartbeat"
+  payload="$(printf '{"installation":{"id":"%s","name":"%s","customerName":"%s","version":"%s","launchProfile":"standard"},"summary":{"status":"installing"}}' \
     "$(json_escape "$DRAC_INSTALLATION_ID")" \
     "$(json_escape "$DRAC_INSTALLATION_ID")" \
     "$(json_escape "$DRAC_CUSTOMER_NAME")" \
     "$(json_escape "$DRAC_INSTALLER_COMMIT")")"
-
-  log "Registrando instalacao imediatamente na DRAC Central"
-  if curl -fsS --max-time 12 \
+  response_file="$(mktemp)"
+  http="$(curl -s -o "$response_file" -w '%{http_code}' --max-time 15 \
     -H 'Content-Type: application/json' \
     -H "X-DRAC-Installation-Id: $DRAC_INSTALLATION_ID" \
     -H "X-DRAC-License-Key: $DRAC_LICENSE_KEY" \
-    -d "$payload" \
-    "$base/api/agent/heartbeat" > "$response_file"; then
-    log "Primeiro heartbeat aceito pela Central."
-  else
-    warn "A Central nao aceitou o heartbeat imediato; o conector local continuara tentando automaticamente."
-    rm -f "$response_file"
-    return 0
-  fi
-
-  if curl -fsS --max-time 12 \
-    -H "X-DRAC-Installation-Id: $DRAC_INSTALLATION_ID" \
-    -H "X-DRAC-License-Key: $DRAC_LICENSE_KEY" \
-    "$base/api/agent/status" >/dev/null; then
-    log "Instalacao confirmada na Central."
-  else
-    warn "Heartbeat enviado, mas a confirmacao de status da Central ainda nao respondeu."
-  fi
+    -d "$payload" "$base/api/agent/heartbeat" || echo 000)"
   rm -f "$response_file"
+  if [ "$http" != "200" ] && [ "$http" != "201" ]; then
+    fail "A Central NAO aceitou esta instalacao (HTTP $http).
+  A instalacao ficaria sem licenca e seria suspensa em 15 dias.
+  Caminhos: preencha DRAC_ENROLLMENT_TOKEN no arquivo de respostas, ou
+  provisione o cliente pelo painel da Central e use o ID e a chave de la."
+  fi
+  log "Instalacao confirmada na Central."
 }
 
 validate_installation() {

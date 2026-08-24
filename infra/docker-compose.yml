@@ -168,6 +168,7 @@ services:
     ports:
       - "127.0.0.1:9765:9765"
     environment:
+      - DRAC_CENTRAL_ENROLLMENT_TOKEN=${DRAC_CENTRAL_ENROLLMENT_TOKEN:-}
       - NODE_ENV=production
       - DRAC_CENTRAL_HOST=0.0.0.0
       - DRAC_CENTRAL_PORT=9765
