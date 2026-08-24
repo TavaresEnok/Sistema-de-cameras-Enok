@@ -128,6 +128,7 @@ def health_check():
                 "source": processor.source_state(),
                 "stream": processor.capture_stream_state(),
                 "motion_trigger": processor.motion_trigger,
+                "motion_detector": processor.motion_diagnostics(),
                 "wakeup_until": processor.wakeup_until,
                 "hibernating": processor.motion_trigger == "CAMERA" and __import__("time").time() >= processor.wakeup_until,
                 "live_view": processor.live_view_state(),

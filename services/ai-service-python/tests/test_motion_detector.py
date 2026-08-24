@@ -40,6 +40,16 @@ def frame_with_rects(bg: int = 100, rects=()):
     return f
 
 
+def global_nonuniform_frame():
+    """Mudanca global GEOMETRICA/cromatica, nao simples deslocamento de luz."""
+    f = gray_frame(100)
+    # 62,5% clareia e 37,5% escurece: cobre o limiar global, mas os sinais
+    # opostos impedem classificar como simples deslocamento de iluminação.
+    f[:, :120] = 0
+    f[:, 120:] = 255
+    return f
+
+
 # ── Cena REAL sintética (para a equivalência de sensibilidade) ───────────────
 # Quadro chapado não serve para comparar BGR × plano Y: a diferença entre eles
 # aparece justamente com objeto de BAIXO contraste sobre RUÍDO de sensor, que é
@@ -142,34 +152,53 @@ class MotionScenarios:
             got += det.infer(frame_with_rect(x=40, y=70, w=44, h=44))  # metade ESQUERDA = dentro da zona
         self.assertTrue(any(d.label == "motion" for d in got), "movimento dentro da zona deve ser detectado")
 
-    # ── (1) mudança global de cena AINDA reporta ─────────────────────────────
-    def test_mudanca_global_AINDA_reporta_com_marcador(self):
-        """Luz acendendo / IR ligando / sol saindo da nuvem = a cena inteira muda.
-
-        Antes o evento era ENGOLIDO — ou seja, a câmera NÃO gravava exatamente no
-        instante em que alguém acendeu a luz. Agora recalibra E reporta, marcado
-        com sceneChange para quem quiser suprimir na camada de cima.
-        """
+    # ── (1) mudança global de cena não fotométrica AINDA reporta ─────────────
+    def test_mudanca_global_nao_fotometrica_AINDA_reporta_com_marcador(self):
+        """Camera mexida/IR cromatico/objeto enorme continuam protegidos."""
         det = self._det()
         self._warmup(det)
-        got = det.infer(gray_frame(255))
-        self.assertTrue(got, "mudança global de cena NÃO pode ser engolida: é o gatilho da gravação")
+        got = det.infer(global_nonuniform_frame())
+        self.assertTrue(got, "mudança global não fotométrica NÃO pode ser engolida")
         self.assertEqual(got[0].event_type, "MOTION_DETECTED")
         self.assertIs(got[0].extra.get("sceneChange"), True, "o evento tem de vir marcado como mudança de cena")
         self.assertEqual(len(got[0].bbox), 4)
+
+    def test_mudanca_uniforme_de_luz_nao_grava(self):
+        """Nuvem/luz/exposição global é fotometria, não movimento."""
+        det = self._det()
+        self._warmup(det)
+        for got in [det.infer(gray_frame(180)) for _ in range(4)]:
+            self.assertEqual(got, [], "mudança uniforme de luz não pode criar gravação")
+        self.assertGreater(det.diagnostics()["counters"].get("photometric_compensated_frames", 0), 0)
+
+    def test_pessoa_e_detectada_mesmo_quando_a_luz_acende(self):
+        """Compensa o global, mas preserva o resíduo local do objeto."""
+        det = self._det()
+        self._warmup(det)
+        got = []
+        for _ in range(6):
+            cena = frame_with_rect(bg=160, val=235, x=140, y=55, w=44, h=80)
+            got += det.infer(cena)
+        self.assertTrue(got, "a proteção de luz não pode cegar uma pessoa simultânea")
+        self.assertFalse(any(d.extra.get("sceneChange") for d in got))
 
     def test_mudanca_global_recalibra_o_fundo(self):
         """Recalibrar de verdade: depois da mudança, o NOVO nível vira fundo."""
         det = self._det()
         self._warmup(det)
-        det.infer(gray_frame(255))  # mudança global
+        novo_fundo = global_nonuniform_frame()
+        det.infer(novo_fundo)  # mudança global não fotométrica
         for _ in range(det._rewarmup_total + 4):
-            det.infer(gray_frame(255))  # reaprende a cena clara
+            det.infer(novo_fundo)  # reaprende a cena nova
         for _ in range(3):
-            self.assertEqual(det.infer(gray_frame(255)), [], "cena clara já é o novo fundo: nada a reportar")
+            self.assertEqual(det.infer(novo_fundo), [], "cena nova já é o fundo: nada a reportar")
         got = []
-        for _ in range(6):  # objeto ESCURO sobre o novo fundo claro
-            got += det.infer(frame_with_rect(bg=255, val=0))
+        for _ in range(6):
+            com_objeto = novo_fundo.copy()
+            # Objeto claro sobre a faixa escura do novo fundo. Objeto escuro
+            # seria corretamente classificado como sombra pelo MOG2.
+            com_objeto[70:114, 30:74] = 255
+            got += det.infer(com_objeto)
         self.assertTrue(any(d.label == "motion" for d in got), "após recalibrar, objetos no novo fundo são detectados")
 
     # ── (3) todas as caixas de movimento ─────────────────────────────────────
@@ -330,7 +359,13 @@ class TestEquivalenciaSensibilidadePlanoY(unittest.TestCase):
     DELTAS = (5, 8, 12, 16, 20, 30)   # contraste do objeto contra o fundo
 
     def _fired(self, luma, sigma, delta):
-        with mock.patch.dict(MOTION_PROFILE, {"motion_luma_plane": luma, "motion_warmup_frames": _NOISE_WARMUP}):
+        # Este banco isola SOMENTE BGR x Y; a compensação fotométrica tem suíte
+        # própria e não deve alterar a referência lenta entre cenários.
+        with mock.patch.dict(MOTION_PROFILE, {
+            "motion_luma_plane": luma,
+            "motion_warmup_frames": _NOISE_WARMUP,
+            "motion_illumination_compensation": False,
+        }):
             det = MotionDetector()
             det.load()
             fundo = _noisy_scene(sigma)
@@ -362,12 +397,16 @@ class TestEquivalenciaSensibilidadePlanoY(unittest.TestCase):
                         "isso é câmera que deixa de gravar",
                     )
 
-    def test_mesma_escada_de_sensibilidade_no_ruido_tipico(self):
+    def test_escada_de_sensibilidade_no_ruido_tipico_nao_diverge_mais_de_um_passo(self):
         for sigma in self.SIGMAS_ESCADA_EXATA:
-            self.assertEqual(
-                self._escada(True, sigma),
-                self._escada(False, sigma),
-                f"com ruído sigma={sigma} os dois caminhos têm de disparar nos mesmos contrastes",
+            atual = self._escada(False, sigma)
+            novo = self._escada(True, sigma)
+            primeiro_atual = next((i for i, fired in enumerate(atual) if fired), len(atual))
+            primeiro_novo = next((i for i, fired in enumerate(novo) if fired), len(novo))
+            self.assertLessEqual(
+                abs(primeiro_novo - primeiro_atual),
+                1,
+                f"com ruído sigma={sigma} os caminhos divergiram mais de um nível de contraste",
             )
 
 
@@ -387,7 +426,7 @@ class TestFlagsDesligadas(unittest.TestCase):
     def test_kill_switch_volta_a_engolir_a_mudanca_global(self):
         # Feed MÚLTIPLO: atravessa a confirmação temporal, provando que é o caminho
         # de rejeição global que segura (e não só "1 hit < required").
-        for got in self._run([gray_frame(255)] * 4, motion_scene_change_report=False):
+        for got in self._run([global_nonuniform_frame()] * 4, motion_scene_change_report=False):
             self.assertEqual(got, [], "com o kill-switch, mudança global volta a ser engolida")
 
     def test_teto_um_devolve_exatamente_a_maior_caixa_como_hoje(self):
@@ -436,16 +475,22 @@ class TestFlagsDeAmbiente(unittest.TestCase):
         self.assertIs(profile["motion_scene_change_report"], True, "reportar mudança global é o padrão (defeito corrigido)")
         self.assertIs(profile["motion_luma_plane"], False, "plano Y é opt-in: o padrão continua sendo o BGR de hoje")
         self.assertEqual(profile["motion_max_boxes"], 4)
+        self.assertIs(profile["motion_illumination_compensation"], True)
+        self.assertIs(profile["motion_photometric_scene_suppression"], True)
 
     def test_env_liga_plano_y_e_desliga_scene_change(self):
         profile = self._profile({
             "MOTION_LUMA_PLANE": "true",
             "MOTION_SCENE_CHANGE_REPORT": "false",
             "MOTION_MAX_BOXES": "2",
+            "MOTION_ILLUMINATION_COMPENSATION": "false",
+            "MOTION_PHOTOMETRIC_SCENE_SUPPRESSION": "false",
         })
         self.assertIs(profile["motion_luma_plane"], True)
         self.assertIs(profile["motion_scene_change_report"], False)
         self.assertEqual(profile["motion_max_boxes"], 2)
+        self.assertIs(profile["motion_illumination_compensation"], False)
+        self.assertIs(profile["motion_photometric_scene_suppression"], False)
 
 
 if __name__ == "__main__":

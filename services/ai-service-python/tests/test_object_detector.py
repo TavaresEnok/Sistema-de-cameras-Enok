@@ -23,6 +23,7 @@ Framework: unittest da stdlib (decisão 9.2).
 import os
 import tempfile
 import unittest
+from unittest import mock
 from queue import Queue
 
 import numpy as np
@@ -34,6 +35,7 @@ try:
     from detectors.object_detector import (
         ObjectDetector,
         CLASS_LABELS,
+        GENERAL_PROFILE,
         PERSON_CLASS_ID,
         BICYCLE_CLASS_ID,
         CAR_CLASS_ID,
@@ -78,8 +80,35 @@ def _rows_to_raw(rows):
 class TestObjectDetectorPostProcessing(unittest.TestCase):
     """infer() com saída sintética: filtro de classe/confiança/altura, sem modelo."""
 
+    def setUp(self):
+        # ─────────────────────────────────────────────────────────────────
+        # O TESTE FIXA O PRÓPRIO PERFIL — não herda o do servidor.
+        #
+        # Estes dois testes quebraram em 21/08/2026 na instalação principal:
+        # a licença de lá libera só "pessoa" (detect_vehicles=False), então o
+        # filtro de licença cortava carro/moto/ônibus antes do funil, e a
+        # associação de piloto (rider_association=True, piso 0,25) salvava a
+        # pessoa de confiança 0,40 que o teste esperava ver descartada.
+        #
+        # O CÓDIGO estava certo nos dois casos. O defeito era o teste depender
+        # da configuração de quem roda: passaria numa máquina e falharia na
+        # outra, sem nada ter mudado no produto.
+        # ─────────────────────────────────────────────────────────────────
+        licenca_ampla = dict(GENERAL_PROFILE)
+        licenca_ampla["detect_vehicles"] = True
+        licenca_ampla["detect_objects"] = True
+        patch = mock.patch.dict(
+            "detectors.object_detector.GENERAL_PROFILE", licenca_ampla, clear=True
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def _detector_with_output(self, rows, input_size=640):
         det = ObjectDetector()
+        # Piloto DESLIGADO por padrão: quem quiser testá-lo religa no próprio
+        # teste. Ligado, ele promove pessoa abaixo do limiar e mascara o corte
+        # por confiança que a maioria destes testes verifica.
+        det._rider_config.enabled = False
         det.model = object()  # pula load() (não há modelo real)
         raw = _rows_to_raw(rows)
 

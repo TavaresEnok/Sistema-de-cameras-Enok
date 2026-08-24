@@ -1,10 +1,11 @@
 import time
-from collections import deque
+from collections import Counter, deque
 
 import cv2
 import numpy as np
 
 from .base import Detection, Detector
+from .illumination_guard import GlobalIlluminationGuard, IlluminationDecision
 from .motion_contrast import stretch_lut, uint8_percentile
 from runtime_profiles import MOTION_PROFILE
 
@@ -100,6 +101,24 @@ class MotionDetector(Detector):
         self._blur_ksize = int(MOTION_PROFILE.get("motion_blur_ksize", 3))
         if self._blur_ksize and self._blur_ksize % 2 == 0:
             self._blur_ksize += 1  # GaussianBlur exige janela ímpar
+        # Nuvem/luz/exposicao: remove deslocamento GLOBAL de luminancia antes do
+        # MOG2, preservando o residuo LOCAL de uma pessoa/veiculo.
+        self._illumination_enabled = bool(MOTION_PROFILE.get("motion_illumination_compensation", True))
+        self._photometric_scene_suppression = bool(
+            MOTION_PROFILE.get("motion_photometric_scene_suppression", True)
+        )
+        self._illumination = None
+        self._illumination_config = {
+            "min_shift": float(MOTION_PROFILE.get("motion_illumination_min_shift", 8.0)),
+            "residual_threshold": float(MOTION_PROFILE.get("motion_illumination_residual_threshold", 10.0)),
+            "uniform_ratio": float(MOTION_PROFILE.get("motion_illumination_uniform_ratio", 0.72)),
+            "block_uniform_ratio": float(MOTION_PROFILE.get("motion_illumination_block_uniform_ratio", 0.75)),
+            "alpha": float(MOTION_PROFILE.get("motion_illumination_alpha", 0.02)),
+            "recovery_alpha": float(MOTION_PROFILE.get("motion_illumination_recovery_alpha", 0.02)),
+        }
+        self._last_illumination = IlluminationDecision()
+        self._stats = Counter()
+        self._last_suppression_reason = None
         self._contrast_history = np.zeros((50, 2), dtype=np.float32)
         self._contrast_history[:, 1] = 255.0
         self._contrast_index = 0
@@ -239,6 +258,9 @@ class MotionDetector(Detector):
         self._zones = zones or []
         self._zone_mask = self._build_zone_mask(self._zones)
         self._zone_factor_map = self._build_zone_factor_map(self._zones)
+        # A referencia fotometrica foi aprendida sob outra area monitorada.
+        # Recriar evita que uma troca de zona pareca uma mudanca de luz.
+        self._illumination = None
 
     def _effective_global_change_pixels(self) -> int:
         if self._zone_mask is None:
@@ -262,12 +284,37 @@ class MotionDetector(Detector):
         self._warmup_total_current = warmup_total
         self._consecutive_hits = 0
         self._motion_streak = 0
+        # Filtros aprendidos pertencem ao fundo anterior. Mantê-los depois de
+        # IR/PTZ/mudança de cena poderia criar regiões cegas ou piso artificial.
+        self._noise_window.clear()
+        if self._chronic is not None:
+            self._chronic.reiniciar()
+        if self._periodic is not None:
+            self._periodic.esquecer()
 
     def infer(self, frame, context_key: str | None = None, **kwargs) -> list[Detection]:
         if self.fgbg is None:
             self.load()
 
+        self._stats["frames"] += 1
+        self._last_suppression_reason = None
         small_frame = cv2.resize(frame, (self.frame_width, self.frame_height))
+
+        raw_gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY) if small_frame.ndim == 3 else small_frame
+        if self._illumination_enabled:
+            if self._illumination is None:
+                self._illumination = GlobalIlluminationGuard(
+                    raw_gray.shape,
+                    **self._illumination_config,
+                )
+            small_frame, self._last_illumination = self._illumination.compensate(
+                small_frame,
+                mask=self._zone_mask,
+            )
+            if self._last_illumination.photometric:
+                self._stats["photometric_compensated_frames"] += 1
+        else:
+            self._last_illumination = IlluminationDecision()
 
         # PLANO DE LUMINÂNCIA (opt-in): a IA aqui é SÓ movimento, e movimento vive
         # na luminância — os dois canais de cor custam CPU no MOG2 sem mudar a
@@ -346,6 +393,8 @@ class MotionDetector(Detector):
         fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_CLOSE, kernel)
 
         if self._warmup_frames < warmup_total:
+            self._stats["warmup_suppressed_frames"] += 1
+            self._last_suppression_reason = "warmup"
             return []  # aprendendo o fundo — não reporta
 
         # ── SUPRESSÃO DE ATIVIDADE CRÔNICA ──────────────────────────────────
@@ -366,7 +415,12 @@ class MotionDetector(Detector):
                     fgmask.shape, alpha=self._chronic_alpha,
                     limiar=self._chronic_threshold, warmup=self._chronic_warmup,
                 )
+            before_chronic = int(np.count_nonzero(fgmask))
             fgmask = self._chronic.atualizar_e_suprimir(fgmask)
+            chronic_removed = before_chronic - int(np.count_nonzero(fgmask))
+            if chronic_removed > 0:
+                self._stats["chronic_suppressed_frames"] += 1
+                self._stats["chronic_suppressed_pixels"] += chronic_removed
 
         motion_pixels = int(np.count_nonzero(fgmask))
 
@@ -380,8 +434,19 @@ class MotionDetector(Detector):
         # senão uma zona pequena jamais atingiria a fração de mudança global.
         if motion_pixels >= self._effective_global_change_pixels():
             components = self._largest_components(fgmask)
+            photometric = bool(self._last_illumination.photometric)
+            if self._illumination is not None:
+                # A cena crua atual passa a ser a referencia da recuperacao.
+                self._illumination.reset(raw_gray)
             self._create_background(self._rewarmup_total)
+            self._stats["global_scene_changes"] += 1
+            if photometric and self._photometric_scene_suppression:
+                self._stats["photometric_scene_changes_suppressed"] += 1
+                self._last_suppression_reason = "photometric_scene_change"
+                return []
             if not self._scene_change_report:
+                self._stats["scene_changes_suppressed"] += 1
+                self._last_suppression_reason = "scene_change_policy"
                 return []  # kill-switch: comportamento anterior (engole o evento)
             if not components:
                 # A cena mudou inteira mas a morfologia não deixou componente
@@ -389,6 +454,7 @@ class MotionDetector(Detector):
                 components = [(motion_pixels, (0, 0, self.frame_width, self.frame_height))]
             # Sem confirmação temporal: a recalibração acabou de zerar o contador,
             # e exigir N frames iguais aqui é o mesmo que nunca reportar.
+            self._stats["motion_emitted_frames"] += 1
             return self._build_detections(frame, components, motion_pixels, scene_change=True)
 
         # ── PISO DE RUÍDO ADAPTATIVO (ideia do Shinobi, `filterTheNoise`) ─────
@@ -409,6 +475,9 @@ class MotionDetector(Detector):
         limiar_efetivo = max(self.min_component_pixels, piso)
 
         if motion_pixels < limiar_efetivo:
+            if piso > self.min_component_pixels and motion_pixels >= self.min_component_pixels:
+                self._stats["noise_floor_suppressed_frames"] += 1
+                self._last_suppression_reason = "adaptive_noise_floor"
             self._consecutive_hits = 0
             self._motion_streak = 0
             return []
@@ -442,9 +511,15 @@ class MotionDetector(Detector):
                 if not self._periodic.e_periodico(c[1], self.frame_width, self.frame_height, agora)
             ]
             if not restantes:
+                self._stats["periodic_suppressed_frames"] += 1
+                self._stats["periodic_suppressed_components"] += len(components)
+                self._last_suppression_reason = "periodic_activity"
                 self._consecutive_hits = 0
                 self._motion_streak = 0
                 return []
+            removed = len(components) - len(restantes)
+            if removed:
+                self._stats["periodic_suppressed_components"] += removed
             components = restantes
 
         best_area = components[0][0]
@@ -458,9 +533,37 @@ class MotionDetector(Detector):
             else self._min_consecutive
         )
         if self._consecutive_hits < required:
+            self._stats["temporal_suppressed_frames"] += 1
+            self._last_suppression_reason = "temporal_confirmation"
             return []
 
+        self._stats["motion_emitted_frames"] += 1
         return self._build_detections(frame, components, motion_pixels)
+
+    def diagnostics(self) -> dict:
+        """Estado explicavel para health/benchmark, sem expor imagens."""
+        return {
+            "engine": "opencv_mog2_hardened",
+            "illumination_compensation": self._illumination_enabled,
+            "photometric_scene_suppression": self._photometric_scene_suppression,
+            "last_suppression_reason": self._last_suppression_reason,
+            "illumination": (
+                self._illumination.diagnostics()
+                if self._illumination is not None
+                else {
+                    "photometric": False,
+                    "offset": 0.0,
+                    "changed_ratio": 0.0,
+                    "uniform_ratio": 0.0,
+                    "block_uniform_ratio": 0.0,
+                }
+            ),
+            "chronic_fraction": (
+                round(self._chronic.fracao_cronica(), 6) if self._chronic is not None else 0.0
+            ),
+            "noise_floor_samples": len(self._noise_window),
+            "counters": dict(self._stats),
+        }
 
     def _largest_components(self, fgmask) -> list:
         """Componentes acima do limiar, do MAIOR para o menor, com teto.

@@ -91,6 +91,24 @@ MOTION_PROFILE = {
     # próprio ruído (delta 5 sobre sigma 6), que nenhum detector distingue de
     # ruído — era justamente ele que gerava os 90 falsos.
     "motion_blur_ksize": _env_int("MOTION_BLUR_KSIZE", 3),
+    # COMPENSACAO FOTOMETRICA GLOBAL: nuvem, farol, exposicao automatica e luz
+    # ambiente deslocam quase toda a luminancia na mesma direcao. O guarda mede
+    # esse deslocamento em pixels + grade espacial e o remove apenas do frame de
+    # analise; um objeto local continua como residuo e segue para o MOG2.
+    "motion_illumination_compensation": _env_bool("MOTION_ILLUMINATION_COMPENSATION", True),
+    "motion_illumination_min_shift": _env_float("MOTION_ILLUMINATION_MIN_SHIFT", 8.0),
+    "motion_illumination_residual_threshold": _env_float("MOTION_ILLUMINATION_RESIDUAL_THRESHOLD", 10.0),
+    "motion_illumination_uniform_ratio": _env_float("MOTION_ILLUMINATION_UNIFORM_RATIO", 0.72),
+    "motion_illumination_block_uniform_ratio": _env_float("MOTION_ILLUMINATION_BLOCK_UNIFORM_RATIO", 0.75),
+    "motion_illumination_alpha": _env_float("MOTION_ILLUMINATION_ALPHA", 0.02),
+    # Mantem a referencia lenta tambem durante a compensacao: adaptar rapido
+    # faria o segundo quadro de uma luz acesa parecer uma nova mudanca global e
+    # poderia engolir uma pessoa que entrou junto.
+    "motion_illumination_recovery_alpha": _env_float("MOTION_ILLUMINATION_RECOVERY_ALPHA", 0.02),
+    # Se uma mudanca ainda exceder o limite global DEPOIS da compensacao e for
+    # inequivocamente fotometrica, nao cria gravacao. Mudancas nao uniformes
+    # (camera mexida, PTZ, objeto muito proximo) continuam marcadas/reportadas.
+    "motion_photometric_scene_suppression": _env_bool("MOTION_PHOTOMETRIC_SCENE_SUPPRESSION", True),
     # PISO DE RUÍDO ADAPTATIVO (ideia do Shinobi): mediana das últimas N medidas
     # de movimento vira o chão do limiar. Em dia de vento/chuva o detector sobe
     # a própria régua sozinho e desce quando passa — sem ninguém reconfigurar.

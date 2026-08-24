@@ -215,6 +215,14 @@ class StreamProcessor:
     def advanced_analysis_type(self):
         return None if self.analysis_type == "motion" else self.analysis_type
 
+    def motion_diagnostics(self) -> dict:
+        """Diagnostico do MOG2 endurecido; health nunca falha por telemetria."""
+        try:
+            diagnostics = getattr(self.motion_detector, "diagnostics", None)
+            return diagnostics() if callable(diagnostics) else {"engine": "opencv_mog2"}
+        except Exception as exc:
+            return {"engine": "opencv_mog2", "diagnostic_error": str(exc)}
+
     def _normalize_view_mode(self, view_mode: str | None) -> str:
         normalized = (view_mode or "").strip().lower()
         return "selected" if normalized == "selected" else "grid"
