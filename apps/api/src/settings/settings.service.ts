@@ -1,4 +1,9 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  serializarValor,
+  ValorDeConfiguracaoInvalido,
+  type EspecificacaoDeConfiguracao,
+} from './helpers/valor-de-configuracao.helper';
 import { PrismaService } from '../common/prisma/prisma.service';
 
 type SettingType = 'string' | 'number' | 'boolean' | 'color' | 'image';
@@ -12,8 +17,6 @@ type SettingSpec = {
 
 // Tamanho máximo do logo em base64 (~400 KB de imagem). Logos de login/topo são
 // pequenos; este teto evita estourar o payload e o banco.
-const MAX_IMAGE_CHARS = 550_000;
-const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
 // Chaves de marca (branding) expostas publicamente — a tela de login precisa
 // lê-las antes de autenticar.
@@ -226,31 +229,13 @@ export class SettingsService {
 
     for (const [key, value] of entries) {
       const spec = SETTING_SPECS[key];
+      // A regra de validação mora no ajudante puro (testado sem banco nem HTTP).
       let serialized: string;
-      if (spec.type === 'number') {
-        const n = Number(value);
-        if (!Number.isFinite(n)) throw new BadRequestException(`Valor inválido para ${key}.`);
-        const clamped = Math.min(spec.max ?? n, Math.max(spec.min ?? n, Math.round(n)));
-        serialized = String(clamped);
-      } else if (spec.type === 'boolean') {
-        serialized = value === true || value === 'true' || value === 1 || value === '1' ? 'true' : 'false';
-      } else if (spec.type === 'color') {
-        const s = String(value ?? '').trim();
-        // Vazio é válido: significa "voltar ao padrão do tema".
-        if (s && !HEX_COLOR.test(s)) throw new BadRequestException(`Cor inválida para ${key} (use #RRGGBB).`);
-        serialized = s.toLowerCase();
-      } else if (spec.type === 'image') {
-        const s = String(value ?? '').trim();
-        // Vazio é válido: remove o logo personalizado.
-        if (s) {
-          if (!s.startsWith('data:image/')) throw new BadRequestException(`Imagem inválida para ${key}.`);
-          if (s.length > MAX_IMAGE_CHARS) throw new BadRequestException(`Imagem muito grande para ${key} (máx. ~400 KB).`);
-        }
-        serialized = s;
-      } else {
-        const s = String(value ?? '').trim().slice(0, 200);
-        if (!s) throw new BadRequestException(`Valor inválido para ${key}.`);
-        serialized = s;
+      try {
+        serialized = serializarValor(key, value, spec as EspecificacaoDeConfiguracao);
+      } catch (erro) {
+        if (erro instanceof ValorDeConfiguracaoInvalido) throw new BadRequestException(erro.message);
+        throw erro;
       }
       await this.prisma.systemSetting.upsert({
         where: { key },
