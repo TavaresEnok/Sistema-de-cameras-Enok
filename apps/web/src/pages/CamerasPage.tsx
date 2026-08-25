@@ -666,11 +666,11 @@ function WizardModal({
                     quando ficam em branco. */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta ONVIF</label>
-                  <input value={form.onvifPort} onChange={(e) => updateField('onvifPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Deixe vazio: eu procuro" />
+                  <input value={form.onvifPort} onChange={(e) => updateField('onvifPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Vazio: detecção automática" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta HTTP</label>
-                  <input value={form.httpPort} onChange={(e) => updateField('httpPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Deixe vazio: eu procuro" />
+                  <input value={form.httpPort} onChange={(e) => updateField('httpPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Vazio: detecção automática" />
                 </div>
               </div>
               <p className="text-[10px] text-[hsl(var(--muted-foreground))]">

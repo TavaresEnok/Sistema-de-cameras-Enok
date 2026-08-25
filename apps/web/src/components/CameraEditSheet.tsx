@@ -701,10 +701,10 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                         {/* Fora de qualquer gaveta: é aqui que se conserta câmera
                             atrás de roteador, e foi o que o dono não achou. */}
                         <FormField label="Porta ONVIF" hint="opcional">
-                          <Input value={form.onvifPort} onChange={(e) => upd('onvifPort', e.target.value)} placeholder="vazio = eu procuro" className="text-sm font-mono" />
+                          <Input value={form.onvifPort} onChange={(e) => upd('onvifPort', e.target.value)} placeholder="Vazio: detecção automática" className="text-sm font-mono" />
                         </FormField>
                         <FormField label="Porta HTTP" hint="opcional">
-                          <Input value={form.httpPort} onChange={(e) => upd('httpPort', e.target.value)} placeholder="vazio = eu procuro" className="text-sm font-mono" />
+                          <Input value={form.httpPort} onChange={(e) => upd('httpPort', e.target.value)} placeholder="Vazio: detecção automática" className="text-sm font-mono" />
                         </FormField>
                       </div>
                       <FormField label="Caminho RTSP" hint="vazio = detectar">

@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger } from '@ne
 import { PrismaService } from '../common/prisma/prisma.service';
 import { PushService } from '../notifications/push.service';
 import { PushDevicesService } from '../notifications/push-devices.service';
+import { AuditService } from '../audit/audit.service';
 import { UserRole } from '@prisma/client';
 import { type AuthUser } from '../common/types/auth-user.type';
 import {
@@ -34,6 +35,7 @@ export class GroupChatService {
     private readonly prisma: PrismaService,
     private readonly push: PushService,
     private readonly pushDevices: PushDevicesService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -147,6 +149,9 @@ export class GroupChatService {
 
     if (!freio.pode) {
       this.logger.log(`Alerta em ${grupo.name} registrado SEM push (freio: faltam ${freio.faltamSegundos}s).`);
+      // Registra IGUAL: repetição do botão é justamente o que interessa
+      // investigar depois.
+      await this.registrarNaAuditoria(grupo, camera, user, nome, corpo, false, 0);
       return { mensagem, enviadoPara: 0, freio };
     }
 
@@ -173,7 +178,18 @@ export class GroupChatService {
         // confundido com alarme de movimento, que é rotina.
         channelId: 'panico',
         priority: 'high',
-        data: { tipo: 'alerta-de-grupo', groupId, cameraId: camera?.id ?? null, mensagemId: mensagem.id },
+        data: {
+          tipo: 'alerta-de-grupo',
+          groupId,
+          grupoNome: grupo.name,
+          cameraId: camera?.id ?? null,
+          cameraNome: camera?.name ?? null,
+          mensagemId: mensagem.id,
+          // QUEM disparou, para o app mostrar sem precisar abrir a conversa —
+          // e para o morador saber na hora se foi vizinho conhecido.
+          autorId: user.id,
+          autorNome: nome,
+        },
       }).catch((e) => this.logger.error(`Falha ao enviar alerta: ${e?.message ?? e}`));
     }
 
@@ -181,7 +197,45 @@ export class GroupChatService {
       `ALERTA em ${grupo.name} por ${nome}${camera ? ` (${camera.name})` : ''}: `
       + `${destino.alcancados} avisados, ${destino.semAparelho} sem aparelho.`,
     );
+    await this.registrarNaAuditoria(grupo, camera, user, nome, corpo, freio.pode, destino.alcancados);
     return { mensagem, enviadoPara: destino.alcancados, semAparelho: destino.semAparelho, freio };
+  }
+
+  /**
+   * O RASTRO PERMANENTE de quem disparou o alerta.
+   *
+   * "seria bom também indicar qual usuário emitiu o alerta, para saber se tem
+   *  alguém fazendo bagunça em algo sério" (dono, 25/08/2026)
+   *
+   * A mensagem da conversa some em 3 dias — e levaria junto o registro de quem
+   * apertou. Quem estivesse abusando do botão seria descoberto depois de a
+   * prova se apagar sozinha.
+   *
+   * A auditoria tem retenção própria, bem maior, e guarda também o IP e o
+   * aparelho. É onde se apura repetição: dez alertas de um mesmo morador numa
+   * semana aparecem aqui mesmo depois de a conversa esvaziar.
+   */
+  private async registrarNaAuditoria(
+    grupo: { id: string; name: string },
+    camera: { id: string; name: string } | null,
+    user: AuthUser,
+    nome: string,
+    corpo: string,
+    houvePush: boolean,
+    alcancados: number,
+  ) {
+    await this.audit
+      .log(user.id, 'group.panic_alert', 'CameraGroup', grupo.id, {
+        grupo: grupo.name,
+        autor: nome,
+        camera: camera?.name ?? null,
+        mensagem: corpo,
+        // Distingue o alerta que TOCOU o aparelho de todos do que foi contido
+        // pelo freio — repetição contida é o sinal de abuso.
+        houvePush,
+        alcancados,
+      } as never)
+      .catch((e) => this.logger.error(`Falha ao registrar o alerta na auditoria: ${e?.message ?? e}`));
   }
 
   /** Dias que a conversa guarda. Configurável, com o padrão pedido pelo dono. */
