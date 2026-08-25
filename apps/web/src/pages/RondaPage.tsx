@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Clock, LoaderCircle, Pause, Play, Plus, Trash2, X } from 'lucide-react';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
-import { SavedLayout, useVmsDataStore } from '../store/vmsDataStore';
+import { useVmsDataStore } from '../store/vmsDataStore';
+import { lerCopiaLocal, lerMosaicoDaApi, preferirApi, type MosaicoSalvo } from '../lib/mosaicos-salvos';
 import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
 import { paradaNoInstante, proximaParada, type Parada } from '../lib/ronda-rotacao';
 
@@ -36,8 +37,18 @@ const SEGUNDOS_SUGERIDOS = [10, 15, 30, 60, 120, 300];
 
 export default function RondaPage() {
   const accessToken = useAuthStore((s) => s.accessToken);
-  const layouts = useVmsDataStore((s) => s.layouts) as SavedLayout[];
   const cameras = useVmsDataStore((s) => s.cameras);
+  // ── OS MOSAICOS SÃO OS QUE O OPERADOR SALVOU EM AO VIVO ──────────────────
+  //
+  // Antes esta tela lia `vmsDataStore.layouts`, que NÃO é a lista do operador:
+  // é UM mosaico gerado, com todas as câmeras, e com um identificador que não
+  // existe no banco. O servidor valida a ronda contra os layouts reais, então
+  // salvar daria erro — e enquanto isso a tela oferecia um mosaico que ninguém
+  // montou. Foi o que o dono viu como "não está sincronizado".
+  //
+  // A API é a fonte da verdade porque é contra ela que o servidor valida. A
+  // cópia local só evita a tela abrir vazia enquanto a rede responde.
+  const [layouts, setLayouts] = useState<MosaicoSalvo[]>(() => lerCopiaLocal());
 
   const [rondas, setRondas] = useState<Ronda[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -51,9 +62,21 @@ export default function RondaPage() {
     if (!accessToken) return;
     setCarregando(true);
     try {
-      const r = await fetch(`${getApiBaseUrl()}/rondas`, { headers: cabecalho });
-      const d = await r.json();
-      setRondas(Array.isArray(d?.items) ? d.items : []);
+      // Os dois juntos, de propósito: uma ronda sem a lista de mosaicos exibiria
+      // "(mosaico apagado)" em paradas que existem, e o operador acharia que
+      // perdeu o trabalho.
+      const [rRondas, rLayouts] = await Promise.all([
+        fetch(`${getApiBaseUrl()}/rondas`, { headers: cabecalho }),
+        fetch(`${getApiBaseUrl()}/live-layouts`, { headers: cabecalho }),
+      ]);
+      const dRondas = await rRondas.json();
+      setRondas(Array.isArray(dRondas?.items) ? dRondas.items : []);
+
+      const brutos = await rLayouts.json().catch(() => []);
+      const daApi = (Array.isArray(brutos) ? brutos : [])
+        .map(lerMosaicoDaApi)
+        .filter((m): m is MosaicoSalvo => Boolean(m));
+      setLayouts(preferirApi(daApi, lerCopiaLocal()));
       setErro(null);
     } catch {
       setErro('Não consegui carregar as rondas.');
@@ -182,7 +205,7 @@ function EditorDaRonda({
   ronda, layouts, onCancelar, onSalvar,
 }: {
   ronda: Ronda;
-  layouts: SavedLayout[];
+  layouts: MosaicoSalvo[];
   onCancelar: () => void;
   onSalvar: (r: Ronda) => void | Promise<void>;
 }) {
@@ -287,7 +310,7 @@ function MuralDaRonda({
   ronda, layouts, cameras, onSair,
 }: {
   ronda: Ronda;
-  layouts: SavedLayout[];
+  layouts: MosaicoSalvo[];
   cameras: { id: string; name: string }[];
   onSair: () => void;
 }) {
@@ -328,8 +351,24 @@ function MuralDaRonda({
 
   const parada = ronda.paradas[indice];
   const layout = layouts.find((l) => l.id === parada?.layoutId);
-  const idsDaTela = (layout?.cameraIds ?? []).filter(Boolean) as string[];
-  const colunas = Math.ceil(Math.sqrt(Math.max(1, idsDaTela.length)));
+
+  // ── A GRADE É A QUE FOI SALVA, NÃO UMA CALCULADA AQUI ────────────────────
+  //
+  // A primeira versão desta tela calculava as colunas pela raiz quadrada do
+  // número de câmeras. Um mosaico 2×4 montado no Ao Vivo virava quadrado na
+  // ronda, e as câmeras trocavam de lugar entre as duas telas — parte do que o
+  // dono viu como "não está sincronizado".
+  //
+  // E as posições VAZIAS são preservadas: o operador que deixou um buraco no
+  // canto o deixou de propósito. Compactar move todas as câmeras seguintes, e
+  // quem decorou onde fica o portão perde a referência.
+  const colunas = Math.max(1, Number(String(layout?.gridSize ?? '2x2').split('x')[0]) || 2);
+  const linhas = Math.max(1, Number(String(layout?.gridSize ?? '2x2').split('x')[1]) || 2);
+  const posicoes: (string | null)[] = Array.from({ length: colunas * linhas }, (_, i) => {
+    const id = layout?.cameraIds?.[i];
+    return id ? String(id) : null;
+  });
+  const idsDaTela = posicoes.filter(Boolean) as string[];
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black">
@@ -353,14 +392,17 @@ function MuralDaRonda({
             Este mosaico não tem câmeras.
           </div>
         ) : (
-          idsDaTela.map((id) => {
-            const cam = cameras.find((c) => c.id === id);
-            return (
-              <div key={id} className="relative min-h-0 bg-black">
-                <LiveStreamPlayer cameraId={id} cameraName={cam?.name ?? ''} liveViewMode="grid" />
-              </div>
-            );
-          })
+          posicoes.map((id, i) => (
+            <div key={id ?? `vazio-${i}`} className="relative min-h-0 bg-black">
+              {id ? (
+                <LiveStreamPlayer
+                  cameraId={id}
+                  cameraName={cameras.find((c) => c.id === id)?.name ?? ''}
+                  liveViewMode="grid"
+                />
+              ) : null}
+            </div>
+          ))
         )}
       </div>
 
