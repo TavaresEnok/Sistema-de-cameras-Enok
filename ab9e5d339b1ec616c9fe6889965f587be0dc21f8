@@ -1,0 +1,22 @@
+CORREÇÃO (25/08/2026) — a medição registrada neste commit está ERRADA.
+
+A linha 'analisadores ativos 4 → 1' NÃO aconteceu. Os analisadores estavam
+íntegros; eu medi cedo demais, logo após reiniciar o serviço e ANTES de eles
+subirem, e registrei o número da janela de arranque como se fosse efeito da
+inferência por regiões.
+
+O que continua valendo deste commit:
+  · as chaves passaram a ser repassadas pelo compose (o defeito real);
+  · o default seguro GENERAL_REGION_DETECTION=false;
+  · a hipótese de que idle_full_frame SOMA trabalho em vez de trocar.
+
+O que NÃO pode ser citado como prova:
+  · a queda de analisadores (não houve);
+  · o salto de CPU 176% → 473%, medido na mesma janela contaminada.
+
+A inferência por regiões segue DESLIGADA e, hoje, SEM medição confiável. Quem
+for retomá-la precisa medir de novo, com os analisadores já estabilizados, e
+comparar janelas de mesma duração e mesmo horário.
+
+Lição: número colhido em janela de arranque não é medição, é ruído — e virou
+registro permanente porque foi escrito com confiança.
