@@ -440,6 +440,7 @@ model User {
   eventReviews      UserEventReview[]
   ownedCameras      Camera[]           @relation("CameraOwner")
   groupMessages GroupMessage[]
+  rondas        Ronda[]
 }
 
 model AuthSession {
@@ -712,4 +713,26 @@ model GroupMessage {
 enum GroupMessageKind {
   TEXT
   ALERT
+}
+
+/// RONDA: o mural passa de um mosaico para outro, sozinho.
+///
+/// Pedido em 25/08/2026. O nome é o do ofício — o vigia faz a RONDA, passando de
+/// ponto em ponto — e cada parada tem seu tempo, porque o portão merece mais que
+/// o corredor.
+///
+/// As paradas ficam em JSON (`[{ layoutId, segundos }]`) de propósito: é uma
+/// lista ORDENADA e curta, sempre lida inteira. Tabela separada custaria uma
+/// junção e uma ordem explícita para guardar o que já é um vetor.
+model Ronda {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  /// `[{ layoutId: string, segundos: number }]`, na ordem em que aparecem.
+  paradas   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, updatedAt])
 }

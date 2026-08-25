@@ -33,12 +33,14 @@ import { CloudStorageModule } from './cloud-storage/cloud-storage.module';
 import { CommercialPolicyModule } from './commercial-policy/commercial-policy.module';
 import { LiveLayoutsModule } from './live-layouts/live-layouts.module';
 import { GroupChatModule } from './group-chat/group-chat.module';
+import { RondasModule } from './rondas/rondas.module';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { EventLoopLagService } from './common/observability/event-loop-lag.service';
 
 @Module({
   imports: [
+    RondasModule,
     GroupChatModule,
     ConfigModule.forRoot({
       isGlobal: true,

@@ -24,13 +24,15 @@ export default function WallModePage() {
   const toggleWallMode = useGridStore((state) => state.toggleWallMode);
 
   useEffect(() => {
-    if (!wallMode) toggleWallMode();
-    setLocation('/live', { replace: true });
+    // 25/08/2026: o Modo Mural virou RONDA (rodízio de mosaicos). Este
+    // endereço continua existindo para quem o tinha salvo, e leva ao lugar
+    // novo em vez de devolver "página não encontrada".
+    setLocation('/ronda', { replace: true });
   }, [setLocation, toggleWallMode, wallMode]);
 
   return (
     <div className="flex h-full items-center justify-center text-sm text-[hsl(var(--muted-foreground))]">
-      Abrindo o modo mural…
+      Abrindo a Ronda…
     </div>
   );
 }

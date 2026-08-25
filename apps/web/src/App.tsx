@@ -63,6 +63,7 @@ const StoragePage     = lazyWithReload(() => import('./pages/StoragePage'));
 const SettingsPage    = lazyWithReload(() => import('./pages/SettingsPage'));
 const CameraDetailPage = lazyWithReload(() => import('./pages/CameraDetailPage'));
 const WallModePage    = lazyWithReload(() => import('./pages/WallModePage'));
+const RondaPage       = lazyWithReload(() => import('./pages/RondaPage'));
 const UsersPage       = lazyWithReload(() => import('./pages/UsersPage'));
 const GroupsPage      = lazyWithReload(() => import('./pages/GroupsPage'));
 const RolesPage       = lazyWithReload(() => import('./pages/RolesPage'));
@@ -223,6 +224,12 @@ function AppRoutes() {
       <Route path="/perimetro">
         {() => <ProtectedRoute component={PerimetroPage} />}
       </Route>
+      {/* RONDA: rodízio de mosaicos no mural, cada parada com seu tempo. */}
+      <Route path="/ronda">
+        {() => <ProtectedRoute component={RondaPage} />}
+      </Route>
+      {/* `/wall` continua respondendo: quem tiver o endereço salvo ou na
+          paleta de comandos não pode cair em "página não encontrada". */}
       <Route path="/wall">
         {() => <ProtectedRoute component={WallModePage} />}
       </Route>

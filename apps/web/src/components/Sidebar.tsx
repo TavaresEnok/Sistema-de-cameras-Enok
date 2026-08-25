@@ -43,7 +43,11 @@ const NAV_SECTIONS: NavSection[] = [
       { path: '/alarms',   label: 'Alarmes',        icon: Bell,     roles: ['admin', 'operator'] },
       { path: '/ptz',      label: 'Controle PTZ',   icon: Crosshair },
       { path: '/perimetro', label: 'Perímetro',     icon: ShieldAlert, roles: ['admin', 'operator'] },
-      { path: '/wall',     label: 'Modo Mural',     icon: LayoutGrid },
+      // "Modo Mural" apenas ligava o mural do /live e redirecionava — item de
+      // menu que não levava a lugar nenhum próprio. Virou RONDA: rodízio de
+      // mosaicos, cada parada com seu tempo. O nome é o do ofício — o vigia faz
+      // a ronda, passando de ponto em ponto.
+      { path: '/ronda',    label: 'Ronda',          icon: LayoutGrid },
       { path: '/events',   label: 'Eventos',        icon: Bell,      roles: ['admin', 'operator'] },
     ],
   },
