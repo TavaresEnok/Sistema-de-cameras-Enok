@@ -48,6 +48,10 @@ type Form = {
   recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
   recordingObjectClasses: string[];
   retentionDays: string;
+  /** Segue a política do grupo? Sem isto, o número de dias é decorativo. */
+  retentionFollowsGroup: boolean;
+  /** Dias do grupo, para mostrar o que está de fato valendo. */
+  grupoRetentionDays: number | null;
   audioEnabled: boolean;
   aiEnabled: boolean;
   alarmsEnabled: boolean;
@@ -191,6 +195,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           recordingMode: (data.recordingMode ?? (data.recordingEnabled ? 'continuous' : 'manual')) as Form['recordingMode'],
           recordingObjectClasses: Array.isArray(data.recordingObjectClasses) ? data.recordingObjectClasses : [],
           retentionDays: String(data.retentionDays ?? 7),
+          retentionFollowsGroup: data.retentionFollowsGroup !== false,
+          grupoRetentionDays: (data as { group?: { retentionDays?: number | null } }).group?.retentionDays ?? null,
           audioEnabled: Boolean(data.audioEnabled),
           aiEnabled: data.aiEnabled !== false,
           alarmsEnabled: data.alarmsEnabled !== false,
@@ -352,6 +358,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           recordingMode: form.recordingMode,
           recordingObjectClasses: form.recordingObjectClasses,
           retentionDays: Number(form.retentionDays),
+          // SEM ISTO o número de dias não tinha efeito nenhum: a câmera
+          // continuava seguindo o grupo e o campo mentia o prazo.
+          retentionFollowsGroup: form.retentionFollowsGroup,
           audioEnabled: form.audioEnabled,
           aiEnabled: form.aiEnabled,
           alarmsEnabled: form.alarmsEnabled,
@@ -780,10 +789,45 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                     />
                   )}
                   <Separator />
-                  <div className="grid grid-cols-2 gap-3">
-                    <FormField label="Retenção (dias)">
-                      <Input value={form.retentionDays} onChange={(e) => upd('retentionDays', e.target.value)} className="text-sm font-mono" />
-                    </FormField>
+                    {/* ── O NÚMERO SÓ VALE SE A CÂMERA NÃO SEGUIR O GRUPO ──────────
+                        Relatado em 25/08/2026: "coloquei 3 dias e apliquei em
+                        todas; depois fui na câmera e consigo colocar 7
+                        tranquilamente". Conseguia digitar — e não tinha efeito
+                        nenhum. Esta tela salvava o número e NÃO enviava o
+                        interruptor, então a câmera seguia o grupo e o sistema
+                        seguia apagando aos 3 dias.
+
+                        Num sistema de segurança isso é alguém acreditar que tem
+                        7 dias de prova e ter 3. A tela da câmera (CameraDetailPage)
+                        já tinha o interruptor; esta ficou para trás. */}
+                    <div className="flex items-start justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">Seguir a retenção do grupo</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {form.retentionFollowsGroup
+                            ? (form.grupoRetentionDays
+                                ? `Guardando ${form.grupoRetentionDays} dias, definidos no grupo.`
+                                : 'Sem grupo: vale o prazo padrão do sistema.')
+                            : 'Desligado: esta câmera usa o prazo próprio abaixo.'}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={form.retentionFollowsGroup}
+                        onCheckedChange={(v) => upd('retentionFollowsGroup', v)}
+                        aria-label="Seguir a retenção do grupo"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <FormField label="Retenção (dias)">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={form.retentionDays}
+                          disabled={form.retentionFollowsGroup}
+                          onChange={(e) => upd('retentionDays', e.target.value)}
+                          className="text-sm font-mono disabled:cursor-not-allowed disabled:opacity-50"
+                        />
+                      </FormField>
                     <FormField label="Codec de gravação">
                       <Select value={form.recordingVideoCodec} onValueChange={(v) => upd('recordingVideoCodec', v)}>
                         <SelectTrigger className="text-sm"><SelectValue /></SelectTrigger>
