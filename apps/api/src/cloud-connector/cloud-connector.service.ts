@@ -23,6 +23,7 @@ import {
 } from './heartbeat-cameras.helper';
 import { buildReactivationSnapshot, type ReactivationSnapshot } from './reactivation-snapshot.helper';
 import { SettingsService } from '../settings/settings.service';
+import { decidirSobreVpn, type PerfilDeVpn } from './helpers/perfil-de-vpn.helper';
 
 type LicenseStatus = 'UNKNOWN' | 'ACTIVE' | 'GRACE' | 'RESTRICTED' | 'SUSPENDED';
 
@@ -183,6 +184,10 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
           // inventamos um número, senão um campo esquecido no painel travaria
           // o cadastro de um cliente que pagou por mais.
           this.writeSetting('cloud.maxCameras', this.tetoDeCameras(response.data?.maxCameras)),
+          // Túnel até as câmeras do cliente. Guardado como veio; quem decide se
+          // aplica é `decidirSobreVpn`, e quem aplica de fato é o script do
+          // host — a API não mexe em rota de rede.
+          this.writeSetting('cloud.vpn', response.data?.vpn ? JSON.stringify(response.data.vpn) : ''),
           this.writeSetting('cloud.lastPayloadSummary', JSON.stringify(payload.summary)),
           // A credencial NUNCA em claro no banco: a mesma secret é cifrada na
           // tabela CloudStorage, mas esta cópia ia em texto puro — qualquer
@@ -231,6 +236,9 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       // instalação pode estar atrás de NAT/CGNAT; a Central nunca tenta entrar
       // nela. O snapshot é estritamente de configuração, sem vídeo, eventos,
       // sessões, biometria ou credenciais, e a Central o cifra ao receber.
+      await this.avaliarVpn(response.data?.vpn).catch((e) =>
+        this.logger.warn(`Falha ao avaliar o perfil de VPN: ${e?.message ?? e}`));
+
       await this.processReactivationArchive(response.data?.reactivationArchive, config).catch(async (archiveError) => {
         const detail = sanitizeSensitiveText(archiveError).slice(0, 500);
         this.logger.error(`Falha no arquivo de reativação: ${detail}`);
@@ -1192,6 +1200,36 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
       if (Number.isFinite(n) && n >= 0) return String(Math.floor(n));
     }
     return '';
+  }
+
+  /**
+   * O que fazer com o perfil de VPN que a Central mandou.
+   *
+   * A API NÃO monta túnel: ela registra a decisão e o perfil, e quem aplica é o
+   * script do host (`infra/vpn/aplicar-vpn.sh`), com privilégio para mexer em
+   * rota. Serviço em contêiner reconfigurando a rede do host seria poder demais
+   * pelo caminho errado — e a instalação inteira depende dessa rede.
+   *
+   * A recusa é registrada com motivo: perfil que pede rota padrão, faixa
+   * inválida ou sem prova de vida NÃO é aplicado, e o operador precisa saber
+   * por quê.
+   */
+  private async avaliarVpn(perfil: unknown) {
+    const aplicadaBruta = await this.prisma.systemSetting
+      .findUnique({ where: { key: 'cloud.vpnRevisaoAplicada' } })
+      .catch(() => null);
+    const aplicada = aplicadaBruta?.value ? Number(aplicadaBruta.value) : null;
+    const decisao = decidirSobreVpn(perfil as PerfilDeVpn | null, Number.isFinite(aplicada as number) ? aplicada : null);
+
+    await this.writeSetting('cloud.vpnDecisao', decisao.acao);
+    await this.writeSetting('cloud.vpnMotivo', decisao.motivo + (decisao.detalhe ? `: ${decisao.detalhe}` : ''));
+    if (decisao.acao === 'recusar') {
+      this.logger.error(
+        `Perfil de VPN RECUSADO (${decisao.motivo}${decisao.detalhe ? `: ${decisao.detalhe}` : ''}). `
+        + 'O túnel NÃO foi montado.',
+      );
+    }
+    return decisao;
   }
 
   private async marcarInstante() {

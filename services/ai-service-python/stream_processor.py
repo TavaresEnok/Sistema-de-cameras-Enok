@@ -13,6 +13,20 @@ from detectors.base import Detection
 from detectors.motion import MotionDetector
 from detectors.tripwire import DetectorDeTravessia
 from detectors.confirmacao_de_objeto import ConfirmadorDeObjeto, PoliticaDeConfirmacao
+from detectors.agrupamento_de_evento import (
+    AgrupadorDeEventos,
+    DEFAULT_TETO_DO_INCIDENTE_SEGUNDOS,
+)
+
+# Teto do incidente, em segundos. Ajustável sem deploy: instalação com cena
+# naturalmente agitada (mar, bandeira, árvore) pode querer marcos mais raros.
+# Zero desliga os marcos — aí um incidente longo emite UM evento e nada mais.
+try:
+    TETO_DO_INCIDENTE_SEGUNDOS = float(
+        os.environ.get("MOTION_INCIDENT_MARK_SECONDS", DEFAULT_TETO_DO_INCIDENTE_SEGUNDOS)
+    )
+except (TypeError, ValueError):
+    TETO_DO_INCIDENTE_SEGUNDOS = float(DEFAULT_TETO_DO_INCIDENTE_SEGUNDOS)
 from model_registry import registry
 from runtime_profiles import MOTION_PROFILE, runtime_profile
 from reconnect_backoff import compute_reconnect_delay
@@ -122,6 +136,13 @@ class StreamProcessor:
         self.overlay_empty_frames = 0
         self.motion_debounce_seconds = int(MOTION_PROFILE["event_debounce_seconds"])
         self.detect_debounce_seconds = int(self.profile["event_debounce_seconds"])
+        # O silêncio que FECHA um incidente é o mesmo número do desconto antigo
+        # — o valor não muda, o significado dele é que muda (ver o comentário
+        # no laço de emissão).
+        self._agrupador = AgrupadorDeEventos(
+            silencio_segundos=self.motion_debounce_seconds,
+            teto_segundos=TETO_DO_INCIDENTE_SEGUNDOS,
+        )
         self.emit_events = bool(self.profile.get("emit_events", True))
         self.live_detection_hold_ms = int(self.profile["overlay_ttl_ms"])
         self.show_after_hits = int(self.profile["show_after_hits"])
@@ -1155,10 +1176,30 @@ class StreamProcessor:
                 ready = []
                 for detection in detections:
                     event_type = detection.event_type or "AI_DETECTED"
-                    last_event_time = self.last_event_by_type.get(event_type, 0)
-                    if current_time - last_event_time > self._debounce_seconds(event_type):
+                    # UM INCIDENTE = UM EVENTO.
+                    #
+                    # A regra antiga contava o tempo a partir do último evento
+                    # EMITIDO, então movimento contínuo emitia um evento a cada
+                    # 45 s, para sempre. O ensaio de 24/08/2026 mediu 88% das
+                    # 14.338 ativações diárias como repetição do mesmo
+                    # incidente — e apontou reduzir isso como ganho maior que
+                    # trocar de algoritmo.
+                    #
+                    # Agora o tempo é contado desde a última vez que o
+                    # movimento foi VISTO: enquanto ele continua, o incidente é
+                    # o mesmo. Ver detectors/agrupamento_de_evento.py.
+                    emitir, motivo = self._agrupador.decidir(event_type, current_time)
+                    if emitir:
                         ready.append(detection)
+                        # Mantido porque outras partes leem este mapa; o dono da
+                        # decisão agora é o agrupador.
                         self.last_event_by_type[event_type] = current_time
+                        if motivo == "marco-de-incidente":
+                            logger.info(
+                                "[%s] %s continua há %.0fs — marco de incidente",
+                                self.camera_id, event_type,
+                                self._agrupador.duracao_do_incidente(event_type, current_time),
+                            )
                 if ready:
                     self._report_detections(ready)
 

@@ -1,17 +1,47 @@
+# ── PONTE ENTRE O SERVIDOR RTMP E A API ─────────────────────────────────────
+#
+# 24/08/2026: este contêiner passou DOIS DIAS recusando tudo com 502, sem
+# ninguém notar. Causa: `proxy_pass http://api:3000` com o nome escrito direto
+# faz o nginx resolver o endereço UMA VEZ, quando sobe, e guardar para sempre.
+# Toda vez que a API é reconstruída ela ganha outro endereço na rede do Docker —
+# e esta ponte continua batendo no endereço morto.
+#
+# O sintoma engana: o contêiner fica "de pé", só que devolve 502 para a câmera
+# que tenta publicar. Ninguém liga uma coisa à outra, porque quem reiniciou foi
+# a API e o que quebrou foi outro contêiner.
+#
+# A correção tem duas partes, e as DUAS são necessárias:
+#   · `resolver` aponta para o DNS interno do Docker (127.0.0.11);
+#   · o destino vai numa VARIÁVEL. É isso que obriga o nginx a perguntar o
+#     endereço a cada requisição em vez de fixar o primeiro que viu.
+#
+# Com destino em variável o nginx NÃO acrescenta o caminho sozinho — por isso
+# cada `proxy_pass` abaixo escreve o caminho inteiro, de propósito.
+
+# `valid=10s`: uma API reconstruída volta a ser alcançada em no máximo dez
+# segundos. `ipv6=off` porque a rede do Docker aqui é só IPv4, e sem isso cada
+# consulta paga uma tentativa AAAA que sempre falha.
+resolver 127.0.0.11 valid=10s ipv6=off;
+resolver_timeout 3s;
+
 server {
     listen 8080;
     server_name _;
 
+    # A variável é reavaliada a cada requisição. Trocar isto por um nome
+    # literal reintroduz o defeito acima.
+    set $destino_api "http://api:3000";
+
     location = /health {
         # Saúde real da ponte: não basta o nginx estar vivo se a API que decide
         # a publicação estiver indisponível.
-        proxy_pass http://api:3000/health;
+        proxy_pass $destino_api/health;
         proxy_connect_timeout 2s;
         proxy_read_timeout 3s;
     }
 
     location = /on-publish {
-        proxy_pass http://api:3000/camera-stream/srs-publish?internalToken=${CALLBACK_TOKEN};
+        proxy_pass $destino_api/camera-stream/srs-publish?internalToken=${CALLBACK_TOKEN};
         proxy_http_version 1.1;
         proxy_set_header Content-Type application/json;
         proxy_connect_timeout 2s;

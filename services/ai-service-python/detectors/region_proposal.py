@@ -5,6 +5,31 @@ de `frigate/video/detect.py` (montagem das regiões a partir do movimento e o
 pulo de estacionários) e `frigate/util/object.py` (`calculate_region`,
 `get_cluster_boundary`, `get_cluster_candidates`). Adaptado para o DRAC.
 
+ESTADO EM 25/08/2026 — DESLIGADO, E SEM MEDIÇÃO CONFIÁVEL
+---------------------------------------------------------
+`GENERAL_REGION_DETECTION` está false por padrão. O commit ab9e5d3 registrou
+uma medição justificando isso, e essa medição ESTÁ ERRADA: a linha
+"analisadores ativos 4 → 1" não aconteceu. Os analisadores estavam íntegros;
+a leitura foi feita na janela de ARRANQUE do serviço, antes de eles subirem.
+O salto de CPU citado no mesmo commit veio da mesma janela contaminada e
+também não serve de prova.
+
+Quem for retomar isto precisa medir de novo, com os analisadores já
+estabilizados, comparando janelas de mesma duração e mesmo horário do dia (a
+carga muda muito entre dia e noite — ver report/ADENDO_DIURNO.md do
+laboratório de movimento).
+
+A hipótese do commit continua plausível e não foi testada: com
+`idle_full_frame` ligado, a cena parada varre o quadro INTEIRO e o movimento
+ACRESCENTA regiões — soma trabalho em vez de trocar. Se for isso, o ganho só
+aparece quando houver quem decida QUANDO rodar.
+
+NÃO CONFUNDIR COM PERÍMETRO. Perímetro é linha e zona DESENHADAS pelo
+operador, sobre a imagem, para dizer onde um objeto não pode entrar. Região
+de inferência é recorte automático em volta do movimento, invisível para o
+operador, e existe só para o modelo enxergar alvo pequeno. São assuntos
+independentes: desligar um não afeta o outro.
+
 POR QUE ISTO EXISTE
 -------------------
 Rodando o modelo em 640×640 sobre o frame INTEIRO de 1080p, um alvo de 30 px de

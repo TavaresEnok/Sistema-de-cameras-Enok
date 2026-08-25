@@ -13,6 +13,8 @@ const { normalizeAiPolicy, validateAiPolicy, applyAiPolicyToRestrictions, descri
 const { normalizarTeto, tetoParaHeartbeat } = require('./teto-de-cameras');
 const { decidirMatricula } = require('./matricula');
 const { decidirRemocao } = require('./remocao-de-instalacao');
+const { validarPerfilDeVpn, perfilParaHeartbeat, perfilParaPainel } = require('./perfil-de-vpn');
+const { cifrar: cifrarSegredo } = require('./segredo-cifrado');
 const {
   normalizeCloudStorage,
   validateCloudStorage,
@@ -68,6 +70,9 @@ const ADMIN_TOKEN = String(process.env.DRAC_CENTRAL_ADMIN_TOKEN || '').trim();
 // Senha combinada que permite uma instalação NOVA se matricular sozinha.
 // Vazia = matrícula desligada (recusa), nunca "aceita todo mundo".
 const ENROLLMENT_TOKEN = String(process.env.DRAC_CENTRAL_ENROLLMENT_TOKEN || '').trim();
+// Chave que cifra segredos de configuracao (senha de VPN, chave pre-compartilhada).
+// Sem ela a cifra RECUSA trabalhar — nunca guarda em texto.
+const SECRET_KEY = String(process.env.DRAC_CENTRAL_SECRET_KEY || '').trim();
 const ADMIN_EMAIL = String(process.env.DRAC_CENTRAL_ADMIN_EMAIL || 'admin@drac.local').trim().toLowerCase();
 const ADMIN_PASSWORD_HASH = String(process.env.DRAC_CENTRAL_ADMIN_PASSWORD_HASH || '').trim();
 const SESSION_TTL_MS = Math.max(1, Number(process.env.DRAC_CENTRAL_SESSION_HOURS || 8)) * 60 * 60 * 1000;
@@ -1391,6 +1396,9 @@ function licenseResponse(item) {
     licenseMessage: item.licenseMessage || null,
     // Teto de câmeras contratado. null = sem teto; a instalação trata assim.
     maxCameras: tetoParaHeartbeat(item.maxCameras),
+    // Túnel até a rede de câmeras do cliente. null = sem VPN configurada;
+    // perfil vazio faria a instalação concluir que precisa desmontar algo.
+    vpn: perfilParaHeartbeat(item.vpn),
     // A política de IA do painel restringe ABAIXO do teto da licença (nunca acima).
     restrictions: applyAiPolicyToRestrictions(restrictions, item.aiPolicy),
     cloudStorage,
@@ -3854,6 +3862,51 @@ async function route(req, res) {
         // que deixou de existir.
         await withTimeseries((store) => store.purgeInstallation(id), 'purge');
         return json(req, res, 200, { ok: true });
+      }
+
+      // ── VPN DA INSTALAÇÃO ──────────────────────────────────────────────
+      //
+      // O túnel serve para a instalação alcançar as CÂMERAS do cliente quando
+      // o servidor não está dentro da rede dele. Não tem relação com o contato
+      // instalação↔Central, que é HTTPS comum.
+      //
+      // Segredos entram cifrados e NUNCA voltam na leitura — o painel só sabe
+      // se existem.
+      const vpnMatch = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/vpn$/);
+      if (vpnMatch && (req.method === 'PUT' || req.method === 'DELETE')) {
+        const id = decodeURIComponent(vpnMatch[1]);
+        const item = db.installations[id];
+        if (!item) return json(req, res, 404, { error: 'installation_not_found' });
+
+        if (req.method === 'DELETE') {
+          delete item.vpn;
+          item.updatedAt = new Date().toISOString();
+          addAuditEvent(db, req, { type: 'installation.vpn_removed', actor: actor.email, result: 'accepted', installationId: id });
+          await saveDb(db);
+          return json(req, res, 200, { ok: true, vpn: null });
+        }
+
+        const body = await readBody(req);
+        // Faixas de OUTRAS instalações não entram na conta: cada instalação é
+        // um servidor próprio. O conflito que importa é entre túneis do MESMO
+        // servidor, e hoje é um por instalação.
+        const validado = validarPerfilDeVpn(body, []);
+        if (!validado.ok) {
+          return json(req, res, 400, { error: validado.motivo, detalhe: validado.detalhe || null });
+        }
+        const anterior = item.vpn || {};
+        item.vpn = {
+          ...validado.perfil,
+          // Segredo em branco MANTÉM o que já existe: reeditar o formulário
+          // sem redigitar a senha não pode apagar a senha.
+          senhaCifrada: body.senha ? cifrarSegredo(String(body.senha), SECRET_KEY) : (anterior.senhaCifrada || null),
+          segredoCifrado: body.segredo ? cifrarSegredo(String(body.segredo), SECRET_KEY) : (anterior.segredoCifrado || null),
+          revisao: (Number(anterior.revisao) || 0) + 1,
+        };
+        item.updatedAt = new Date().toISOString();
+        addAuditEvent(db, req, { type: 'installation.vpn_configured', actor: actor.email, result: 'accepted', installationId: id });
+        await saveDb(db);
+        return json(req, res, 200, { ok: true, vpn: perfilParaPainel(item.vpn) });
       }
       const installerCommandMatch = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/installer$/);
       if (req.method === 'GET' && installerCommandMatch) {
