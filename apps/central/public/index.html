@@ -3868,6 +3868,7 @@
                   </div>` : `
                   <div class="license-actions">
                     <button id="copy-selected-diagnostics" class="primary">Copiar diagnóstico</button>
+                    <button id="ver-backups" class="primary">Cópias de segurança</button>
                     <button id="remove-installation" class="danger">Remover instalação</button>
                     <button id="copy-selected-installer">Copiar reinstalador oficial</button>
                   </div>
@@ -4076,6 +4077,7 @@
         els.detail.querySelector('#copy-selected-installer')?.addEventListener('click', () => copyInstallerFor(item.id));
         els.detail.querySelector('#delete-pending-install')?.addEventListener('click', () => deletePendingInstallation(item.id));
         els.detail.querySelector('#remove-installation')?.addEventListener('click', () => removeInstallation(item.id));
+        els.detail.querySelector('#ver-backups')?.addEventListener('click', () => verBackups(item.id));
         els.detail.querySelector('#request-reactivation-archive')?.addEventListener('click', () => requestReactivationArchive(item.id));
         els.detail.querySelector('#delete-reactivation-archive')?.addEventListener('click', () => deleteReactivationArchive(item.id));
         els.detail.querySelector('#restore-reactivation-archive')?.addEventListener('click', () => prepareReactivation(item.id));
@@ -5110,6 +5112,43 @@
        * a licença de um cliente pagante, e o efeito só aparece duas semanas
        * depois — longe demais para alguém ligar uma coisa à outra.
        */
+      /**
+       * Cópias de segurança que ESTA instalação enviou para a Central.
+       *
+       * Elas ficam FORA do disco da instalação — que é o ponto. Backup no mesmo
+       * disco dos dados protege contra apagar tabela por engano e não protege
+       * contra o disco falhar, que é o que acontece em servidor rodando 24h.
+       *
+       * O que a cópia contém: câmeras, usuários, permissões, eventos,
+       * configuração e os REGISTROS das gravações. O vídeo não — ele é volumoso
+       * e tem caminho próprio.
+       */
+      async function verBackups(id) {
+        const res = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(id)}/backups`), { credentials: 'include' });
+        if (!res.ok) { showToast('Não foi possível ler as cópias.'); return; }
+        const d = await res.json();
+        const itens = d.items || [];
+        const agora = Date.now();
+        const linhas = itens.map((i) => {
+          const dias = Math.floor((agora - new Date(i.recebidoEm).getTime()) / 86400000);
+          const idade = dias === 0 ? 'hoje' : dias === 1 ? 'ontem' : `há ${dias} dias`;
+          const url = centralUrl(`/api/admin/installations/${encodeURIComponent(id)}/backups/${encodeURIComponent(i.nome)}`);
+          return `<tr><td>${escapeHtml(i.nome)}</td><td>${(i.bytes / 1048576).toFixed(1)} MB</td>`
+            + `<td>${idade}</td><td><a href="${url}" download>baixar</a></td></tr>`;
+        }).join('');
+        const corpo = itens.length
+          ? `<table class="tbl"><thead><tr><th>arquivo</th><th>tamanho</th><th>recebida</th><th></th></tr></thead><tbody>${linhas}</tbody></table>
+             <p class="panel-subtitle" style="margin-top:10px">Guarda as ${d.manter} mais recentes. Contém a configuração e os registros — não o vídeo.</p>`
+          : `<p>Esta instalação ainda não enviou nenhuma cópia.</p>
+             <p class="panel-subtitle" style="margin-top:8px">O envio é diário e automático. Se continuar vazio, confira o container <code>vms-backup-upload</code> na máquina dela.</p>`;
+        document.querySelector('#confirm-title').textContent = `Cópias de segurança — ${id}`;
+        document.querySelector('#confirm-copy').innerHTML = corpo;
+        const btn = document.querySelector('#confirm-apply');
+        btn.style.display = 'none';
+        document.querySelector('#confirm-dialog').showModal();
+        document.querySelector('#confirm-dialog').addEventListener('close', () => { btn.style.display = ''; }, { once: true });
+      }
+
       async function removeInstallation(id) {
         const digitado = window.prompt(
           `Remover a instalação "${id}" da Central?\n\n`

@@ -123,6 +123,32 @@ services:
     networks:
       - vms-net
 
+  # ── ENVIA A CÓPIA PARA A CENTRAL ──────────────────────────────────────────
+  #
+  # Até 25/08/2026 o backup ficava no MESMO disco dos dados: protegia contra
+  # apagar tabela por engano e NÃO protegia contra o disco falhar, que é o que
+  # acontece em servidor rodando 24h. Nenhuma instalação mandava cópia para
+  # lugar nenhum.
+  backup-upload:
+    image: curlimages/curl:8.11.1
+    container_name: vms-backup-upload
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - postgres-backup
+    user: "0:0"
+    environment:
+      CLOUD_API_URL: ${CLOUD_API_URL:-}
+      CLOUD_INSTALLATION_ID: ${CLOUD_INSTALLATION_ID:-}
+      CLOUD_LICENSE_KEY: ${CLOUD_LICENSE_KEY:-}
+      BACKUP_UPLOAD_INTERVAL_SECONDS: ${BACKUP_UPLOAD_INTERVAL_SECONDS:-86400}
+    volumes:
+      - ./backups/postgres:/backups:ro
+      - ./enviar-backup-central.sh:/enviar-backup-central.sh:ro
+    entrypoint: ["/bin/sh", "/enviar-backup-central.sh"]
+    networks:
+      - vms-net
+
   central-data-backup:
     # Acompanha a Central: só existe onde ela existe.
     profiles: ["central"]

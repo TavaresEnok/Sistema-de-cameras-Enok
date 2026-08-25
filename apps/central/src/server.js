@@ -15,6 +15,8 @@ const { decidirMatricula } = require('./matricula');
 const { decidirRemocao } = require('./remocao-de-instalacao');
 const { validarPerfilDeVpn, perfilParaHeartbeat, perfilParaPainel } = require('./perfil-de-vpn');
 const { cifrar: cifrarSegredo } = require('./segredo-cifrado');
+const cofre = require('./cofre-de-backup');
+const { avaliarAtrasoDeBackup, explicarAtraso } = require('./atraso-de-backup');
 const {
   normalizeCloudStorage,
   validateCloudStorage,
@@ -73,6 +75,10 @@ const ENROLLMENT_TOKEN = String(process.env.DRAC_CENTRAL_ENROLLMENT_TOKEN || '')
 // Chave que cifra segredos de configuracao (senha de VPN, chave pre-compartilhada).
 // Sem ela a cifra RECUSA trabalhar — nunca guarda em texto.
 const SECRET_KEY = String(process.env.DRAC_CENTRAL_SECRET_KEY || '').trim();
+// Onde ficam as copias das instalacoes. Fora do disco DELAS — que e o ponto.
+const BACKUP_DIR = String(process.env.DRAC_CENTRAL_BACKUP_DIR || '/app/data/backups').trim();
+// Quantas copias guardar por instalacao. Por CONTAGEM, nunca por idade.
+const BACKUP_MANTER = Math.max(1, Number(process.env.DRAC_CENTRAL_BACKUP_KEEP || 7) || 7);
 const ADMIN_EMAIL = String(process.env.DRAC_CENTRAL_ADMIN_EMAIL || 'admin@drac.local').trim().toLowerCase();
 const ADMIN_PASSWORD_HASH = String(process.env.DRAC_CENTRAL_ADMIN_PASSWORD_HASH || '').trim();
 const SESSION_TTL_MS = Math.max(1, Number(process.env.DRAC_CENTRAL_SESSION_HOURS || 8)) * 60 * 60 * 1000;
@@ -1223,6 +1229,14 @@ function fleetSummary(installations) {
 }
 
 function supportDiagnostics(item) {
+  // Estado do backup, para o painel mostrar sem precisar abrir a lista.
+  // A Vibe ficou 4 dias sem cópia e ninguém soube — backup que falha em
+  // silêncio é o mesmo que não ter backup.
+  const _atraso = avaliarAtrasoDeBackup({
+    ultimoBackupEm: item.ultimoBackup?.recebidoEm || null,
+    criadaEm: item.createdAt || null,
+    agoraMs: Date.now(),
+  });
   const publicItem = publicInstallation(item);
   const activeAlerts = (publicItem.alertHistory || []).filter((alert) => alert.status === 'ACTIVE').slice(0, 20);
   return {
@@ -1234,6 +1248,15 @@ function supportDiagnostics(item) {
       ageSeconds: publicItem.ageSeconds,
       licenseStatus: publicItem.licenseStatus,
       policyPending: publicItem.policyPending,
+      // Cópia de segurança: nível, dias e o texto pronto para o operador.
+      // A Vibe ficou 4 dias sem cópia e ninguém soube — backup que falha em
+      // silêncio é o mesmo que não ter backup.
+      backup: {
+        nivel: _atraso.nivel,
+        dias: _atraso.dias,
+        ultimaEm: item.ultimoBackup ? item.ultimoBackup.recebidoEm : null,
+        aviso: explicarAtraso(_atraso, publicItem.id),
+      },
       version: publicItem.version,
       launchProfile: publicItem.launchProfile,
       lastHeartbeatAt: publicItem.lastHeartbeatAt,
@@ -3516,6 +3539,44 @@ async function route(req, res) {
     if (req.method === 'GET' && url.pathname === '/api/auth/me') {
       return handleMe(req, res);
     }
+
+    // ── A INSTALAÇÃO ENVIA SUA CÓPIA DE SEGURANÇA ──────────────────────────
+    //
+    // Até 25/08/2026 cada instalação guardava o backup no MESMO disco dos
+    // dados. Isso protege contra apagar uma tabela por engano e NÃO protege
+    // contra o disco falhar — que é o que acontece em servidor rodando 24h.
+    //
+    // Autenticada como qualquer chamada de agente: id + chave de licença. Uma
+    // instalação só pode enviar a PRÓPRIA cópia.
+    if (req.method === 'POST' && url.pathname === '/api/agent/backup') {
+      const installationId = String(req.headers['x-drac-installation-id'] || '').trim();
+      const licenseKey = String(req.headers['x-drac-license-key'] || '').trim();
+      if (!installationId || !licenseKey) return json(req, res, 401, { error: 'missing_installation_or_license' });
+      const dbAg = await loadDb();
+      const inst = dbAg.installations[installationId];
+      if (!inst) return json(req, res, 403, { error: 'unknown_installation' });
+      if (inst.licenseKey && !timingSafeTextEquals(inst.licenseKey, licenseKey)) {
+        return json(req, res, 403, { error: 'invalid_license_key' });
+      }
+      const pedacos = [];
+      let total = 0;
+      let excedeu = false;
+      for await (const p of req) {
+        total += p.length;
+        if (total > cofre.MAX_BYTES) { excedeu = true; break; }
+        pedacos.push(p);
+      }
+      if (excedeu) return json(req, res, 413, { error: 'backup_too_large' });
+      try {
+        const registro = await cofre.guardar(BACKUP_DIR, installationId, Buffer.concat(pedacos), { manter: BACKUP_MANTER });
+        inst.ultimoBackup = registro;
+        inst.updatedAt = new Date().toISOString();
+        await saveDb(dbAg);
+        return json(req, res, 201, registro);
+      } catch (e) {
+        return json(req, res, 400, { error: 'backup_rejeitado', message: String(e.message || e) });
+      }
+    }
     if (req.method === 'POST' && url.pathname === '/api/agent/enroll') {
       return handleEnroll(req, res);
     }
@@ -3907,6 +3968,31 @@ async function route(req, res) {
         addAuditEvent(db, req, { type: 'installation.vpn_configured', actor: actor.email, result: 'accepted', installationId: id });
         await saveDb(db);
         return json(req, res, 200, { ok: true, vpn: perfilParaPainel(item.vpn) });
+      }
+
+      // ── CÓPIAS DE SEGURANÇA DE UMA INSTALAÇÃO ──────────────────────────
+      const backupListMatch = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/backups$/);
+      if (req.method === 'GET' && backupListMatch) {
+        const id = decodeURIComponent(backupListMatch[1]);
+        if (!db.installations[id]) return json(req, res, 404, { error: 'installation_not_found' });
+        return json(req, res, 200, { items: await cofre.listar(BACKUP_DIR, id), manter: BACKUP_MANTER });
+      }
+      const backupFileMatch = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/backups\/([^/]+)$/);
+      if (req.method === 'GET' && backupFileMatch) {
+        const id = decodeURIComponent(backupFileMatch[1]);
+        const nome = decodeURIComponent(backupFileMatch[2]);
+        if (!db.installations[id]) return json(req, res, 404, { error: 'installation_not_found' });
+        let caminho;
+        try { caminho = cofre.caminhoDe(BACKUP_DIR, id, nome); }
+        catch { return json(req, res, 400, { error: 'nome_invalido' }); }
+        if (!fsSync.existsSync(caminho)) return json(req, res, 404, { error: 'backup_not_found' });
+        addAuditEvent(db, req, { type: 'installation.backup_downloaded', actor: actor.email, result: 'accepted', installationId: id });
+        await saveDb(db);
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-disposition': `attachment; filename="${id}-${nome}"`,
+        });
+        return fsSync.createReadStream(caminho).pipe(res);
       }
       const installerCommandMatch = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/installer$/);
       if (req.method === 'GET' && installerCommandMatch) {
