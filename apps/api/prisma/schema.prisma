@@ -223,6 +223,7 @@ model Camera {
   @@index([areaId])
   @@index([groupId])
   @@index([status])
+  groupMessages GroupMessage[]
 }
 
 /// Um destino de armazenamento em nuvem da instalação.
@@ -438,6 +439,7 @@ model User {
   authSessions      AuthSession[]
   eventReviews      UserEventReview[]
   ownedCameras      Camera[]           @relation("CameraOwner")
+  groupMessages GroupMessage[]
 }
 
 model AuthSession {
@@ -645,6 +647,7 @@ model CameraGroup {
   retentionDays Int                @default(3)
   cameras       Camera[]
   permissions   CameraPermission[]
+  messages      GroupMessage[]
 
   @@index([name])
 }
@@ -676,4 +679,37 @@ model RolePermission {
   role        UserRole @id
   permissions Json
   updatedAt   DateTime @default(now()) @updatedAt
+}
+
+/// Conversa do grupo — e o botão de pânico.
+///
+/// Pedido em 25/08/2026: num condomínio com dez moradores, quem vê algo estranho
+/// clica em ALERTA e todos recebem push com vibração. O alerta É uma mensagem
+/// marcada, na mesma conversa, de propósito: alerta sem conversa é beco sem
+/// saída — dez pessoas recebem "atenção na câmera 3" e ninguém consegue dizer
+/// "já vi, é o entregador".
+model GroupMessage {
+  id        String           @id @default(uuid())
+  groupId   String
+  group     CameraGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      GroupMessageKind @default(TEXT)
+  body      String
+  /// Câmera que motivou o alerta, quando houver. Apagar a câmera não apaga o
+  /// histórico do incidente — por isso SetNull e não Cascade.
+  cameraId  String?
+  camera    Camera?          @relation(fields: [cameraId], references: [id], onDelete: SetNull)
+  createdAt DateTime         @default(now())
+  /// Quando esta mensagem some. Calculado na criação: a política pode mudar
+  /// depois, e mensagem já enviada não deve mudar de prazo pelas costas.
+  expiresAt DateTime
+
+  @@index([groupId, createdAt])
+  @@index([expiresAt])
+}
+
+enum GroupMessageKind {
+  TEXT
+  ALERT
 }

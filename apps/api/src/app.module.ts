@@ -32,12 +32,14 @@ import { CloudConnectorModule } from './cloud-connector/cloud-connector.module';
 import { CloudStorageModule } from './cloud-storage/cloud-storage.module';
 import { CommercialPolicyModule } from './commercial-policy/commercial-policy.module';
 import { LiveLayoutsModule } from './live-layouts/live-layouts.module';
+import { GroupChatModule } from './group-chat/group-chat.module';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { EventLoopLagService } from './common/observability/event-loop-lag.service';
 
 @Module({
   imports: [
+    GroupChatModule,
     ConfigModule.forRoot({
       isGlobal: true,
       load: [envConfig],

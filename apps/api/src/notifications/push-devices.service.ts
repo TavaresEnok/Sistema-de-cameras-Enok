@@ -106,6 +106,19 @@ export class PushDevicesService {
     return this.tokensForUsers(privileged.map((u) => u.id));
   }
 
+  /**
+   * Aparelhos de uma lista de usuários.
+   *
+   * Público porque o alerta de pânico do grupo precisa disto: lá o
+   * destinatário é a PESSOA (todos do condomínio), não a câmera. O silenciar
+   * por câmera não se aplica — silenciar movimento de rotina não pode silenciar
+   * um pedido de socorro de vizinho.
+   */
+  async tokensDeUsuarios(userIds: string[]): Promise<string[]> {
+    if (!userIds.length) return [];
+    return this.tokensForUsers(userIds);
+  }
+
   private async tokensForUsers(userIds: string[]): Promise<string[]> {
     if (!userIds.length) return [];
     const devices = await this.prisma.pushDevice.findMany({

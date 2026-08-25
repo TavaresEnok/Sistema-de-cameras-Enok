@@ -36,6 +36,32 @@ async function ensureAndroidChannel() {
     // local ou conteúdo do evento para quem estiver com o aparelho na mão.
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
   });
+
+    // ── CANAL DO BOTÃO DE PÂNICO ────────────────────────────────────────────
+    //
+    // Pedido em 25/08/2026: quando um morador do condomínio aperta ALERTA, o
+    // aparelho dos outros vibra TRÊS vezes, "para chamar atenção".
+    //
+    // Canal PRÓPRIO, separado de 'alarms', por dois motivos:
+    //   · alarme de movimento é rotina e o de pânico é pedido de socorro —
+    //     misturar os dois faz o morador ignorar os dois;
+    //   · no Android o usuário silencia POR CANAL. Quem cansar do movimento
+    //     noturno silencia 'alarms' e continua recebendo pânico, que é
+    //     exatamente o que se quer.
+    //
+    // O padrão é [espera, vibra, pausa, vibra, pausa, vibra]: três pulsos
+    // longos, distinguíveis do padrão curto do alarme comum.
+    await Notifications.setNotificationChannelAsync('panico', {
+      name: 'Alerta de pânico',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 500, 300, 500, 300, 500],
+      lightColor: '#EF4444',
+      sound: 'default',
+      // Atravessa o "não perturbe". É o único caso em que isso se justifica, e
+      // é justamente o motivo de o canal existir separado.
+      bypassDnd: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    });
 }
 
 /**
