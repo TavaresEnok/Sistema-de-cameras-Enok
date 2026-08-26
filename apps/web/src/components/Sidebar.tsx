@@ -47,7 +47,7 @@ const NAV_SECTIONS: NavSection[] = [
       // menu que não levava a lugar nenhum próprio. Virou RONDA: rodízio de
       // mosaicos, cada parada com seu tempo. O nome é o do ofício — o vigia faz
       // a ronda, passando de ponto em ponto.
-      { path: '/ronda',    label: 'Ronda',          icon: LayoutGrid },
+      { path: '/ronda',    label: 'Minhas rondas',  icon: LayoutGrid },
       { path: '/events',   label: 'Eventos',        icon: Bell,      roles: ['admin', 'operator'] },
     ],
   },
@@ -78,6 +78,9 @@ const NAV_SECTIONS: NavSection[] = [
       { path: '/users',   label: 'Usuários',    icon: Users,       roles: ['admin', 'operator'] },
       // Grupos: apenas admin global (Ajust Consulting gerencia grupos)
       { path: '/groups',  label: 'Grupos',      icon: FolderKey,   roles: ['admin'] },
+      // O par de "Minhas rondas": lá o operador monta o que é dele, aqui o
+      // administrador vê o de todo mundo e entrega à equipe.
+      { path: '/mosaicos', label: 'Mosaicos e rondas', icon: LayoutGrid, roles: ['admin'] },
       { path: '/roles',   label: 'Funções',     icon: ShieldCheck, roles: ['admin'] },
       { path: '/settings',label: 'Configurações',icon: Settings,   roles: ['admin'] },
       { path: '/audit-logs', label: 'Auditoria', icon: ScrollText,  roles: ['admin'] },

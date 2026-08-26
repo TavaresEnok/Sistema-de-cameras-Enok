@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { lerMosaicoDaApi, preferirApi, CHAVE_LOCAL } from '../src/lib/mosaicos-salvos.ts';
+import { CHAVE_LOCAL, lerMosaicoDaApi, meuParaMexer, preferirApi } from '../src/lib/mosaicos-salvos.ts';
 
 // "as grids de live/ não está tão bem sincronizadas com rondas" (dono, 25/08/2026)
 //
@@ -53,4 +53,52 @@ test('a cópia local só vale enquanto a API não respondeu', () => {
   const local = [{ id: 'z', name: 'Z', gridSize: '2x2', cameraIds: [] }];
   assert.deepEqual(preferirApi([], local), local);
   assert.deepEqual(preferirApi([], []), []);
+});
+
+// --- 26/08/2026: compartilhamento de mosaicos ---
+
+test('A POSIÇÃO É O QUADRADO: quadro vazio não pode sumir da lista', () => {
+  // Defeito real: `.filter(Boolean)` removia o vazio e a câmera 'c' passava a
+  // ser desenhada no segundo quadrado em vez do terceiro.
+  const m = lerMosaicoDaApi({
+    id: 'm1', name: 'Portaria', gridSize: '2x2',
+    cameraIds: ['a', '', 'c', 'd'],
+  });
+  assert.deepEqual(m?.cameraIds, ['a', '', 'c', 'd']);
+  assert.equal(m?.cameraIds[2], 'c');
+});
+
+test('câmera escondida pelo servidor chega como quadro vazio, não some', () => {
+  // É assim que o servidor entrega um mosaico com câmera que a pessoa não pode
+  // ver: a posição continua lá, apagada.
+  const m = lerMosaicoDaApi({
+    id: 'm1', name: 'Portaria', gridSize: '2x2',
+    cameraIds: ['cam-portao', '', 'cam-garagem', ''],
+  });
+  assert.equal(m?.cameraIds.length, 4);
+  assert.equal(m?.cameraIds[3], '');
+});
+
+test('a tela sabe se o mosaico é meu ou me deram', () => {
+  const recebido = lerMosaicoDaApi({
+    id: 'm1', name: 'Portaria', gridSize: '2x2', cameraIds: ['a'],
+    origem: 'recebido', podeEditar: false, active: true,
+  });
+  assert.equal(recebido?.origem, 'recebido');
+  assert.equal(recebido?.podeEditar, false);
+
+  // Mosaico de versão antiga da API não traz os campos: fica indefinido, e a
+  // tela trata como "meu" — que é o que sempre foi.
+  const antigo = lerMosaicoDaApi({ id: 'm2', name: 'X', gridSize: '2x2', cameraIds: ['a'] });
+  assert.equal(antigo?.origem, undefined);
+  assert.equal(antigo?.podeEditar, undefined);
+});
+
+test('recebido não se edita — mas versão antiga da API não trava o botão', () => {
+  assert.equal(meuParaMexer({ podeEditar: true }), true);
+  assert.equal(meuParaMexer({ podeEditar: false }), false);
+  // Campo ausente = servidor antigo ainda no ar. Bloquear aqui esconderia o
+  // botão Editar de todos no minuto seguinte ao deploy.
+  assert.equal(meuParaMexer({}), true);
+  assert.equal(meuParaMexer(null), true);
 });

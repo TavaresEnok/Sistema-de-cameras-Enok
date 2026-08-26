@@ -10,13 +10,20 @@ import { RondasService } from './rondas.service';
 export class RondasController {
   constructor(private readonly rondas: RondasService) {}
 
+  /** "Minhas rondas": as que eu posso rodar. */
   @Get()
   async listar(@CurrentUser() user: AuthUser) {
     return { items: await this.rondas.listar(user) };
   }
 
+  /** "Rondas": a tela de administração. O serviço recusa quem não é admin. */
+  @Get('administradas')
+  async listarAdmin(@CurrentUser() user: AuthUser) {
+    return { items: await this.rondas.listarAdmin(user) };
+  }
+
   @Post()
-  async criar(@CurrentUser() user: AuthUser, @Body() dto: { name?: string; paradas?: unknown }) {
+  async criar(@CurrentUser() user: AuthUser, @Body() dto: { name?: string; paradas?: unknown; active?: boolean; showOnMobile?: boolean; destinatarios?: unknown }) {
     return this.rondas.criar(user, dto);
   }
 
@@ -24,7 +31,7 @@ export class RondasController {
   async atualizar(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
-    @Body() dto: { name?: string; paradas?: unknown },
+    @Body() dto: { name?: string; paradas?: unknown; active?: boolean; showOnMobile?: boolean; destinatarios?: unknown },
   ) {
     return this.rondas.atualizar(user, id, dto);
   }

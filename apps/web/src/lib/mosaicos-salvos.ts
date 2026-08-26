@@ -25,8 +25,14 @@ export type MosaicoSalvo = {
   id: string;
   name: string;
   gridSize: string;
+  /** Uma posição por quadrado da grade; string vazia = quadrado vazio. */
   cameraIds: string[];
   lastUsed?: string;
+  /** 'meu' = eu criei; 'recebido' = o administrador me entregou. */
+  origem?: 'meu' | 'recebido';
+  /** Recebido é só de leitura: usa-se, não se altera. */
+  podeEditar?: boolean;
+  active?: boolean;
 };
 
 /** A MESMA chave que a tela Ao Vivo usa. Duas chaves seriam duas listas. */
@@ -34,7 +40,10 @@ export const CHAVE_LOCAL = 'drac.live.layouts.v1';
 
 /** Aceita só o que dá para desenhar: grade no formato NxN e lista de câmeras. */
 export function lerMosaicoDaApi(bruto: unknown): MosaicoSalvo | null {
-  const l = bruto as { id?: unknown; name?: unknown; gridSize?: unknown; cameraIds?: unknown; lastUsedAt?: unknown };
+  const l = bruto as {
+    id?: unknown; name?: unknown; gridSize?: unknown; cameraIds?: unknown; lastUsedAt?: unknown;
+    origem?: unknown; podeEditar?: unknown; active?: unknown;
+  };
   if (!l || typeof l.id !== 'string' || !l.id) return null;
   if (typeof l.gridSize !== 'string' || !/^[1-8]x[1-8]$/.test(l.gridSize)) return null;
   if (!Array.isArray(l.cameraIds)) return null;
@@ -42,8 +51,16 @@ export function lerMosaicoDaApi(bruto: unknown): MosaicoSalvo | null {
     id: l.id,
     name: typeof l.name === 'string' && l.name.trim() ? l.name : 'Mosaico',
     gridSize: l.gridSize,
-    cameraIds: l.cameraIds.map(String).filter(Boolean),
+    // NUNCA `.filter(Boolean)` aqui. A posição na lista É o quadrado na tela:
+    // um mosaico ['a','','c'] com o vazio removido viraria ['a','c'] e a
+    // câmera 'c' apareceria no segundo quadrado, não no terceiro. Pior desde
+    // 26/08/2026, quando o servidor passou a devolver '' também no lugar de
+    // câmera que a pessoa não tem direito de ver.
+    cameraIds: l.cameraIds.map((v) => String(v ?? '').trim()),
     lastUsed: typeof l.lastUsedAt === 'string' ? l.lastUsedAt : undefined,
+    origem: l.origem === 'recebido' ? 'recebido' : l.origem === 'meu' ? 'meu' : undefined,
+    podeEditar: typeof l.podeEditar === 'boolean' ? l.podeEditar : undefined,
+    active: typeof l.active === 'boolean' ? l.active : undefined,
   };
 }
 
@@ -73,4 +90,16 @@ export function lerCopiaLocal(): MosaicoSalvo[] {
 export function preferirApi(daApi: MosaicoSalvo[], local: MosaicoSalvo[]): MosaicoSalvo[] {
   if (daApi.length) return daApi;
   return local;
+}
+
+/**
+ * Posso mexer nisto?
+ *
+ * Vale para mosaico e para ronda. Ausente significa "sempre foi meu": versão
+ * anterior da API não mandava o campo, e tratar a ausência como bloqueio
+ * esconderia o botão Editar de todo mundo no minuto seguinte ao deploy, com o
+ * servidor antigo ainda no ar.
+ */
+export function meuParaMexer(item: { podeEditar?: boolean } | null | undefined): boolean {
+  return item?.podeEditar !== false;
 }

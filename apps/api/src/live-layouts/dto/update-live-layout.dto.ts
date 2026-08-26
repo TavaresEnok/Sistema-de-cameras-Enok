@@ -1,4 +1,6 @@
-import { ArrayMaxSize, IsArray, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { DestinatariosDto } from './destinatarios.dto';
+import { ArrayMaxSize, IsArray, IsBoolean, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
 
 export class UpdateLiveLayoutDto {
   @IsOptional()
@@ -16,4 +18,17 @@ export class UpdateLiveLayoutDto {
   @ArrayMaxSize(64)
   @IsString({ each: true })
   cameraIds?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  showOnMobile?: boolean;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DestinatariosDto)
+  destinatarios?: DestinatariosDto;
 }

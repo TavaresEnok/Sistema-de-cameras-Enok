@@ -3,7 +3,7 @@ import { Clock, LoaderCircle, Pause, Play, Plus, Trash2, X } from 'lucide-react'
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
-import { lerCopiaLocal, lerMosaicoDaApi, preferirApi, type MosaicoSalvo } from '../lib/mosaicos-salvos';
+import { lerCopiaLocal, lerMosaicoDaApi, meuParaMexer, preferirApi, type MosaicoSalvo } from '../lib/mosaicos-salvos';
 import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
 import { paradaNoInstante, proximaParada, type Parada } from '../lib/ronda-rotacao';
 
@@ -31,7 +31,11 @@ type Ronda = {
   name: string;
   paradas: Parada[];
   duracaoDaVoltaSegundos: number;
+  /** 'recebido' = o administrador me entregou; eu rodo, mas não altero. */
+  origem?: 'meu' | 'recebido';
+  podeEditar?: boolean;
 };
+
 
 const SEGUNDOS_SUGERIDOS = [10, 15, 30, 60, 120, 300];
 
@@ -192,10 +196,18 @@ export default function RondaPage() {
             {rondas.map((r) => (
               <article key={r.id} className="ops-card flex flex-col gap-2 p-4">
                 <div className="flex items-start justify-between gap-2">
-                  <h3 className="text-[14px] font-semibold">{r.name}</h3>
-                  <button type="button" aria-label={`Apagar ${r.name}`} className="text-muted-foreground hover:text-[hsl(var(--destructive))]" onClick={() => void remover(r.id)}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  <h3 className="min-w-0 flex-1 truncate text-[14px] font-semibold">{r.name}</h3>
+                  {meuParaMexer(r) ? (
+                    <button type="button" aria-label={`Apagar ${r.name}`} className="text-muted-foreground hover:text-[hsl(var(--destructive))]" onClick={() => void remover(r.id)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  ) : (
+                    // Ronda entregue pelo administrador. Sem este selo o
+                    // operador clicaria em Editar e levaria um erro seco.
+                    <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                      Recebida
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11.5px] text-muted-foreground">
                   {r.paradas.length} parada{r.paradas.length === 1 ? '' : 's'} · volta de {formatarDuracao(r.duracaoDaVoltaSegundos)}
@@ -204,9 +216,11 @@ export default function RondaPage() {
                   <button type="button" className="btn btn-primary btn-sm flex-1" onClick={() => setRodando(r)}>
                     <Play className="h-3.5 w-3.5" /> Iniciar
                   </button>
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditando(r)}>
-                    Editar
-                  </button>
+                  {meuParaMexer(r) && (
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditando(r)}>
+                      Editar
+                    </button>
+                  )}
                 </div>
               </article>
             ))}
@@ -230,7 +244,13 @@ export default function RondaPage() {
           onCancelar={() => { setEditando(null); setErro(null); }}
           onSalvar={salvar}
           onNovoMosaico={() => setMosaicoEmEdicao(false)}
-          onEditarMosaico={(id) => setMosaicoEmEdicao(layouts.find((l) => l.id === id) ?? null)}
+          onEditarMosaico={(id) => {
+            const m = layouts.find((l) => l.id === id);
+            // Mosaico entregue pelo administrador é de leitura: abrir o editor
+            // só levaria a um 403 na hora de salvar.
+            if (m && !meuParaMexer(m)) return;
+            setMosaicoEmEdicao(m ?? null);
+          }}
         />
       )}
     </div>

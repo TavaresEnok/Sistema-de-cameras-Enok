@@ -12,14 +12,21 @@ import { LiveLayoutsService } from './live-layouts.service';
 export class LiveLayoutsController {
   constructor(private readonly layouts: LiveLayoutsService) {}
 
+  /** "Meus mosaicos": os que eu posso abrir — os meus e os que me deram. */
   @Get()
   list(@CurrentUser() user: AuthUser) {
-    return this.layouts.list(user.id);
+    return this.layouts.list(user);
+  }
+
+  /** "Mosaicos": a tela de administração. O serviço recusa quem não é admin. */
+  @Get('administrados')
+  listAdmin(@CurrentUser() user: AuthUser) {
+    return this.layouts.listAdmin(user);
   }
 
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateLiveLayoutDto) {
-    return this.layouts.create(user.id, dto);
+    return this.layouts.create(user, dto);
   }
 
   @Patch(':id')
@@ -28,11 +35,11 @@ export class LiveLayoutsController {
     @Param('id') id: string,
     @Body() dto: UpdateLiveLayoutDto,
   ) {
-    return this.layouts.update(user.id, id, dto);
+    return this.layouts.update(user, id, dto);
   }
 
   @Delete(':id')
   remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.layouts.remove(user.id, id);
+    return this.layouts.remove(user, id);
   }
 }

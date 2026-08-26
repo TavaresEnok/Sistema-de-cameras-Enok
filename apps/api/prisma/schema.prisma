@@ -92,11 +92,11 @@ model Camera {
   //   null  = ainda não sondada (não é "não tem")
   //   true  = um endpoint aceitou comando PTZ
   //   false = sondada e nenhum endpoint aceitou
-  ptzCapable             Boolean?
+  ptzCapable       Boolean?
   // 'auto' = veio da sonda | 'manual' = o operador decidiu. A sonda NUNCA
   // sobrescreve 'manual' — é a saída para equipamento que ela não sabe ler.
-  ptzCapableSource       String?
-  ptzProbedAt            DateTime?
+  ptzCapableSource String?
+  ptzProbedAt      DateTime?
 
   /// COMO esta câmera participa da detecção de OBJETO (YOLO), que é cara.
   ///   auto (padrão) — roda só se houver LINHA de perímetro desenhada. O
@@ -218,12 +218,12 @@ model Camera {
   events        CameraEvent[]
   alarms        AlarmInstance[]
   permissions   CameraPermission[]
+  groupMessages GroupMessage[]
 
   @@index([siteId])
   @@index([areaId])
   @@index([groupId])
   @@index([status])
-  groupMessages GroupMessage[]
 }
 
 /// Um destino de armazenamento em nuvem da instalação.
@@ -436,11 +436,13 @@ model User {
   investigations    Investigation[]
   pushDevices       PushDevice[]
   liveLayouts       LiveLayout[]
+  mosaicosRecebidos LiveLayoutShare[]
   authSessions      AuthSession[]
   eventReviews      UserEventReview[]
   ownedCameras      Camera[]           @relation("CameraOwner")
-  groupMessages GroupMessage[]
-  rondas        Ronda[]
+  groupMessages     GroupMessage[]
+  rondas            Ronda[]
+  rondasRecebidas   RondaShare[]
 }
 
 model AuthSession {
@@ -459,15 +461,22 @@ model AuthSession {
 }
 
 model LiveLayout {
-  id         String   @id @default(uuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name       String
-  gridSize   String
-  cameraIds  Json
-  lastUsedAt DateTime @default(now())
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id           String            @id @default(uuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  gridSize     String
+  cameraIds    Json
+  /// Desligar sem apagar: o mosaico do evento de fim de ano não precisa sumir
+  /// em janeiro, precisa parar de aparecer.
+  active       Boolean           @default(true)
+  /// Um mosaico 4x4 é ilegível no celular. Quem monta decide se ele desce
+  /// para o aplicativo.
+  showOnMobile Boolean           @default(true)
+  shares       LiveLayoutShare[]
+  lastUsedAt   DateTime          @default(now())
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 
   @@index([userId, updatedAt])
 }
@@ -645,10 +654,12 @@ model CameraGroup {
 
   /// Retenção do GRUPO. Todo grupo nasce com um número — grupo sem valor
   /// deixaria o toggle "seguir o grupo" apontando para o nada.
-  retentionDays Int                @default(3)
-  cameras       Camera[]
-  permissions   CameraPermission[]
-  messages      GroupMessage[]
+  retentionDays     Int                @default(3)
+  cameras           Camera[]
+  permissions       CameraPermission[]
+  messages          GroupMessage[]
+  mosaicosRecebidos LiveLayoutShare[]
+  rondasRecebidas   RondaShare[]
 
   @@index([name])
 }
@@ -725,14 +736,61 @@ enum GroupMessageKind {
 /// lista ORDENADA e curta, sempre lida inteira. Tabela separada custaria uma
 /// junção e uma ordem explícita para guardar o que já é um vetor.
 model Ronda {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name      String
+  id           String       @id @default(uuid())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
   /// `[{ layoutId: string, segundos: number }]`, na ordem em que aparecem.
-  paradas   Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  paradas      Json
+  active       Boolean      @default(true)
+  showOnMobile Boolean      @default(true)
+  shares       RondaShare[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
   @@index([userId, updatedAt])
+}
+
+/// A ENTREGA de um mosaico. Uma linha = "esta pessoa" ou "este grupo" pode USAR
+/// o mosaico. Usar, não editar: o dono continua sendo quem o criou.
+///
+/// Cuidado que não é óbvio: receber o mosaico NÃO dá acesso às câmeras dele. A
+/// filtragem por permissão acontece na hora de servir (ver
+/// compartilhamento.helper.ts). Esta tabela diz "pode abrir", jamais "pode ver".
+model LiveLayoutShare {
+  id        String       @id @default(uuid())
+  layoutId  String
+  layout    LiveLayout   @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  groupId   String?
+  group     CameraGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  @@unique([layoutId, userId])
+  @@unique([layoutId, groupId])
+  @@index([userId])
+  @@index([groupId])
+}
+
+/// A ENTREGA de uma ronda. Mesmas regras da entrega de mosaico.
+///
+/// Receber a ronda dá direito de USAR os mosaicos que ela contém — senão o
+/// operador abriria uma ronda de paradas vazias. Esse direito é derivado na
+/// consulta, não copiado para cá: assim, tirar o mosaico da ronda tira o
+/// acesso junto, sem linha órfã.
+model RondaShare {
+  id        String       @id @default(uuid())
+  rondaId   String
+  ronda     Ronda        @relation(fields: [rondaId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  groupId   String?
+  group     CameraGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  @@unique([rondaId, userId])
+  @@unique([rondaId, groupId])
+  @@index([userId])
+  @@index([groupId])
 }
