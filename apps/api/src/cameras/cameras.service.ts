@@ -71,6 +71,7 @@ import {
   resolveGridLiveProfile,
 } from '../camera-stream/helpers/live-delivery-profile.helper';
 import { decidirEstadoDaCamera, devoSondarRtsp } from './helpers/prova-de-vida.helper';
+import { retencaoEfetiva } from '../recordings/helpers/retencao-efetiva.helper';
  
 
 export function sanitizeCamera<T extends { passwordEncrypted: string; rtmpIngestKeyHash?: unknown; rtmpIngestKeyEncrypted?: unknown }>(camera: T): Omit<T, 'passwordEncrypted' | 'rtmpIngestKeyHash' | 'rtmpIngestKeyEncrypted'> {
@@ -403,12 +404,88 @@ export class CamerasService {
   }
 
   async findAll(accessibleIds?: string[]) {
-    const cameras = await this.prisma.camera.findMany({
-      where: accessibleIds ? { id: { in: accessibleIds } } : {},
-      include: { site: true, area: true, group: true },
-      orderBy: { createdAt: 'desc' },
+    const where = accessibleIds ? { id: { in: accessibleIds } } : {};
+    const [cameras, storageByCamera] = await Promise.all([
+      this.prisma.camera.findMany({
+        where,
+        include: { site: true, area: true, group: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.storageUsageByCamera(),
+    ]);
+    const globalRetentionDays = this.getDefaultRetentionDays();
+    return cameras.map((camera) => {
+      const storage = storageByCamera.get(camera.id) ?? { localBytes: 0, cloudBytes: 0 };
+      return {
+        ...sanitizeCamera(camera),
+        effectiveRetentionDays: retencaoEfetiva({
+          retentionDays: camera.retentionDays,
+          retentionFollowsGroup: camera.retentionFollowsGroup,
+          grupoRetentionDays: camera.group?.retentionDays ?? null,
+        }, globalRetentionDays),
+        storageLocalBytes: storage.localBytes,
+        storageCloudBytes: storage.cloudBytes,
+        // Se a mesma gravação ainda existe localmente e já foi enviada para a
+        // nuvem, ela ocupa os dois storages e deve contar duas vezes no consumo.
+        storageUsedBytes: storage.localBytes + storage.cloudBytes,
+      };
     });
-    return cameras.map(sanitizeCamera);
+  }
+
+  private storageUsageCache: {
+    expiresAt: number;
+    value: Map<string, { localBytes: number; cloudBytes: number }>;
+  } | null = null;
+  private storageUsageInFlight: Promise<Map<string, { localBytes: number; cloudBytes: number }>> | null = null;
+
+  /**
+   * Ocupação física aproximada por câmera, sem N+1. A listagem é atualizada com
+   * frequência, mas somar todo o acervo a cada poll ficaria progressivamente
+   * mais caro. Um cache curto compartilha a mesma leitura entre operadores.
+   */
+  private async storageUsageByCamera() {
+    const now = Date.now();
+    if (this.storageUsageCache && this.storageUsageCache.expiresAt > now) {
+      return this.storageUsageCache.value;
+    }
+    if (this.storageUsageInFlight) return this.storageUsageInFlight;
+
+    this.storageUsageInFlight = (async () => {
+      const [localRows, cloudRows] = await Promise.all([
+        this.prisma.recording.groupBy({
+          by: ['cameraId'],
+          where: { localDeletedAt: null },
+          _sum: { sizeBytes: true },
+        }),
+        this.prisma.recording.groupBy({
+          by: ['cameraId'],
+          where: { cloudUploadedAt: { not: null }, cloudMissingSince: null },
+          _sum: { sizeBytes: true },
+        }),
+      ]);
+      const value = new Map<string, { localBytes: number; cloudBytes: number }>();
+      for (const row of localRows) {
+        value.set(row.cameraId, { localBytes: Number(row._sum.sizeBytes ?? 0), cloudBytes: 0 });
+      }
+      for (const row of cloudRows) {
+        const current = value.get(row.cameraId) ?? { localBytes: 0, cloudBytes: 0 };
+        current.cloudBytes = Number(row._sum.sizeBytes ?? 0);
+        value.set(row.cameraId, current);
+      }
+      const cacheMs = envNumber('CAMERA_STORAGE_USAGE_CACHE_MS', 60_000, {
+        min: 5_000,
+        max: 15 * 60_000,
+        integer: true,
+      });
+      this.storageUsageCache = { expiresAt: Date.now() + cacheMs, value };
+      return value;
+    })();
+
+    try {
+      return await this.storageUsageInFlight;
+    } finally {
+      this.storageUsageInFlight = null;
+    }
   }
 
   async findAllInternal() {

@@ -2,9 +2,12 @@ import axios from 'axios';
 import { create } from 'zustand';
 import { useAuthStore } from './authStore';
 import { getApiBaseUrl } from '../lib/api-base';
+import { cameraPublicIdLabel } from '../lib/camera-list-metadata';
 
 export interface Camera {
   id: string;
+  /** Chave operacional curta e única; o UUID em `id` continua sendo interno. */
+  publicId?: number | null;
   code: string;
   name: string;
   location: string;
@@ -21,6 +24,9 @@ export interface Camera {
   fps: number;
   resolution: string;
   storage: string;
+  storageUsedBytes: number;
+  storageLocalBytes: number;
+  storageCloudBytes: number;
   lastEvent?: string;
   ptzCapable: boolean;
   /** Estado BRUTO da sonda: true/false = respondido, null = ainda não sondada
@@ -37,6 +43,7 @@ export interface Camera {
   signalStrength: number;
   recordingMode: 'continuous' | 'motion' | 'object' | 'schedule' | 'manual';
   retentionDays: number;
+  effectiveRetentionDays: number;
   /** Segue a política do grupo? Ausente em API antiga = segue (o padrão). */
   retentionFollowsGroup?: boolean;
   preferredRtspTransport: 'tcp' | 'udp';
@@ -296,7 +303,8 @@ function mapCameraItems(
     const sourceLabel = sourceMode === 'rtmp_push' ? 'RTMP push' : camera.ip;
     return {
       id: camera.id,
-      code: camera.name,
+      publicId: Number.isSafeInteger(Number(camera.publicId)) ? Number(camera.publicId) : null,
+      code: cameraPublicIdLabel(camera.publicId, camera.id),
       name: camera.name,
       location: sourceLabel,
       zone: camera.area?.name ?? camera.site?.name ?? previous?.zone ?? 'Sem zona',
@@ -313,10 +321,13 @@ function mapCameraItems(
       fps: effectiveFps ?? 0,
       resolution: formatResolution(detectedStreamWidth, detectedStreamHeight),
       storage: effectiveRecordingMode === 'motion'
-        ? `Por movimento · ${camera.retentionDays ?? 7} dias de retenção`
+        ? `Por movimento · ${camera.effectiveRetentionDays ?? camera.retentionDays ?? 3} dias de retenção`
         : camera.recordingEnabled
-          ? `${camera.retentionDays ?? 7} dias de retenção`
+          ? `${camera.effectiveRetentionDays ?? camera.retentionDays ?? 3} dias de retenção`
           : 'Gravação desabilitada',
+      storageUsedBytes: Number(camera.storageUsedBytes ?? 0),
+      storageLocalBytes: Number(camera.storageLocalBytes ?? 0),
+      storageCloudBytes: Number(camera.storageCloudBytes ?? 0),
       lastEvent: lastEvent ?? previous?.lastEvent,
       // PTZ vem SONDADO da API (Camera.ptzCapable), não deduzido aqui.
       //
@@ -342,6 +353,8 @@ function mapCameraItems(
       signalStrength: camera.status === 'ONLINE' ? 100 : 0,
       recordingMode: effectiveRecordingMode,
       retentionDays: camera.retentionDays ?? 7,
+      effectiveRetentionDays: camera.effectiveRetentionDays ?? camera.retentionDays ?? 3,
+      retentionFollowsGroup: camera.retentionFollowsGroup !== false,
       preferredRtspTransport: camera.preferredRtspTransport ?? 'tcp',
       preferredLiveProtocol: camera.preferredLiveProtocol ?? 'webrtc',
       rtspPath: camera.rtspPath ?? undefined,

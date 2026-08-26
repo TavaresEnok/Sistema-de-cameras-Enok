@@ -71,6 +71,9 @@ enum RecordingSource {
 
 model Camera {
   id                String  @id @default(uuid())
+  /// Identificador operacional curto, único e imutável. O UUID continua sendo
+  /// a chave primária interna; este número serve à tela, pesquisa e suporte.
+  publicId          Int     @unique @default(autoincrement())
   name              String
   ip                String
   rtspPort          Int     @default(554)

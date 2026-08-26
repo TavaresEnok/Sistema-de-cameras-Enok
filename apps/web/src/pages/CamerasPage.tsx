@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   LayoutGrid, List, Search, Plus, Edit, PlaySquare,
   Crosshair, RefreshCw, ChevronRight, X, Wifi,
-  Camera as CameraIcon, Check, Trash2, Circle, Radar, Radio,
+  Camera as CameraIcon, Check, Trash2, Circle, Radar, Radio, Copy,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Camera, useVmsDataStore } from '../store/vmsDataStore';
@@ -43,6 +43,7 @@ import {
 import { CLASSE_CONEXAO, CLASSE_MODO_GRAVACAO, PONTO_CONEXAO, ROTULO_CONEXAO, estadoConexao } from '../lib/camera-status';
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 import { rotuloDoGatilhoDeObjeto, podeUsarGatilhoDeObjeto } from '../lib/gatilho-de-objeto';
+import { cameraSourceProtocol, formatStorageBytes } from '../lib/camera-list-metadata';
 const STATUSES = ['all', 'online', 'recording', 'motion', 'alarm', 'offline', 'no_signal', 'maintenance'] as const;
 const STATUS_LABEL: Record<(typeof STATUSES)[number], string> = {
   all: 'Todos os status',
@@ -984,6 +985,9 @@ export default function CamerasPage() {
   const [diagnosingPtzCameraId, setDiagnosingPtzCameraId] = useState<string | null>(null);
   const [posterUrls, setPosterUrls] = useState<Record<string, string>>({});
   const lastPosterRetryAtRef = useRef(0);
+  const openCamera = useCallback((cameraId: string) => {
+    setLocation(`/cameras/${encodeURIComponent(cameraId)}`);
+  }, [setLocation]);
   const [recordingHealthByCamera, setRecordingHealthByCamera] = useState<Record<string, {
     total: number;
     broken: number;
@@ -1118,7 +1122,12 @@ export default function CamerasPage() {
   }, [cameras]);
 
   const filtered = useMemo(() => cameras.filter(c => {
-    if (search && !c.name.toLowerCase().includes(search.toLowerCase()) && !c.code.toLowerCase().includes(search.toLowerCase()) && !c.ipAddress.toLowerCase().includes(search.toLowerCase())) return false;
+    const query = search.trim().toLowerCase();
+    if (query
+      && !c.name.toLowerCase().includes(query)
+      && !c.code.toLowerCase().includes(query)
+      && !cameraSourceProtocol(c.sourceMode).toLowerCase().includes(query)
+      && !c.ipAddress.toLowerCase().includes(query)) return false;
     if (groupFilter !== 'all' && c.floor !== groupFilter) return false;
     if (statusFilter !== 'all' && c.status !== statusFilter) return false;
     return true;
@@ -1431,7 +1440,7 @@ export default function CamerasPage() {
               <input
                 className="input"
                 style={{ height: 32, fontSize: 12 }}
-                placeholder="Buscar câmera ou IP..."
+                placeholder="Buscar por nome, ID ou protocolo..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
@@ -1443,11 +1452,11 @@ export default function CamerasPage() {
         <div className="flex-1 overflow-auto">
           {viewMode === 'table' ? (
             <div className="p-5">
-            <div className="ops-card overflow-hidden">
-            <table className="w-full text-xs border-collapse">
+            <div className="ops-card overflow-x-auto">
+            <table className="w-full min-w-[940px] text-xs border-collapse">
               <thead className="sticky top-0 bg-card z-10">
                 <tr className="border-b border-border">
-                  {['Câmera', 'IP', 'Status', 'Gravação', 'Ações'].map(h => (
+                  {['ID', 'Câmera', 'Protocolo', 'Status', 'Armazenamento', 'Retenção', 'Gravação', 'Ações'].map(h => (
                     <th key={h} className="px-3 py-2.5 text-left font-medium text-[hsl(var(--muted-foreground))] whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -1459,8 +1468,34 @@ export default function CamerasPage() {
                   <tr
                     key={cam.id}
                     className="hover:bg-[hsl(var(--accent))] transition-colors cursor-pointer"
-                    onClick={() => setEditCamera(cam)}
+                    onClick={() => openCamera(cam.id)}
+                    onKeyDown={(event) => {
+                      if (event.currentTarget !== event.target) return;
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        openCamera(cam.id);
+                      }
+                    }}
+                    tabIndex={0}
+                    aria-label={`Abrir câmera ${cam.name}`}
                   >
+                    <td className="px-3 py-2.5 whitespace-nowrap" title={`Chave interna: ${cam.id}`}>
+                      <button
+                        type="button"
+                        className="group inline-flex items-center gap-1 font-mono text-[11px] font-medium hover:text-[hsl(var(--primary))]"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void navigator.clipboard.writeText(cam.code).then(
+                            () => toast({ title: 'ID copiado', description: cam.code }),
+                            () => toast({ title: 'Não foi possível copiar o ID', variant: 'destructive' }),
+                          );
+                        }}
+                        aria-label={`Copiar ID ${cam.code}`}
+                      >
+                        {cam.code}
+                        <Copy className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-60" aria-hidden="true" />
+                      </button>
+                    </td>
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-2.5">
                         <div className="relative h-9 w-16 shrink-0 overflow-hidden rounded bg-[hsl(220_18%_8%)]">
@@ -1472,22 +1507,33 @@ export default function CamerasPage() {
                         </div>
                         <div className="min-w-0">
                           <div className="font-medium max-w-72 truncate">{cam.name}</div>
-                          <div className="mt-0.5 text-[10px] text-[hsl(var(--muted-foreground))]">{cam.code}</div>
+                          <div className="mt-0.5 text-[10px] text-[hsl(var(--muted-foreground))]">{cam.floor === '-' ? 'Sem grupo' : cam.floor}</div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-3 py-2.5 font-mono text-[11px] text-[hsl(var(--muted-foreground))] whitespace-nowrap">{cam.ipAddress}</td>
+                    <td className="px-3 py-2.5">
+                      <span className="inline-flex rounded border border-border bg-[hsl(var(--accent))] px-2 py-0.5 font-mono text-[10px] font-semibold">
+                        {cameraSourceProtocol(cam.sourceMode)}
+                      </span>
+                    </td>
                     <td className="px-3 py-2.5">
                       <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] ${CLASSE_CONEXAO[estadoConexao(cam.status)]}`}>
                         {ROTULO_CONEXAO[estadoConexao(cam.status)]}
                       </span>
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap" title={`Local: ${formatStorageBytes(cam.storageLocalBytes)} · Nuvem: ${formatStorageBytes(cam.storageCloudBytes)}`}>
+                      <div className="font-mono text-[11px] font-medium">{formatStorageBytes(cam.storageUsedBytes)}</div>
+                      <div className="mt-0.5 text-[9px] text-[hsl(var(--muted-foreground))]">local + nuvem</div>
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <div className="font-mono text-[11px]">{cam.effectiveRetentionDays} dias</div>
+                      <div className="mt-0.5 text-[9px] text-[hsl(var(--muted-foreground))]">{cam.retentionFollowsGroup !== false ? 'política do grupo' : 'política própria'}</div>
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex flex-col gap-1">
                         <span className={`inline-flex w-fit items-center rounded-md border px-1.5 py-0.5 text-[10px] ${CLASSE_MODO_GRAVACAO}`}>
                           {recordingModeCopy.label}
                         </span>
-                        <span className="text-[10px] text-[hsl(var(--muted-foreground))]">{cam.retentionDays} dias</span>
                       </div>
                     </td>
                     <td className="px-3 py-2.5">
@@ -1517,7 +1563,17 @@ export default function CamerasPage() {
                 <div
                   key={cam.id}
                   className={`ops-card overflow-hidden hover:-translate-y-px transition-transform cursor-pointer ${isDisabled ? 'opacity-70' : ''}`}
-                  onClick={() => setEditCamera(cam)}
+                  onClick={() => openCamera(cam.id)}
+                  onKeyDown={(event) => {
+                    if (event.currentTarget !== event.target) return;
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      openCamera(cam.id);
+                    }
+                  }}
+                  role="link"
+                  tabIndex={0}
+                  aria-label={`Abrir câmera ${cam.name}`}
                 >
                   <div className="relative h-36 overflow-hidden bg-[hsl(220_18%_8%)]">
                     {posterUrls[cam.id] && !isOffline && (
@@ -1574,8 +1630,19 @@ export default function CamerasPage() {
                         {isDisabled ? 'Desativada' : ROTULO_CONEXAO[estadoConexao(cam.status)]}
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono">
-                      <span>{cam.ipAddress}</span>
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                      <span className="rounded border border-border bg-[hsl(var(--accent))] px-1.5 py-0.5 font-mono font-medium">{cam.code}</span>
+                      <span className="rounded border border-border px-1.5 py-0.5 font-mono text-muted-foreground">{cameraSourceProtocol(cam.sourceMode)}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 rounded border border-border bg-background/40 p-2.5">
+                      <div className="min-w-0">
+                        <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Armazenamento</div>
+                        <div className="mt-0.5 truncate font-mono text-[11px] font-medium">{formatStorageBytes(cam.storageUsedBytes)}</div>
+                      </div>
+                      <div className="min-w-0 border-l border-border pl-2">
+                        <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Retenção</div>
+                        <div className="mt-0.5 font-mono text-[11px] font-medium">{cam.effectiveRetentionDays} dias</div>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 pt-0.5" onClick={(e) => e.stopPropagation()}>
                       <Link href={`/playback?cameraId=${cam.id}`} className="flex-1 h-7 rounded-md text-[11px] flex items-center justify-center gap-1.5 text-muted-foreground hover:text-foreground hover:bg-[hsl(var(--accent))] transition-colors">
@@ -1639,11 +1706,13 @@ export default function CamerasPage() {
               </div>
               <div className="space-y-2 text-xs">
                 {[
-                  ['Código', liveCam.code],
+                  ['ID', liveCam.code],
+                  ['Protocolo', cameraSourceProtocol(liveCam.sourceMode)],
+                  ['Armazenamento', formatStorageBytes(liveCam.storageUsedBytes)],
                   ['Unidade', liveCam.building],
                   ['Andar', liveCam.floor],
                   ['Gravação', recordingModeCopy.label],
-                  ['Retenção', `${liveCam.retentionDays} dias`],
+                  ['Retenção', `${liveCam.effectiveRetentionDays} dias`],
                   ['PTZ', liveCam.ptzCapable ? 'Sim' : 'Não'],
                   ['Áudio', liveCam.hasAudio ? 'Sim' : 'Não'],
                 ].map(([k, v]) => (
@@ -1657,6 +1726,7 @@ export default function CamerasPage() {
                 <summary className="cursor-pointer font-medium text-[hsl(var(--muted-foreground))]">Informações da câmera</summary>
                 <div className="mt-2 space-y-2 border-t border-border pt-2">
                   {[
+                    ['Chave interna', liveCam.id],
                     ['Endereço IP', liveCam.ipAddress],
                     ['Modelo', liveCam.model],
                     ['Resolução', liveCam.resolution],

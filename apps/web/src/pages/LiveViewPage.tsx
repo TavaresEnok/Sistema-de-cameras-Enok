@@ -112,6 +112,8 @@ type ApiLiveLayout = {
   createdAt?: string;
 };
 
+type PosterTokenItem = { cameraId: string; streamToken: string; posterUrl: string };
+
 function mapApiLiveLayout(layout: ApiLiveLayout): SavedLayout | null {
   if (!/^[1-8]x[1-8]$/.test(layout.gridSize) || !Array.isArray(layout.cameraIds)) return null;
   return {
@@ -168,6 +170,77 @@ export default function LiveViewPage() {
   const [layoutSelectValue, setLayoutSelectValue] = useState('');
   const [layoutDialog, setLayoutDialog] = useState<{ mode: 'save' | 'rename'; id?: string; name: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SavedLayout | null>(null);
+  const [sidebarPosterUrls, setSidebarPosterUrls] = useState<Record<string, string>>({});
+  const lastSidebarPosterRetryAtRef = useRef(0);
+
+  const sidebarPosterCameraIdsKey = useMemo(
+    () => cameras
+      .filter((camera) => camera.canViewContent !== false)
+      .map((camera) => camera.id)
+      .sort()
+      .join(','),
+    [cameras],
+  );
+
+  const loadSidebarPosters = useCallback(async () => {
+    if (!accessToken) return;
+    const cameraIds = useVmsDataStore.getState().cameras
+      .filter((camera) => camera.enabled !== false && camera.canViewContent !== false)
+      .map((camera) => camera.id);
+    if (!cameraIds.length) {
+      setSidebarPosterUrls({});
+      return;
+    }
+    try {
+      const { data } = await axios.post<{ items: PosterTokenItem[] }>(
+        `${API_URL}/camera-stream/poster-tokens`,
+        { cameraIds },
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      const next: Record<string, string> = {};
+      const version = Date.now();
+      for (const item of Array.isArray(data.items) ? data.items : []) {
+        const separator = item.posterUrl.includes('?') ? '&' : '?';
+        next[item.cameraId] = `${item.posterUrl}${separator}token=${encodeURIComponent(item.streamToken)}&v=${version}`;
+      }
+      setSidebarPosterUrls(next);
+    } catch {
+      // Mantém a última imagem válida quando a API ou uma câmera oscila.
+    }
+  }, [API_URL, accessToken]);
+
+  useEffect(() => {
+    // O painel recolhido não gera trabalho de snapshot. Ao abrir, os tokens são
+    // emitidos em um único lote; o navegador baixa somente as imagens visíveis.
+    if (!panelOpen) return;
+    void loadSidebarPosters();
+    const renew = () => {
+      if (document.visibilityState === 'visible') void loadSidebarPosters();
+    };
+    const timer = window.setInterval(renew, 4 * 60 * 1000);
+    window.addEventListener('focus', renew);
+    document.addEventListener('visibilitychange', renew);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', renew);
+      document.removeEventListener('visibilitychange', renew);
+    };
+  }, [loadSidebarPosters, panelOpen, sidebarPosterCameraIdsKey]);
+
+  const retrySidebarPoster = useCallback((cameraId: string) => {
+    setSidebarPosterUrls((current) => {
+      if (!current[cameraId]) return current;
+      const next = { ...current };
+      delete next[cameraId];
+      return next;
+    });
+    // Muitas câmeras podem falhar juntas; limita a renovação do lote para não
+    // transformar uma oscilação em uma tempestade de requisições.
+    const now = Date.now();
+    if (now - lastSidebarPosterRetryAtRef.current < 5_000) return;
+    lastSidebarPosterRetryAtRef.current = now;
+    void loadSidebarPosters();
+  }, [loadSidebarPosters]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -989,12 +1062,26 @@ export default function LiveViewPage() {
                 return (
                   <button
                     key={cam.id}
-                    className={`w-full text-left grid grid-cols-[10px_1fr_auto] items-center gap-2 px-2 py-2 hover:bg-[hsl(var(--accent)_/_0.7)] transition-colors ${
+                    className={`group w-full text-left grid grid-cols-[56px_1fr_auto] items-center gap-2 px-2 py-1.5 hover:bg-[hsl(var(--accent)_/_0.7)] transition-colors ${
                       isInGrid ? 'bg-[hsl(var(--primary)_/_0.06)]' : ''
                     }`}
                     onClick={() => addCameraToGrid(cam.id)}
+                    title={`Adicionar ${cam.name} à grade`}
                   >
-                    <span className={`w-2 h-2 rounded-full ${statusClass}`} />
+                    <span className="relative block h-9 w-14 overflow-hidden rounded border border-white/10 bg-black">
+                      {sidebarPosterUrls[cam.id] ? (
+                        <img
+                          src={sidebarPosterUrls[cam.id]}
+                          alt=""
+                          loading="lazy"
+                          onError={() => retrySidebarPoster(cam.id)}
+                          className="h-full w-full object-contain"
+                        />
+                      ) : (
+                        <Video className="absolute inset-0 m-auto h-3.5 w-3.5 text-white/25" aria-hidden="true" />
+                      )}
+                      <span className={`absolute bottom-1 left-1 h-2 w-2 rounded-full ring-2 ring-black/70 ${statusClass}`} />
+                    </span>
                     <span className="min-w-0">
                       <span className="block text-[12px] font-medium truncate">{cam.name}</span>
                       <span className="block text-[9px] text-[hsl(var(--muted-foreground))] truncate">
