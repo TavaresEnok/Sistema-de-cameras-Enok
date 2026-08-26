@@ -7,6 +7,7 @@ const SAFE_FIELDS = {
   cameras: [
     'id', 'name', 'ip', 'rtspPort', 'onvifPort', 'httpPort', 'username', 'rtspPath',
     'onvifPath', 'onvifProfileToken', 'ptzCapable', 'ptzCapableSource', 'objectMode',
+    'aiObjectClasses', 'aiSensitivity',
     'recordingObjectClasses', 'channel', 'subtype', 'liveChannel', 'liveSubtype',
     'recordingChannel', 'recordingSubtype', 'analyticsChannel', 'analyticsSubtype',
     'siteId', 'areaId', 'groupId', 'recordingEnabled', 'recordingMode', 'retentionDays',

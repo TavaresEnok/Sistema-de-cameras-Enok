@@ -25,9 +25,9 @@ test('Detecções é a aba que ABRE a Inteligência', () => {
   // que ela achou (todo dia), não para configurá-la (uma vez por câmera).
   const fonte = semComentarios(ler('src/pages/AiPage.tsx'));
   assert.match(fonte, /defaultValue="deteccoes"/, 'a Inteligência não abre em Detecções');
-  const ordem = ['deteccoes', 'cameras', 'ajustes'].map((v) => fonte.indexOf(`'${v}'`));
-  assert.ok(ordem[0] >= 0 && ordem[0] < ordem[1] && ordem[1] < ordem[2],
-    'a ordem das abas deixou de ser Detecções → Câmeras → Ajustes');
+  const ordem = ['deteccoes', 'configurar', 'diagnostico', 'ajustes'].map((v) => fonte.indexOf(`'${v}'`));
+  assert.ok(ordem[0] >= 0 && ordem[0] < ordem[1] && ordem[1] < ordem[2] && ordem[2] < ordem[3],
+    'a ordem das abas deixou de ser Detecções → Configurar → Diagnóstico → Ajustes');
 });
 
 test('a rota /review continua de pé — o app depende dela', () => {

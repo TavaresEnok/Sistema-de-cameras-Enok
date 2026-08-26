@@ -36,6 +36,9 @@ export interface Camera {
   ptzDetectado: boolean | null;
   hasAudio: boolean;
   aiEnabled: boolean;
+  objectMode: 'auto' | 'sempre' | 'nunca';
+  aiObjectClasses: string[];
+  aiSensitivity: 'sensitive' | 'balanced' | 'precise';
   alarmsEnabled: boolean;
   /** Câmera ativa no sistema; false = desativada (não mostra nem grava). */
   enabled: boolean;
@@ -343,6 +346,11 @@ function mapCameraItems(
       ptzDetectado: camera.ptzCapable === true ? true : camera.ptzCapable === false ? false : null,
       hasAudio: Boolean(camera.audioEnabled),
       aiEnabled: camera.aiEnabled !== false,
+      objectMode: camera.objectMode === 'sempre' || camera.objectMode === 'nunca' ? camera.objectMode : 'auto',
+      aiObjectClasses: Array.isArray(camera.aiObjectClasses) ? camera.aiObjectClasses : [],
+      aiSensitivity: camera.aiSensitivity === 'sensitive' || camera.aiSensitivity === 'precise'
+        ? camera.aiSensitivity
+        : 'balanced',
       detectionZones: Array.isArray(camera.detectionZones) ? camera.detectionZones : [],
       alarmsEnabled: camera.alarmsEnabled !== false,
       enabled: camera.enabled !== false,

@@ -131,6 +131,40 @@ export function classesPermitidas(restricoes: unknown): string[] {
   return [...new Set(bruto.map((c) => String(c ?? '').trim().toLowerCase()).filter(Boolean))];
 }
 
+/**
+ * Interseção segura entre o que foi contratado e o que foi escolhido para a
+ * câmera. Lista local vazia preserva o comportamento legado: procura tudo o
+ * que a Central liberou. Uma câmera nunca consegue ampliar a licença.
+ */
+export function classesEfetivasDaCamera(permitidas: string[], escolhidas: unknown): string[] {
+  const catalogo = new Set(permitidas.map((c) => String(c).trim().toLowerCase()).filter(Boolean));
+  if (!Array.isArray(escolhidas) || escolhidas.length === 0) return [...catalogo];
+  const intersecao = [...new Set(
+    escolhidas
+      .map((c) => String(c ?? '').trim().toLowerCase())
+      .filter((c) => catalogo.has(c)),
+  )];
+  // A Central pode trocar a licença depois que a câmera foi configurada. Se
+  // nenhuma escolha antiga continuar válida, cair para o catálogo atual evita
+  // desligar a câmera inteira em silêncio.
+  return intersecao.length ? intersecao : [...catalogo];
+}
+
+export type SensibilidadeDaIa = 'sensitive' | 'balanced' | 'precise';
+
+export function normalizarSensibilidadeDaIa(valor: unknown): SensibilidadeDaIa {
+  return valor === 'sensitive' || valor === 'precise' ? valor : 'balanced';
+}
+
+/** Valores de CONFIRMAÇÃO do evento; o limiar bruto do tracker fica baixo. */
+export function politicaDeConfirmacaoDaIa(valor: unknown) {
+  switch (normalizarSensibilidadeDaIa(valor)) {
+    case 'sensitive': return { confirmThreshold: 0.60, confirmMinFrames: 3 };
+    case 'precise': return { confirmThreshold: 0.78, confirmMinFrames: 4 };
+    default: return { confirmThreshold: 0.70, confirmMinFrames: 3 };
+  }
+}
+
 /** Texto curto para o operador entender por que a câmera roda (ou não). */
 export function explicarDecisao(decisao: DecisaoDeObjeto): string {
   switch (decisao.motivo) {

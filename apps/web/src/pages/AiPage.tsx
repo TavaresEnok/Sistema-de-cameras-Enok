@@ -4,6 +4,7 @@ import { Brain, Check, Info, Loader2, RefreshCw, Square, SquareDashed } from 'lu
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PainelDeDeteccoes } from '../components/PainelDeDeteccoes';
 import { PainelDeCamerasDaIa } from '../components/PainelDeCamerasDaIa';
+import { ConfiguracaoFacilDaIa } from '../components/ConfiguracaoFacilDaIa';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
@@ -34,6 +35,11 @@ type EscopoDaCamera = {
   explicacao: string;
   objectMode: 'auto' | 'sempre' | 'nunca';
   temLinha: boolean;
+  aiEnabled: boolean;
+  aiObjectClasses: string[];
+  aiSensitivity: 'sensitive' | 'balanced' | 'precise';
+  recordingMode: string;
+  motionTrigger: string;
 };
 
 /**
@@ -44,10 +50,10 @@ type EscopoDaCamera = {
  * servidor do cliente); a INSTALAÇÃO decide ONDE vale a pena pagar por isso e
  * COMO aparece na tela.
  *
- * Por isso aqui não existe seleção de classes: mostrar uma lista que o
- * operador não pode alterar seria pior que não mostrar — ele tentaria mudar e
- * não conseguiria. O que a tela faz é EXPLICAR o que está liberado e por quê
- * cada câmera roda ou não.
+ * A Central define o catálogo contratado; a instalação escolhe, por câmera,
+ * o subconjunto que faz sentido naquela cena. Assim a câmera nunca amplia a
+ * licença, mas o operador também não precisa detectar carro numa portaria de
+ * pedestres só porque as duas classes estão disponíveis no contrato.
  */
 export default function AiPage() {
   const accessToken = useAuthStore((state) => state.accessToken);
@@ -145,7 +151,8 @@ export default function AiPage() {
         <TabsList className="mx-4 mt-3 h-8 w-fit shrink-0 border border-border bg-card">
           {[
             ['deteccoes', 'Detecções'],
-            ['cameras', 'Câmeras'],
+            ['configurar', 'Configurar'],
+            ['diagnostico', 'Diagnóstico'],
             ['ajustes', 'Ajustes'],
           ].map(([valor, rotulo]) => (
             <TabsTrigger key={valor} value={valor} className="h-6 px-3 text-xs">
@@ -158,7 +165,15 @@ export default function AiPage() {
           <PainelDeDeteccoes comCabecalho={false} />
         </TabsContent>
 
-        <TabsContent value="cameras" className="mt-2 min-h-0 flex-1 focus-visible:outline-none">
+        <TabsContent value="configurar" className="mt-2 min-h-0 flex-1 focus-visible:outline-none">
+          <ConfiguracaoFacilDaIa
+            camerasDaIa={escopo}
+            classesPermitidas={classes}
+            onRecarregar={carregar}
+          />
+        </TabsContent>
+
+        <TabsContent value="diagnostico" className="mt-2 min-h-0 flex-1 focus-visible:outline-none">
           <PainelDeCamerasDaIa
             escopo={escopo}
             objetoLiberado={objetoLiberado}
@@ -262,13 +277,13 @@ export default function AiPage() {
                   )}
                 </div>
               )}
-              {/* Explicar POR QUE isto não é editável aqui evita a frustração de
-                  procurar o botão que não existe. */}
+              {/* A Central amplia/reduz o catálogo contratado; a seleção por
+                  câmera fica na aba Configurar. */}
               <div className="mt-3 flex gap-2 rounded-md bg-[hsl(var(--muted)_/_0.4)] px-2.5 py-2">
                 <Info className="mt-0.5 h-3 w-3 shrink-0 text-[hsl(var(--muted-foreground))]" aria-hidden />
                 <p className="text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
-                  Esta lista é definida pelo provedor do sistema, no painel central — cada tipo a mais
-                  consome processamento deste servidor. Para alterá-la, fale com o suporte.
+                  Estes são os tipos disponíveis no contrato. Na aba Configurar você escolhe quais
+                  deles cada câmera deve procurar; para liberar um tipo novo, fale com o suporte.
                 </p>
               </div>
             </div>

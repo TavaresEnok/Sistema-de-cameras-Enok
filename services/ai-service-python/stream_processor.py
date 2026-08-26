@@ -32,6 +32,7 @@ from runtime_profiles import MOTION_PROFILE, runtime_profile
 from reconnect_backoff import compute_reconnect_delay
 from capture_rate_guard import CaptureRateGuard
 from inference_watchdog import evaluate_inference_health, watchdog_settings
+from object_policy import eh_objeto_para_confirmar, filtrar_deteccoes_por_classe, politica_de_objeto
 
 logger = logging.getLogger("ai-service.stream")
 
@@ -159,6 +160,11 @@ class StreamProcessor:
         # normalizados). Sem zonas, o detector monitora a câmera inteira.
         zones = (source_info or {}).get("detectionZones") if isinstance(source_info, dict) else None
         self.detection_zones = zones if isinstance(zones, list) else []
+        self.object_policy = politica_de_objeto(
+            self.source_info,
+            default_threshold=float(self.profile.get("confirm_median_threshold", 0.70)),
+            default_min_frames=int(self.profile.get("confirm_min_frames", 3)),
+        )
         self.motion_detector = MotionDetector(zones=self.detection_zones)
         # Tripwire: as LINHAS viajam na mesma lista das zonas (kind: 'line').
         # Fica inativo — e sem custo — quando não há nenhuma desenhada.
@@ -168,8 +174,8 @@ class StreamProcessor:
         # acordava o cliente — o único freio era um debounce de tempo, que
         # atrasa o alarme seguinte mas não questiona o primeiro.
         self.confirmador = ConfirmadorDeObjeto(PoliticaDeConfirmacao(
-            minimo_de_quadros=int(self.profile.get("confirm_min_frames", 3)),
-            limiar_mediana=float(self.profile.get("confirm_median_threshold", 0.70)),
+            minimo_de_quadros=int(self.object_policy["confirm_min_frames"]),
+            limiar_mediana=float(self.object_policy["confirm_threshold"]),
             esquecer_apos_faltas=int(self.profile.get("confirm_forget_after_misses", 20)),
         ))
         self.last_error = None
@@ -1088,6 +1094,13 @@ class StreamProcessor:
                             input_size_hint=self.current_input_size_hint,
                             **extra_infer_kwargs,
                         )
+                        # Classes por câmera pertencem ao detector de OBJETOS.
+                        # Aplicá-las ao modo face apagaria todos os rostos.
+                        if self.advanced_analysis_type == "general":
+                            advanced_detections = filtrar_deteccoes_por_classe(
+                                advanced_detections,
+                                self.object_policy["classes"],
+                            )
                     except Exception:
                         self.advanced_infer_errors += 1
                         raise
@@ -1162,10 +1175,8 @@ class StreamProcessor:
                 # entram nesta regra: movimento não é objeto, e a travessia já
                 # exige trajeto entre quadros, que é evidência do mesmo tipo.
                 try:
-                    candidatos = [d for d in detections
-                                  if (d.event_type or "AI_DETECTED") == "AI_DETECTED"]
-                    outros = [d for d in detections
-                              if (d.event_type or "AI_DETECTED") != "AI_DETECTED"]
+                    candidatos = [d for d in detections if eh_objeto_para_confirmar(d)]
+                    outros = [d for d in detections if not eh_objeto_para_confirmar(d)]
                     detections = outros + self.confirmador.avaliar(candidatos)
                 except Exception as exc:
                     # Confirmação quebrada não pode cegar a câmera: sem ela o

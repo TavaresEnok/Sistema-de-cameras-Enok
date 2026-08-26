@@ -215,6 +215,17 @@ export class CreateCameraDto {
   aiEnabled?: boolean;
 
   @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(8)
+  @IsIn(['person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck'], { each: true })
+  aiObjectClasses?: string[];
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['sensitive', 'balanced', 'precise'])
+  aiSensitivity?: 'sensitive' | 'balanced' | 'precise';
+
+  @IsOptional()
   @IsBoolean()
   alarmsEnabled?: boolean;
 

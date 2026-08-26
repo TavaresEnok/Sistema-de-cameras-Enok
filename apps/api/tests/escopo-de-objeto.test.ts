@@ -1,10 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  classesEfetivasDaCamera,
   classesPermitidas,
   decidirObjetoDaCamera,
   explicarDecisao,
   normalizarModoDeObjeto,
+  normalizarSensibilidadeDaIa,
+  politicaDeConfirmacaoDaIa,
   temLinhaDePerimetro,
 } from '../src/ai/helpers/escopo-de-objeto.helper';
 
@@ -108,6 +111,21 @@ test('classes da Central são normalizadas e deduplicadas', () => {
     classesPermitidas({ aiObjectClasses: ['Person', ' person ', 'CAR', ''] }),
     ['person', 'car'],
   );
+});
+
+test('câmera pode reduzir as classes, mas nunca ampliar o que a Central liberou', () => {
+  const permitidas = ['person', 'car', 'motorcycle'];
+  assert.deepEqual(classesEfetivasDaCamera(permitidas, []), permitidas);
+  assert.deepEqual(classesEfetivasDaCamera(permitidas, ['CAR', 'dog', 'car']), ['car']);
+  assert.deepEqual(classesEfetivasDaCamera(permitidas, ['dog']), permitidas);
+  assert.deepEqual(classesEfetivasDaCamera([], ['person']), []);
+});
+
+test('perfis de sensibilidade só alteram a confirmação e têm padrão seguro', () => {
+  assert.equal(normalizarSensibilidadeDaIa('qualquer'), 'balanced');
+  assert.deepEqual(politicaDeConfirmacaoDaIa('sensitive'), { confirmThreshold: 0.60, confirmMinFrames: 3 });
+  assert.deepEqual(politicaDeConfirmacaoDaIa('balanced'), { confirmThreshold: 0.70, confirmMinFrames: 3 });
+  assert.deepEqual(politicaDeConfirmacaoDaIa('precise'), { confirmThreshold: 0.78, confirmMinFrames: 4 });
 });
 
 test('toda decisão tem explicação em português para o operador', () => {

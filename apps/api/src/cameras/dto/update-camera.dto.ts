@@ -137,6 +137,19 @@ export class UpdateCameraDto {
   @IsIn(['auto', 'sempre', 'nunca'])
   objectMode?: 'auto' | 'sempre' | 'nunca';
 
+  /** Subconjunto das classes de objeto liberadas pela política da instalação. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(8)
+  @IsIn(['person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck'], { each: true })
+  aiObjectClasses?: string[];
+
+  /** Perfil simples de confirmação; não mexe no limiar bruto do rastreador. */
+  @IsOptional()
+  @IsString()
+  @IsIn(['sensitive', 'balanced', 'precise'])
+  aiSensitivity?: 'sensitive' | 'balanced' | 'precise';
+
   @IsOptional()
   @IsString()
   @IsIn(RECORDING_MODES)

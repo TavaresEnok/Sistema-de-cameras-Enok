@@ -65,8 +65,8 @@ class ConfirmacaoIntegracaoTests(unittest.TestCase):
         """
         i = self.texto.index("self.confirmador.avaliar(")
         bloco = self.texto[max(0, i - 900):i + 300]
-        self.assertIn('== "AI_DETECTED"', bloco, "não separa o que deve ser confirmado")
-        self.assertIn('!= "AI_DETECTED"', bloco, "os demais tipos precisam seguir direto")
+        self.assertIn("eh_objeto_para_confirmar", bloco, "não separa os objetos que devem ser confirmados")
+        self.assertIn("not eh_objeto_para_confirmar", bloco, "os demais tipos precisam seguir direto")
 
     def test_falha_da_confirmacao_nao_cega_a_camera(self):
         i = self.texto.index("self.confirmador.avaliar(")

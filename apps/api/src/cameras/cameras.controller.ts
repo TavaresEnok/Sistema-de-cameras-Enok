@@ -952,8 +952,15 @@ export class CamerasController {
     } else if (dto.enabled === true && !wasEnabled) {
       // Reativada: religa live/gravação/IA pelo mesmo fluxo do pós-criação.
       this.schedulePostCreateProvisioning(id);
-    } else if (dto.detectionZones !== undefined) {
-      // Zonas mudaram: a análise precisa recarregar as máscaras. Feito AQUI (e
+    } else if (
+      dto.detectionZones !== undefined
+      || dto.objectMode !== undefined
+      || dto.aiEnabled !== undefined
+      || dto.aiObjectClasses !== undefined
+      || dto.aiSensitivity !== undefined
+    ) {
+      // Uma configuração operacional da IA mudou: a análise precisa recarregar
+      // máscaras, classes e política de confirmação. Feito AQUI (e
       // não em CamerasService) porque importar os serviços de IA lá fecha o
       // ciclo de módulos Cameras→Ai→Cameras e o Nest não sobe.
       void (async () => {

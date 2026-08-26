@@ -283,6 +283,8 @@ export class CamerasService {
           motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
           aiEnabled: dto.aiEnabled ?? true,
         }),
+        aiObjectClasses: dto.aiObjectClasses ?? [],
+        aiSensitivity: dto.aiSensitivity ?? 'balanced',
         alarmsEnabled: dto.alarmsEnabled ?? true,
         hasEdgeAi: dto.hasEdgeAi ?? false,
         motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
@@ -656,6 +658,8 @@ export class CamerasService {
         // sonda passa a respeitar); `null` devolve o controle ao automático,
         // zerando também a data para a próxima varredura pegar a câmera.
         ...(dto.objectMode !== undefined ? { objectMode: dto.objectMode } : {}),
+        ...(dto.aiObjectClasses !== undefined ? { aiObjectClasses: dto.aiObjectClasses } : {}),
+        ...(dto.aiSensitivity !== undefined ? { aiSensitivity: dto.aiSensitivity } : {}),
         // Classes que iniciam gravação no modo objeto. `undefined` preserva;
         // array vazio VOLTA ao conjunto padrão (pessoa + veículos) — nunca
         // significa "não gravar nada", que seria uma câmera muda por engano.
@@ -1541,6 +1545,19 @@ export class CamerasService {
       isMain ? '/live/ch00_0' : '/live/ch00_1',
       isMain ? '/stream1' : '/stream2',
       isMain ? '/profile1/media.smp' : '/profile2/media.smp',
+      // Fallbacks de fabricantes menos comuns. Ficam por último: câmeras
+      // ONVIF e famílias Dahua/Hikvision continuam resolvendo antes, sem custo
+      // adicional. Não entram caminhos com senha na query nem `snap.jpg`, pois
+      // isso não é stream RTSP e ainda espalharia credencial em logs.
+      isMain ? '/profile0' : '/profile1',
+      isMain ? '/videoMain' : '/videoSub',
+      isMain ? '/Master-0' : '/Master-1',
+      '/live.sdp',
+      `/H264?ch=${channel}&subtype=${subtype}`,
+      `/h264?channel=${channel}`,
+      isMain ? '/onvif1' : '/onvif2',
+      `/unicast/c${channel}/s${isMain ? 1 : 2}/live`,
+      isMain ? '/video.pro1' : '/video.pro2',
     ].filter((v): v is string => Boolean(v))));
   }
 
@@ -2477,7 +2494,8 @@ export class CamerasService {
           const liveProfile = resolveDeliveryRtspProfile(camera);
           // DESCOBERTA é do cadastro; aqui é só CONFERÊNCIA DE SAÚDE.
           //
-          // `buildRtspPathCandidates` devolve 16 caminhos e `probeRtspPaths` os
+          // `buildRtspPathCandidates` devolve caminhos de várias famílias e
+          // `probeRtspPaths` os
           // testa TODOS (não para no primeiro sucesso — precisa pontuar para
           // escolher o melhor). Isso é o certo ao cadastrar uma câmera
           // desconhecida, e é destrutivo aqui: o health check roda a cada 60s e
@@ -2488,7 +2506,7 @@ export class CamerasService {
           // gravação) enquanto o painel dizia apenas "verificando saúde".
           //
           // Quando o caminho já é conhecido ele é a ÚNICA resposta certa: 1
-          // sessão em vez de 16. A varredura completa fica para quem ainda não
+          // sessão em vez de uma varredura completa. Ela fica para quem ainda não
           // tem caminho gravado.
           const knownPath = camera.rtspPath?.trim();
           const rtspPathCandidates = knownPath

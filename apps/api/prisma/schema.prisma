@@ -111,6 +111,14 @@ model Camera {
   /// nenhuma câmera roda.
   objectMode String @default("auto")
 
+  /// Subconjunto das classes liberadas pela Central que ESTA câmera deve
+  /// procurar. Vazio = todas as classes liberadas (retrocompatibilidade).
+  aiObjectClasses String[] @default([])
+
+  /// Perfil de confirmação de evento, sem alterar o limiar baixo usado pelo
+  /// rastreador: sensitive | balanced | precise.
+  aiSensitivity String @default("balanced")
+
   /// CLASSES que iniciam gravação no modo `object` (recordingMode='object').
   ///
   /// Vazio = o conjunto padrão (pessoa + veículos). Existe porque "só grave

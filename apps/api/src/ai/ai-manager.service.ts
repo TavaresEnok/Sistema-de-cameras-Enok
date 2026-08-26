@@ -15,7 +15,16 @@ import {
 } from '../cameras/helpers/rtsp-url.helper';
 import { MediamtxProxyService } from '../camera-stream/mediamtx-proxy.service';
 import { CommercialPolicyService } from '../commercial-policy/commercial-policy.service';
-import { classesPermitidas, decidirObjetoDaCamera, explicarDecisao, normalizarModoDeObjeto, temLinhaDePerimetro } from './helpers/escopo-de-objeto.helper';
+import {
+  classesEfetivasDaCamera,
+  classesPermitidas,
+  decidirObjetoDaCamera,
+  explicarDecisao,
+  normalizarModoDeObjeto,
+  normalizarSensibilidadeDaIa,
+  politicaDeConfirmacaoDaIa,
+  temLinhaDePerimetro,
+} from './helpers/escopo-de-objeto.helper';
 import { devePularPorDeteccaoNativa, modoDaCamera } from './helpers/modo-por-camera.helper';
 
 /** A decisão de objeto, lida do source_info que buildAiSource já montou. */
@@ -595,7 +604,18 @@ export class AiManagerService implements OnModuleInit {
     const politica = await this.commercialPolicy.getPolicy().catch(() => null);
     const classes = classesPermitidas({ aiObjectClasses: politica?.aiObjectClasses });
     const cameras = await this.prisma.camera.findMany({
-      select: { id: true, name: true, enabled: true, aiEnabled: true, objectMode: true, detectionZones: true, recordingMode: true },
+      select: {
+        id: true,
+        name: true,
+        enabled: true,
+        aiEnabled: true,
+        objectMode: true,
+        aiObjectClasses: true,
+        aiSensitivity: true,
+        motionTrigger: true,
+        detectionZones: true,
+        recordingMode: true,
+      },
       orderBy: { name: 'asc' },
     });
     return {
@@ -608,6 +628,11 @@ export class AiManagerService implements OnModuleInit {
           roda: decisao.roda,
           explicacao: explicarDecisao(decisao),
           objectMode: normalizarModoDeObjeto(cam.objectMode),
+          aiEnabled: cam.aiEnabled !== false,
+          aiObjectClasses: classesEfetivasDaCamera(classes, cam.aiObjectClasses),
+          aiSensitivity: normalizarSensibilidadeDaIa(cam.aiSensitivity),
+          recordingMode: cam.recordingMode,
+          motionTrigger: cam.motionTrigger,
           temLinha: temLinhaDePerimetro(cam.detectionZones),
         };
       }),
@@ -1136,9 +1161,12 @@ export class AiManagerService implements OnModuleInit {
     // Escopo do objeto: a política da Central diz O QUE pode ser detectado e
     // se pode; a regra por câmera diz ONDE vale a pena pagar por isso.
     const politica = await this.commercialPolicy.getPolicy().catch(() => null);
-    const classesDeObjeto = classesPermitidas({ aiObjectClasses: politica?.aiObjectClasses });
+    const classesPermitidasNaInstalacao = classesPermitidas({ aiObjectClasses: politica?.aiObjectClasses });
+    const classesDeObjeto = classesEfetivasDaCamera(classesPermitidasNaInstalacao, cam.aiObjectClasses);
+    const sensibilidade = normalizarSensibilidadeDaIa(cam.aiSensitivity);
+    const confirmacao = politicaDeConfirmacaoDaIa(sensibilidade);
     const decisaoDeObjeto = decidirObjetoDaCamera(cam, {
-      politicaLiberaObjeto: classesDeObjeto.length > 0,
+      politicaLiberaObjeto: classesPermitidasNaInstalacao.length > 0,
     });
     const rawSubtype = String(process.env.AI_RTSP_SUBTYPE ?? '').trim().toLowerCase();
     const configuredSubtype = rawSubtype === '' || rawSubtype === 'auto'
@@ -1185,6 +1213,8 @@ export class AiManagerService implements OnModuleInit {
         ativo: decisaoDeObjeto.roda,
         motivo: decisaoDeObjeto.motivo,
         classes: classesDeObjeto,
+        sensibilidade,
+        ...confirmacao,
       },
     };
 
