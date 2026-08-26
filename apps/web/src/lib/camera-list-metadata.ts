@@ -3,9 +3,9 @@ export type CameraSourceMode = 'rtsp_pull' | 'rtmp_push';
 /** Rótulo curto para a chave operacional; o UUID continua sendo a chave interna. */
 export function cameraPublicIdLabel(publicId?: number | null, internalId = ''): string {
   const numeric = Number(publicId);
-  if (Number.isSafeInteger(numeric) && numeric > 0) return `CAM-${numeric}`;
+  if (Number.isSafeInteger(numeric) && numeric > 0) return String(numeric);
   const legacy = internalId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
-  return legacy ? `CAM-${legacy}` : 'CAM—';
+  return legacy || '—';
 }
 
 export function cameraSourceProtocol(sourceMode?: string | null): 'RTSP' | 'RTMP' {

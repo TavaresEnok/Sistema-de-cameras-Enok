@@ -7,11 +7,11 @@ import {
 } from '../src/lib/camera-list-metadata.ts';
 
 test('ID operacional usa a chave numérica única', () => {
-  assert.equal(cameraPublicIdLabel(100123, 'uuid-ignorado'), 'CAM-100123');
+  assert.equal(cameraPublicIdLabel(100123, 'uuid-ignorado'), '100123');
 });
 
 test('API antiga recebe identificador de transição estável a partir do UUID', () => {
-  assert.equal(cameraPublicIdLabel(undefined, '0f93d6a1-1234-4567'), 'CAM-0F93D6A1');
+  assert.equal(cameraPublicIdLabel(undefined, '0f93d6a1-1234-4567'), '0F93D6A1');
 });
 
 test('protocolo representa como o vídeo chega ao sistema', () => {

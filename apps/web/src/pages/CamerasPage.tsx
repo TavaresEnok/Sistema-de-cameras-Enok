@@ -1482,7 +1482,7 @@ export default function CamerasPage() {
                     <td className="px-3 py-2.5 whitespace-nowrap" title={`Chave interna: ${cam.id}`}>
                       <button
                         type="button"
-                        className="group inline-flex items-center gap-1 font-mono text-[11px] font-medium hover:text-[hsl(var(--primary))]"
+                        className="group inline-flex items-center gap-1 font-mono text-[10px] font-normal text-muted-foreground hover:text-foreground"
                         onClick={(event) => {
                           event.stopPropagation();
                           void navigator.clipboard.writeText(cam.code).then(
@@ -1512,7 +1512,7 @@ export default function CamerasPage() {
                       </div>
                     </td>
                     <td className="px-3 py-2.5">
-                      <span className="inline-flex rounded border border-border bg-[hsl(var(--accent))] px-2 py-0.5 font-mono text-[10px] font-semibold">
+                      <span className="inline-flex rounded border border-border/70 px-1.5 py-0.5 font-mono text-[10px] font-normal text-muted-foreground">
                         {cameraSourceProtocol(cam.sourceMode)}
                       </span>
                     </td>
@@ -1631,8 +1631,8 @@ export default function CamerasPage() {
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-                      <span className="rounded border border-border bg-[hsl(var(--accent))] px-1.5 py-0.5 font-mono font-medium">{cam.code}</span>
-                      <span className="rounded border border-border px-1.5 py-0.5 font-mono text-muted-foreground">{cameraSourceProtocol(cam.sourceMode)}</span>
+                      <span className="rounded border border-border/70 px-1.5 py-0.5 font-mono font-normal text-muted-foreground">ID {cam.code}</span>
+                      <span className="rounded border border-border/70 px-1.5 py-0.5 font-mono font-normal text-muted-foreground">{cameraSourceProtocol(cam.sourceMode)}</span>
                     </div>
                     <div className="grid grid-cols-2 gap-2 rounded border border-border bg-background/40 p-2.5">
                       <div className="min-w-0">
