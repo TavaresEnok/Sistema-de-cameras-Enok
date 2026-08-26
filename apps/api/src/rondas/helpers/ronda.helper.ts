@@ -6,7 +6,7 @@
  * GRID. De fato é um slider de grid."
  *
  * O nome é o do ofício: o vigia faz a RONDA, passando de ponto em ponto. Cada
- * parada tem seu tempo — o portão merece mais que o corredor.
+ * parada fica na tela pelo tempo que o operador definir para ela.
  *
  * O QUE ESTE MÓDULO GARANTE
  * -------------------------

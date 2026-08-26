@@ -15,7 +15,7 @@ import { paradaNoInstante, proximaParada, type Parada } from '../lib/ronda-rotac
  * próprio.
  *
  * O nome é o do ofício: o vigia faz a RONDA, passando de ponto em ponto. Cada
- * parada tem seu tempo porque o portão merece mais que o corredor.
+ * parada fica na tela pelo tempo que o operador definir.
  *
  * DUAS DECISÕES DE TELA
  * ---------------------
@@ -55,6 +55,8 @@ export default function RondaPage() {
   const [erro, setErro] = useState<string | null>(null);
   const [editando, setEditando] = useState<Ronda | null>(null);
   const [rodando, setRodando] = useState<Ronda | null>(null);
+  // `null` = fechado; `{...}` = editando aquele mosaico; `false` = criando um novo.
+  const [mosaicoEmEdicao, setMosaicoEmEdicao] = useState<MosaicoSalvo | null | false>(null);
 
   const cabecalho = useMemo(() => ({ Authorization: `Bearer ${accessToken}` }), [accessToken]);
 
@@ -105,6 +107,32 @@ export default function RondaPage() {
     await carregar();
   };
 
+  /**
+   * Salva o mosaico na MESMA lista do Ao Vivo.
+   *
+   * Não existe lista própria da Ronda: duas listas divergiriam no primeiro
+   * ajuste e o operador montaria tudo duas vezes.
+   */
+  const salvarMosaico = async (m: { id?: string; name: string; gridSize: string; cameraIds: string[] }) => {
+    const novo = !m.id;
+    const r = await fetch(
+      novo ? `${getApiBaseUrl()}/live-layouts` : `${getApiBaseUrl()}/live-layouts/${m.id}`,
+      {
+        method: novo ? 'POST' : 'PATCH',
+        headers: { ...cabecalho, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: m.name, gridSize: m.gridSize, cameraIds: m.cameraIds }),
+      },
+    );
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      setErro(d?.message ?? 'Não foi possível salvar o mosaico.');
+      return;
+    }
+    setMosaicoEmEdicao(null);
+    setErro(null);
+    await carregar();
+  };
+
   const remover = async (id: string) => {
     await fetch(`${getApiBaseUrl()}/rondas/${id}`, { method: 'DELETE', headers: cabecalho });
     await carregar();
@@ -119,13 +147,18 @@ export default function RondaPage() {
       <div className="page-hdr">
         <div>
           <p className="page-sub">
-            O mural passa de um mosaico para outro sozinho. Cada parada tem seu tempo —
-            o portão merece mais que o corredor.
+            O mural troca de mosaico sozinho. Você escolhe a ordem e quantos segundos
+            cada um fica na tela.
           </p>
         </div>
-        <button type="button" className="btn btn-primary btn-sm" onClick={() => setEditando({ id: '', name: '', paradas: [], duracaoDaVoltaSegundos: 0 })}>
-          <Plus className="h-3.5 w-3.5" /> Nova ronda
-        </button>
+        <div className="flex gap-2">
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setMosaicoEmEdicao(false)}>
+            <Plus className="h-3.5 w-3.5" /> Novo mosaico
+          </button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setEditando({ id: '', name: '', paradas: [], duracaoDaVoltaSegundos: 0 })}>
+            <Plus className="h-3.5 w-3.5" /> Nova ronda
+          </button>
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -148,11 +181,11 @@ export default function RondaPage() {
               mesmos mosaicos que você já salvou em Ao Vivo e defina quanto tempo cada um
               fica na tela.
             </p>
-            {layouts.length === 0 && (
-              <p className="mt-3 text-[11px] text-amber-600 dark:text-amber-400">
-                Você ainda não tem mosaicos salvos. Monte um em Ao Vivo primeiro.
-              </p>
-            )}
+            {/* Mandar o operador para outra tela logo depois de ele entrar
+                nesta é o que fazia falta. O mosaico se monta aqui mesmo. */}
+            <button type="button" className="btn btn-primary btn-sm mt-4" onClick={() => setMosaicoEmEdicao(false)}>
+              <Plus className="h-3.5 w-3.5" /> {layouts.length === 0 ? 'Montar o primeiro mosaico' : 'Montar um mosaico'}
+            </button>
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -181,14 +214,127 @@ export default function RondaPage() {
         )}
       </div>
 
+      {mosaicoEmEdicao !== null && (
+        <EditorDeMosaico
+          mosaico={mosaicoEmEdicao === false ? null : mosaicoEmEdicao}
+          cameras={cameras}
+          onCancelar={() => { setMosaicoEmEdicao(null); setErro(null); }}
+          onSalvar={salvarMosaico}
+        />
+      )}
+
       {editando && (
         <EditorDaRonda
           ronda={editando}
           layouts={layouts}
           onCancelar={() => { setEditando(null); setErro(null); }}
           onSalvar={salvar}
+          onNovoMosaico={() => setMosaicoEmEdicao(false)}
+          onEditarMosaico={(id) => setMosaicoEmEdicao(layouts.find((l) => l.id === id) ?? null)}
         />
       )}
+    </div>
+  );
+}
+
+const GRADES = ['1x1', '2x2', '3x3', '4x4', '2x1', '3x2', '4x3'] as const;
+
+/**
+ * MONTAR UM MOSAICO SEM SAIR DAQUI.
+ *
+ * "não vi onde em rondas eu consigo criar novos mosaicos sem ir para a página
+ *  live" (dono, 26/08/2026) — e ele tinha pedido isso desde o começo: "pode ser
+ *  até as mesmas grids que ficam na tela de live, mas que também dá para
+ *  modificar nessa tela".
+ *
+ * O mosaico é salvo na MESMA lista do Ao Vivo (`/live-layouts`), não numa lista
+ * própria daqui. Duas listas divergiriam no primeiro ajuste, e o operador teria
+ * de montar tudo duas vezes.
+ */
+function EditorDeMosaico({
+  mosaico, cameras, onCancelar, onSalvar,
+}: {
+  mosaico: MosaicoSalvo | null;
+  cameras: { id: string; name: string }[];
+  onCancelar: () => void;
+  onSalvar: (m: { id?: string; name: string; gridSize: string; cameraIds: string[] }) => void | Promise<void>;
+}) {
+  const [nome, setNome] = useState(mosaico?.name ?? '');
+  const [grade, setGrade] = useState(mosaico?.gridSize ?? '2x2');
+  const [posicoes, setPosicoes] = useState<string[]>(mosaico?.cameraIds ?? []);
+
+  const colunas = Math.max(1, Number(grade.split('x')[0]) || 2);
+  const linhas = Math.max(1, Number(grade.split('x')[1]) || 2);
+  const total = colunas * linhas;
+
+  // Trocar de grade PRESERVA o que já estava posicionado. Zerar faria o
+  // operador refazer o trabalho por experimentar um formato.
+  const slots = Array.from({ length: total }, (_, i) => posicoes[i] ?? '');
+
+  const definir = (indice: number, cameraId: string) => {
+    const novo = [...slots];
+    novo[indice] = cameraId;
+    setPosicoes(novo);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+      <div className="ops-card flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <h2 className="text-[15px] font-semibold">{mosaico ? 'Editar mosaico' : 'Novo mosaico'}</h2>
+          <button type="button" onClick={onCancelar} aria-label="Fechar"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground" htmlFor="mosaico-nome">Nome</label>
+              <input id="mosaico-nome" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Portaria" className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm" />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground" htmlFor="mosaico-grade">Formato</label>
+              <select id="mosaico-grade" value={grade} onChange={(e) => setGrade(e.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm">
+                {GRADES.map((g) => <option key={g} value={g}>{g.replace('x', ' × ')}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Câmeras nas posições
+            </p>
+            <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${colunas}, minmax(0, 1fr))` }}>
+              {slots.map((atual, i) => (
+                <select
+                  key={i}
+                  value={atual}
+                  onChange={(e) => definir(i, e.target.value)}
+                  aria-label={`Posição ${i + 1}`}
+                  className="h-9 min-w-0 rounded-lg border border-border bg-background px-2 text-xs"
+                >
+                  <option value="">— vazio —</option>
+                  {cameras.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Deixar posição vazia é válido: o espaço fica em branco no mural, na mesma ordem.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onCancelar}>Cancelar</button>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={!nome.trim() || !slots.some(Boolean)}
+            onClick={() => void onSalvar({ id: mosaico?.id, name: nome.trim(), gridSize: grade, cameraIds: slots })}
+          >
+            Salvar mosaico
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -202,12 +348,15 @@ function formatarDuracao(segundos: number): string {
 
 /** Montagem da ronda: escolher mosaicos, ordenar, dar tempo a cada um. */
 function EditorDaRonda({
-  ronda, layouts, onCancelar, onSalvar,
+  ronda, layouts, onCancelar, onSalvar, onNovoMosaico, onEditarMosaico,
 }: {
   ronda: Ronda;
   layouts: MosaicoSalvo[];
   onCancelar: () => void;
   onSalvar: (r: Ronda) => void | Promise<void>;
+  /** Montar um mosaico sem sair da ronda que está sendo criada. */
+  onNovoMosaico: () => void;
+  onEditarMosaico: (layoutId: string) => void;
 }) {
   const [nome, setNome] = useState(ronda.name);
   const [paradas, setParadas] = useState<Parada[]>(ronda.paradas);
@@ -239,9 +388,21 @@ function EditorDaRonda({
           <div>
             <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Acrescentar mosaico</p>
             {layouts.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Nenhum mosaico salvo. Monte um em Ao Vivo primeiro.</p>
+              <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center">
+                <p className="text-xs text-muted-foreground">Nenhum mosaico salvo ainda.</p>
+                <button type="button" className="btn btn-primary btn-sm mt-2" onClick={onNovoMosaico}>
+                  <Plus className="h-3.5 w-3.5" /> Montar o primeiro
+                </button>
+              </div>
             ) : (
               <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={onNovoMosaico}
+                  className="rounded-lg border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-[hsl(var(--accent))]"
+                >
+                  + Novo mosaico
+                </button>
                 {layouts.map((l) => (
                   <button
                     key={l.id}
@@ -270,7 +431,14 @@ function EditorDaRonda({
                 {paradas.map((p, i) => (
                   <li key={`${p.layoutId}-${i}`} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
                     <span className="w-5 shrink-0 text-center text-[11px] text-muted-foreground">{i + 1}</span>
-                    <span className="min-w-0 flex-1 truncate text-sm">{nomeDoLayout(p.layoutId)}</span>
+                    <button
+                      type="button"
+                      onClick={() => onEditarMosaico(p.layoutId)}
+                      title="Editar este mosaico"
+                      className="min-w-0 flex-1 truncate text-left text-sm hover:underline"
+                    >
+                      {nomeDoLayout(p.layoutId)}
+                    </button>
                     <select
                       value={p.segundos}
                       onChange={(e) => setParadas(paradas.map((x, j) => (j === i ? { ...x, segundos: Number(e.target.value) } : x)))}
