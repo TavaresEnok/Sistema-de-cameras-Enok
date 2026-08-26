@@ -91,3 +91,6 @@ infra/simulacao/media/
 # Cache de bytecode do Python (recriado a cada execução).
 __pycache__/
 *.pyc
+
+# Relatorios gerados na maquina, nao sao fonte.
+/relatorio_*.png
