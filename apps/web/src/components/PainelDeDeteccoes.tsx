@@ -72,7 +72,10 @@ function EventThumb({ eventId, token }: { eventId: string; token: string | null 
   if (!url) {
     return <div className="flex h-full w-full items-center justify-center bg-black/40"><LoaderCircle className="h-4 w-4 animate-spin text-white/40" /></div>;
   }
-  return <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" />;
+  // A foto do momento é PROVA: cortar para caber no cartão esconde justamente a
+  // periferia da cena, que é onde costuma estar o que interessa. `object-contain`
+  // mostra o quadro inteiro; a tarja preta é honesta.
+  return <img src={url} alt="" className="h-full w-full bg-black object-contain" loading="lazy" />;
 }
 
 const LABEL_ICON: Record<string, typeof User> = { pessoa: User, carro: Car, moto: Car, onibus: Car, bicicleta: Car };

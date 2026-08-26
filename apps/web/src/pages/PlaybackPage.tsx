@@ -3345,7 +3345,7 @@ export default function PlaybackPage() {
 
             {!playerActive && !loadingPlayback && !loadingRecordings && (
               <div className="absolute inset-0 flex items-center justify-center">
-                {standbyThumbnailUrl ? <img src={standbyThumbnailUrl} onError={retryExpiredThumbnails} alt="Prévia da gravação" className="absolute inset-0 h-full w-full object-cover opacity-60" /> : null}
+                {standbyThumbnailUrl ? <img src={standbyThumbnailUrl} onError={retryExpiredThumbnails} alt="Prévia da gravação" className="absolute inset-0 h-full w-full bg-black object-contain opacity-60" /> : null}
                 {standbyThumbnailUrl ? <div className="absolute inset-0 bg-black/35" /> : null}
                 <div className="text-center">
                   {recordings.length ? <CameraIcon className="mx-auto mb-2 h-10 w-10 text-white/10" /> : <VideoOff className="mx-auto mb-2 h-10 w-10 text-white/10" />}
@@ -3453,7 +3453,7 @@ export default function PlaybackPage() {
                     {hoverSpriteTile ? (
                       <div className="h-full w-full" style={hoverSpriteTile} />
                     ) : timelineHover.recordingId && thumbnailUrls[timelineHover.recordingId] ? (
-                      <img src={thumbnailUrls[timelineHover.recordingId]} alt="" className="h-full w-full object-cover" />
+                      <img src={thumbnailUrls[timelineHover.recordingId]} alt="" className="h-full w-full bg-black object-contain" />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center text-[9px] text-white/60">
                         {timelineHover.recordingId ? '…' : 'sem gravação'}
@@ -3997,7 +3997,7 @@ export default function PlaybackPage() {
                     />
                     <div className="relative h-11 w-[72px] shrink-0 overflow-hidden rounded-md bg-black/50">
                       {thumbnailUrls[item.id] ? (
-                        <img src={thumbnailUrls[item.id]} onError={retryExpiredThumbnails} alt={`Prévia de ${startLabel}`} loading="lazy" className="h-full w-full object-cover" />
+                        <img src={thumbnailUrls[item.id]} onError={retryExpiredThumbnails} alt={`Prévia de ${startLabel}`} loading="lazy" className="h-full w-full bg-black object-contain" />
                       ) : (
                         <div className="flex h-full w-full items-center justify-center"><CameraIcon className="h-4 w-4 text-white/25" /></div>
                       )}

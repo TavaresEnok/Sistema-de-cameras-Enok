@@ -2257,22 +2257,39 @@ export function LiveStreamPlayer({
             // chamava requestFreshLiveBoot: uma miniatura com erro interrompia uma
             // negociação de vídeo perfeitamente saudável. Agora ele só some.
             onError={() => setPosterFailed(true)}
-            className={`absolute inset-0 h-full w-full opacity-80 ${liveViewMode === 'grid' ? 'object-cover' : 'object-contain'}`}
+              // `object-contain` também aqui: o poster precisa mostrar o MESMO
+              // enquadramento que o vídeo vai mostrar. Cortado, ele engana sobre
+              // o que a câmera cobre no segundo antes de a imagem chegar.
+              className="absolute inset-0 h-full w-full object-contain opacity-80"
             draggable={false}
           />
         )}
 
         <video
           ref={videoRef}
-          // Na GRADE preenche a célula (object-cover) — some a borda preta e as
-          // imagens encaixam melhor. Na câmera selecionada/1x1 mantém o frame
-          // inteiro (object-contain, sem cortar — requisito CCTV). O cálculo do
-          // overlay de IA lê o objectFit computado, então se adapta sozinho.
-          className={`relative z-10 h-full w-full pointer-events-none transition-opacity duration-300 ${
-            liveViewMode === 'grid' ? 'object-cover' : 'object-contain'
-          } ${
-            posterUrl && !hasLiveFrame ? 'opacity-0' : 'opacity-100'
-          }`}
+            // ── O VÍDEO NUNCA É CORTADO ────────────────────────────────────
+            //
+            // "os vídeos nunca devem ser cortados para caber nos quadrados; se
+            //  o formato for diferente, coloque as colunas pretas" (dono,
+            //  26/08/2026) — e vale nos DOIS modos.
+            //
+            // Até aqui a grade usava `object-cover`, que preenche a célula
+            // CORTANDO as bordas. A justificativa registrada era estética:
+            // "some a borda preta e as imagens encaixam melhor".
+            //
+            // Num sistema de segurança isso é perda de imagem, e da pior
+            // espécie: o que se corta é a periferia da cena — onde alguém entra
+            // pelo lado, onde está a placa do carro parado no canto. E o
+            // operador não tem como perceber, porque a tela parece cheia e
+            // correta.
+            //
+            // `object-contain` mostra o quadro inteiro e preenche o resto com
+            // preto. Tarja preta é honesta; imagem cortada não é.
+            //
+            // O overlay da IA lê o `objectFit` computado e se adapta sozinho.
+            className={`relative z-10 h-full w-full pointer-events-none object-contain transition-opacity duration-300 ${
+              posterUrl && !hasLiveFrame ? 'opacity-0' : 'opacity-100'
+            }`}
           muted={isMuted}
           playsInline
           autoPlay={autoPlay}

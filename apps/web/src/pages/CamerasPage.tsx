@@ -1465,7 +1465,7 @@ export default function CamerasPage() {
                       <div className="flex items-center gap-2.5">
                         <div className="relative h-9 w-16 shrink-0 overflow-hidden rounded bg-[hsl(220_18%_8%)]">
                           {posterUrls[cam.id] ? (
-                            <img src={posterUrls[cam.id]} onError={() => retryPoster(cam.id)} alt={`Amostra de ${cam.name}`} loading="lazy" className="h-full w-full object-cover" />
+                            <img src={posterUrls[cam.id]} onError={() => retryPoster(cam.id)} alt={`Amostra de ${cam.name}`} loading="lazy" className="h-full w-full bg-black object-contain" />
                           ) : (
                             <CameraIcon className="absolute inset-0 m-auto h-4 w-4 text-white/25" aria-hidden="true" />
                           )}
@@ -1526,7 +1526,10 @@ export default function CamerasPage() {
                         onError={() => retryPoster(cam.id)}
                         alt={`Amostra de ${cam.name}`}
                         loading="lazy"
-                        className="absolute inset-0 h-full w-full object-cover"
+                        // Amostra da câmera não é enfeite: é como o operador
+                        // confere o enquadramento. Cortada, ele aprova um
+                        // enquadramento que não é o que a câmera grava.
+                        className="absolute inset-0 h-full w-full bg-black object-contain"
                       />
                     )}
                     <div className={`absolute top-0 inset-x-0 h-[2.5px] ${PONTO_CONEXAO[estadoConexao(cam.status)]}`} />
@@ -1618,7 +1621,7 @@ export default function CamerasPage() {
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
               <div className="relative h-28 overflow-hidden rounded border border-border bg-[hsl(220_18%_8%)] flex items-center justify-center">
                 {posterUrls[liveCam.id] ? (
-                  <img src={posterUrls[liveCam.id]} onError={() => retryPoster(liveCam.id)} alt={`Amostra de ${liveCam.name}`} className="h-full w-full object-cover" />
+                  <img src={posterUrls[liveCam.id]} onError={() => retryPoster(liveCam.id)} alt={`Amostra de ${liveCam.name}`} className="h-full w-full bg-black object-contain" />
                 ) : (
                   <CameraIcon className="w-10 h-10 text-white/25" />
                 )}

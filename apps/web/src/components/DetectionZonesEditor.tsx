@@ -75,6 +75,20 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   const [drawKind, setDrawKind] = useState<'include' | 'exclude' | 'line'>(() => ferramentaInicial(initialZones));
   const [saving, setSaving] = useState(false);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
+  // ── A CAIXA TEM DE TER A PROPORÇÃO DA CÂMERA ─────────────────────────────
+  //
+  // A caixa era fixa em 16:9 e a imagem entrava com `object-cover`, que CORTA
+  // para preencher. Só que as coordenadas do desenho são 0–100% DA CAIXA, e a
+  // caixa mostrava um recorte da imagem: numa câmera 4:3, a linha desenhada no
+  // meio da tela era gravada como "meio", mas o detector — que analisa o quadro
+  // INTEIRO — encontrava esse "meio" em outro lugar da cena.
+  //
+  // Resultado: a linha de travessia não ficava onde o operador a desenhou, e
+  // nada na tela indicava isso.
+  //
+  // Adotando a proporção real da imagem, ela preenche a caixa exatamente: sem
+  // corte, sem tarja, e 0–100% da caixa passa a ser 0–100% da imagem.
+  const [proporcao, setProporcao] = useState('16 / 9');
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -305,11 +319,25 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
         ref={containerRef}
         onClick={handleClick}
         className={`relative w-full overflow-hidden rounded-lg border border-border bg-black ${drawing ? 'cursor-crosshair' : 'cursor-default'}`}
-        style={{ aspectRatio: '16 / 9' }}
+        style={{ aspectRatio: proporcao }}
         aria-label={`Editor de zonas de ${cameraName}`}
       >
         {posterUrl ? (
-          <img src={posterUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-80" draggable={false} />
+          <img
+            src={posterUrl}
+            alt=""
+            // `object-fill` é seguro AQUI e só aqui: a caixa já assumiu a
+            // proporção da imagem, então não há deformação — e garante que não
+            // sobre nem tarja nem corte entre a imagem e a área de desenho.
+            className="absolute inset-0 h-full w-full object-fill opacity-80"
+            draggable={false}
+            onLoad={(e) => {
+              const img = e.currentTarget;
+              if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                setProporcao(`${img.naturalWidth} / ${img.naturalHeight}`);
+              }
+            }}
+          />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center text-xs text-white/40">Carregando imagem da câmera…</div>
         )}
