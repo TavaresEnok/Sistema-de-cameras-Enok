@@ -22,6 +22,28 @@ log() {
   printf '[DRAC update] %s\n' "$*"
 }
 
+wait_for_http() {
+  local method="$1"
+  local url="$2"
+  local label="$3"
+  local attempts="${4:-30}"
+  local attempt
+  for attempt in $(seq 1 "$attempts"); do
+    if [ "$method" = "HEAD" ]; then
+      if curl -fsSI --max-time 3 "$url" >/dev/null 2>&1; then
+        log "$label respondeu (tentativa $attempt/$attempts)."
+        return 0
+      fi
+    elif curl -fsS --max-time 3 "$url" >/dev/null 2>&1; then
+      log "$label respondeu (tentativa $attempt/$attempts)."
+      return 0
+    fi
+    sleep 2
+  done
+  printf '[DRAC update][ERRO] %s não respondeu após %s tentativas: %s\n' "$label" "$attempts" "$url" >&2
+  return 1
+}
+
 fail() {
   printf '[DRAC update][ERRO] %s\n' "$*" >&2
   if ! rollback "falha: $*"; then
@@ -108,8 +130,8 @@ rollback() {
   if [ "$rollback_status" -eq 0 ]; then
     if ! "${COMPOSE[@]}" build api web drac-central >/dev/null \
       || ! "${COMPOSE[@]}" up -d api web drac-central >/dev/null \
-      || ! curl -fsS --max-time 30 http://127.0.0.1:3000/health >/dev/null \
-      || ! curl -fsSI --max-time 30 http://127.0.0.1:5173/ >/dev/null; then
+      || ! wait_for_http GET http://127.0.0.1:3000/health API \
+      || ! wait_for_http HEAD http://127.0.0.1:5173/ Web; then
       printf '[DRAC update][ERRO] Código anterior restaurado, mas os serviços não validaram.\n' >&2
       rollback_status=1
     fi
@@ -241,8 +263,8 @@ log "Subindo API, Web e Central atualizadas"
 "${COMPOSE[@]}" up -d api web drac-central
 
 log "Validando healthchecks"
-curl -fsS --max-time 15 http://127.0.0.1:3000/health >/dev/null
-curl -fsSI --max-time 15 http://127.0.0.1:5173/ >/dev/null
+wait_for_http GET http://127.0.0.1:3000/health API
+wait_for_http HEAD http://127.0.0.1:5173/ Web
 
 if [ -x "$ROOT_DIR/scripts/production-readiness.sh" ]; then
   log "Executando readiness"

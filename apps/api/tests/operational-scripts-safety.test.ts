@@ -14,6 +14,13 @@ test('update mantém writers quiescentes durante rollback transacional', () => {
   assert.match(updateScript, /ROLLBACK INCOMPLETO/);
 });
 
+test('update aguarda API e Web iniciarem antes de considerar o deploy quebrado', () => {
+  assert.match(updateScript, /wait_for_http\(\)/);
+  assert.match(updateScript, /for attempt in \$\(seq 1 "\$attempts"\)/);
+  assert.match(updateScript, /wait_for_http GET http:\/\/127\.0\.0\.1:3000\/health API/);
+  assert.match(updateScript, /wait_for_http HEAD http:\/\/127\.0\.0\.1:5173\/ Web/);
+});
+
 test('update bloqueia a migration histórica quando ainda existem gravações duplicadas', () => {
   assert.match(updateScript, /preflight_recording_duplicates/);
   assert.match(updateScript, /20260501042000_recordings_indexes/);
