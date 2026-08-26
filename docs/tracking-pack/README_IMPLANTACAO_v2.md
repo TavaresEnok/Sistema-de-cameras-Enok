@@ -1,3 +1,9 @@
+> **REGISTRO HISTÓRICO.** Este documento veio com o pacote de rastreamento e
+> cita `TavaresEnok/SISTEMA-CAMERA-2.0-Ajustcam`, que era o repositório
+> principal na época. Desde 26/08/2026 o principal é
+> `TavaresEnok/Sistema-de-cameras-Enok`. O texto abaixo fica como estava,
+> porque descreve o que foi entregue naquele momento.
+
 # AjustCam — Pacote de Tracking (bottom-center, oclusão, estacionário, PTZ, rider)
 
 Código pronto, aplicado sobre o clone de `TavaresEnok/SISTEMA-CAMERA-2.0-Ajustcam`

@@ -952,6 +952,8 @@ const TECHNICAL_DOCUMENTATION = {
                 ['Settings', 'Configurações tipadas, branding e cache curto.', 'Banco indisponível impede ler ou persistir mudança.'],
                 ['AppBuilder', 'Configuração e integração para geração do aplicativo móvel.', 'Agente de build ou artefato de saída indisponível.'],
                 ['LiveLayouts', 'Layouts pessoais da grade ao vivo.', 'Banco e autorização do proprietário.'],
+                ['Rondas', 'Rodízio de mosaicos no mural: sequência e tempo de cada parada.', 'Layout apagado ou tempo fora da faixa — recusa em vez de exibir tela preta.'],
+                ['GroupChat', 'Conversa do grupo e botão de pânico com push a todos os membros.', 'Permissão no grupo define quem lê e recebe; sem aparelho registrado a mensagem fica, o push não sai.'],
                 ['Gpu', 'Descoberta, autoteste e decisão de aceleração.', 'Driver, runtime ou hardware ausente.'],
                 ['RolePermissions', 'Permissões funcionais por papel.', 'Regra persistida e guard de permissão.'],
                 ['CloudConnector', 'Heartbeat, licença e configuração enviada pela Central.', 'Central/rede indisponível e revisão ainda não aplicada.'],

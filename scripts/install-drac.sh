@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# O repositório REAL do produto. O padrão anterior (TavaresEnok/DRAC) não
-# contém os commits publicados pela Central — clonar de lá falha com
-# "upload-pack: not our ref" no commit fixado.
-DRAC_REPO_URL="${DRAC_REPO_URL:-https://github.com/TavaresEnok/SISTEMA-CAMERA-2.0-Ajustcam.git}"
+# O repositório PRINCIPAL do produto, desde 26/08/2026:
+# `TavaresEnok/Sistema-de-cameras-Enok`.
+#
+# O anterior (`SISTEMA-CAMERA-2.0-Ajustcam`) segue existindo, preservado no
+# estado em que ficou, e NÃO recebe mais desenvolvimento. Antes dele houve um
+# terceiro (`TavaresEnok/DRAC`) que sobrevivia como padrão em vários arquivos
+# sem conter os commits publicados pela Central — clonar de lá falhava com
+# "upload-pack: not our ref" e derrubou uma instalação de cliente. Os dois
+# nomes antigos foram trocados de uma vez para não repetir aquilo.
+DRAC_REPO_URL="${DRAC_REPO_URL:-https://github.com/TavaresEnok/Sistema-de-cameras-Enok.git}"
 DRAC_INSTALLER_COMMIT="${DRAC_INSTALLER_COMMIT:-}"
 # Padrões de PRODUTO, não da máquina de desenvolvimento.
 #
@@ -373,7 +379,7 @@ preflight() {
 
   check_dns_host "GitHub" "github.com"
   check_dns_host "Central" "$(host_from_url "$DRAC_CENTRAL_URL")"
-  check_http_url "GitHub raw" "https://raw.githubusercontent.com/TavaresEnok/DRAC/${DRAC_INSTALLER_COMMIT}/README.md"
+  check_http_url "GitHub raw" "https://raw.githubusercontent.com/TavaresEnok/Sistema-de-cameras-Enok/${DRAC_INSTALLER_COMMIT}/README.md"
   check_http_url "DRAC Central" "${DRAC_CENTRAL_URL%/}/api/health"
 
   for port in 3000 5173 8554 8888 8889; do
