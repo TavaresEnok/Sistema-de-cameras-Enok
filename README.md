@@ -3,13 +3,14 @@
 > **Repositório principal desde 26/08/2026:**
 > [`TavaresEnok/Sistema-de-cameras-Enok`](https://github.com/TavaresEnok/Sistema-de-cameras-Enok)
 >
-> O repositório anterior (`SISTEMA-CAMERA-2.0-Ajustcam`) continua existindo,
-> preservado no estado em que ficou, e **não recebe mais desenvolvimento**. Todo
-> o histórico — 499 commits desde 05/05/2026, ramos, etiquetas e notas — foi
-> transferido para cá; os dois têm o mesmo commit inicial e o mesmo conteúdo.
+> O repositório anterior (`SISTEMA-CAMERA-2.0-Ajustcam`) é apenas um arquivo
+> histórico e **não recebe mais desenvolvimento**. O histórico, os ramos, as
+> etiquetas e as notas necessários foram transferidos para este repositório,
+> que agora contém a versão mais completa e continuará recebendo as melhorias.
 >
-> Instalações existentes clonam do repositório antigo até serem apontadas para
-> este. O instalador e a Central já usam o endereço novo por padrão.
+> Toda instalação nova, o instalador e a Central usam este endereço. Instalações
+> antigas que ainda tenham o remoto anterior devem ser apontadas para este antes
+> de receber novas atualizações.
 
 DRAC VMS e um VMS/NVR on-premise para monitoramento, gravacao, playback, IA e operacao de cameras IP. O projeto e mantido como monorepo e combina frontend web, API, app mobile, PostgreSQL, Redis, MediaMTX, worker Go opcional e servico Python de IA/OpenVINO.
 
