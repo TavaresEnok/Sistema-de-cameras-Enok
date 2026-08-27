@@ -524,9 +524,11 @@ test('flag OFF: comportamento atual byte a byte (mesmos deletes, mesmo resultado
     );
     assert.deepEqual(
       Object.keys(result),
-      ['skipped', 'recordingsDeleted', 'clipsDeleted', 'eventsDeleted', 'orphanThumbnailsDeleted', 'orphanCompatibleFilesDeleted', 'orphanSegmentsDeleted'],
+      ['skipped', 'recordingsDeleted', 'clipsDeleted', 'eventsDeleted', 'auditNoiseDeleted', 'auditTrailDeleted', 'alarmsDeleted', 'orphanThumbnailsDeleted', 'orphanCompatibleFilesDeleted', 'orphanSegmentsDeleted'],
       'o resultado logado não pode ganhar campos novos enquanto a feature está desligada'
-      + ' — orphanSegmentsDeleted é campo-base da limpeza de órfãos (como os de thumbnail/compatible), não da two-tier',
+      + ' — orphanSegmentsDeleted é campo-base da limpeza de órfãos (como os de thumbnail/compatible), não da two-tier;'
+      + ' auditNoiseDeleted/auditTrailDeleted/alarmsDeleted são campos-base da limpeza de histórico (27/08/2026),'
+      + ' da mesma família de eventsDeleted: rodam sempre, independem da two-tier',
     );
     assert.equal(result.recordingsDeleted, 3);
   } finally {

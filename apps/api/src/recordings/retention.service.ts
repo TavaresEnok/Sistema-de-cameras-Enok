@@ -18,6 +18,10 @@ import {
   stageFileDeletion,
   type StagedFileDeletion,
 } from './helpers/transactional-file-delete.helper';
+import {
+  PRAZOS_PADRAO,
+  planejarLimpeza,
+} from './helpers/limpeza-do-historico.helper';
 
 type ProtectionSets = {
   recordingIds: Set<string>;
@@ -31,6 +35,9 @@ type CleanupResult = {
   recordingsDeleted: number;
   clipsDeleted: number;
   eventsDeleted: number;
+  auditNoiseDeleted: number;
+  auditTrailDeleted: number;
+  alarmsDeleted: number;
   orphanThumbnailsDeleted: number;
   orphanCompatibleFilesDeleted: number;
   /** Segmentos `.ts` órfãos (intermediários que o mux deixou para trás). */
@@ -955,6 +962,9 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
       recordingsDeleted: 0,
       clipsDeleted: 0,
       eventsDeleted: 0,
+      auditNoiseDeleted: 0,
+      auditTrailDeleted: 0,
+      alarmsDeleted: 0,
       orphanThumbnailsDeleted: 0,
       orphanCompatibleFilesDeleted: 0,
       orphanSegmentsDeleted: 0,
@@ -1021,6 +1031,16 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     });
     result.eventsDeleted = deletedEvents.count;
 
+    // HISTÓRICO: ruído de operação some cedo, rastro fica anos.
+    //
+    // Sem isto, a auditoria crescia para sempre: medido em 27/08/2026 nesta
+    // instalação, 178.147 linhas desde 1º de maio, das quais 96,5% eram entrega
+    // de notificação, criação de token e falha de player.
+    //
+    // A separação entre ruído e rastro é explícita e conservadora — ver
+    // helpers/limpeza-do-historico.helper.ts. Ação desconhecida é PRESERVADA.
+    await this.limparHistorico(now, result);
+
     const derived = await this.cleanupOrphanDerivedArtifacts();
     result.orphanThumbnailsDeleted = derived.orphanThumbnailsDeleted;
     result.orphanCompatibleFilesDeleted = derived.orphanCompatibleFilesDeleted;
@@ -1050,6 +1070,55 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
    * de uma câmera EXCLUÍDA é justamente onde há mais derivado órfão para limpar,
    * e iterar pela tabela a deixaria intocada para sempre.
    */
+  /**
+   * Esquece o ruído de operação e os alarmes velhos; preserva o rastro.
+   *
+   * Roda dentro da passagem de retenção que já existe, então não acrescenta
+   * agendamento nem serviço novo. Falhar aqui NÃO pode derrubar a retenção de
+   * gravações, que é a parte que libera disco de verdade — por isso cada
+   * remoção é protegida em separado.
+   */
+  private async limparHistorico(now: number, result: CleanupResult): Promise<void> {
+    const plano = planejarLimpeza(now, {
+      ruidoDias: envNumber('AUDIT_NOISE_RETENTION_DAYS', PRAZOS_PADRAO.ruidoDias,
+        { min: 1, max: 3650, integer: true, onInvalid: (m) => this.logger.warn(m) }),
+      rastroDias: envNumber('AUDIT_TRAIL_RETENTION_DAYS', PRAZOS_PADRAO.rastroDias,
+        { min: 30, max: 3650, integer: true, onInvalid: (m) => this.logger.warn(m) }),
+      alarmeDias: envNumber('ALARM_RETENTION_DAYS', PRAZOS_PADRAO.alarmeDias,
+        { min: 1, max: 3650, integer: true, onInvalid: (m) => this.logger.warn(m) }),
+    });
+
+    try {
+      const ruido = await this.prisma.auditLog.deleteMany({
+        where: { action: { in: plano.acoesDeRuido }, createdAt: { lt: plano.ruidoAntesDe } },
+      });
+      result.auditNoiseDeleted = ruido.count;
+    } catch (error) {
+      this.logger.warn(`Limpeza do ruído de auditoria falhou: ${(error as Error)?.message ?? error}`);
+    }
+
+    try {
+      // O rastro também tem prazo, mas longo. `notIn` de propósito: assim uma
+      // ação NOVA cai aqui, no prazo longo, em vez de escapar da limpeza para
+      // sempre e voltar a inchar a tabela sem ninguém ver.
+      const rastro = await this.prisma.auditLog.deleteMany({
+        where: { action: { notIn: plano.acoesDeRuido }, createdAt: { lt: plano.rastroAntesDe } },
+      });
+      result.auditTrailDeleted = rastro.count;
+    } catch (error) {
+      this.logger.warn(`Limpeza do rastro antigo falhou: ${(error as Error)?.message ?? error}`);
+    }
+
+    try {
+      const alarmes = await this.prisma.alarmInstance.deleteMany({
+        where: { createdAt: { lt: plano.alarmesAntesDe } },
+      });
+      result.alarmsDeleted = alarmes.count;
+    } catch (error) {
+      this.logger.warn(`Limpeza de alarmes antigos falhou: ${(error as Error)?.message ?? error}`);
+    }
+  }
+
   private async cleanupOrphanDerivedArtifacts() {
     const root = this.config.get<string>('recordingsRoot') ?? process.env.RECORDINGS_ROOT ?? './storage/recordings';
     const compatibleRoot = join(root, '.playback-compatible');
