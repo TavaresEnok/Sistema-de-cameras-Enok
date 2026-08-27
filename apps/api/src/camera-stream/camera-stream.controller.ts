@@ -333,6 +333,28 @@ export class CameraStreamController {
     return token;
   }
 
+  /**
+   * Quais câmeras têm fonte leve para o mosaico, e quais não têm.
+   *
+   * Rota ESTÁTICA antes das que usam `:cameraId` — depois delas, "fontes-do-
+   * mosaico" seria lido como um id de câmera.
+   */
+  @Roles(UserRole.ADMIN)
+  @RequirePermission('serverConfig')
+  @Get('fontes-do-mosaico')
+  async fontesDoMosaico() {
+    return { items: await this.mediamtxProxyService.relatorioDeFontesDoMosaico() };
+  }
+
+  /** Manda esquecer o que sabemos e procurar de novo nesta câmera. */
+  @Roles(UserRole.ADMIN)
+  @RequirePermission('serverConfig')
+  @Post(':cameraId/reaprender-fonte')
+  async reaprenderFonte(@Param('cameraId') cameraId: string) {
+    await this.mediamtxProxyService.reaprenderFonteDoMosaico(cameraId);
+    return { ok: true };
+  }
+
   @Roles(UserRole.ADMIN)
   @RequirePermission('serverConfig')
   @Get('stats')

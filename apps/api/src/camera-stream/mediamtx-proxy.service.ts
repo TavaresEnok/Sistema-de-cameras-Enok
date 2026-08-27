@@ -46,6 +46,13 @@ import { decidirFonteDaMaxima } from './helpers/fonte-da-maxima.helper';
 import { decidirCopiaDeVideo } from './helpers/copia-em-vez-de-reencode.helper';
 import { SourceGatewayService } from './source-gateway.service';
 import { RtmpIngestSourceService } from '../cameras/rtmp-ingest-source.service';
+import {
+  comSegredo,
+  comoExplicar,
+  impressaoDoCadastro,
+  lerAnotacao,
+  semSegredo,
+} from './helpers/memoria-do-mosaico.helper';
 
 type DeliveryUrls = {
   enabled: boolean;
@@ -1144,6 +1151,131 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   // Decide se o stream de Live é H.265 (precisa transcode). Usa cache curto para
   // não sondar a câmera a cada requisição de URLs. Em falha de probe, assume H.265
   // (transcode sempre entrega vídeo ao navegador; o pior caso é só custo de CPU).
+  /**
+   * Lê o que já descobrimos sobre a fonte leve desta câmera.
+   *
+   * Devolve `null` quando não há nada anotado, quando o cadastro mudou desde a
+   * descoberta, ou quando o banco não responde — nos três casos o chamador
+   * sonda, que é o comportamento de sempre. Esta camada só pode ACELERAR;
+   * nunca pode ser o motivo de uma câmera não aparecer.
+   */
+  /**
+   * O QUE JÁ SABEMOS DE CADA CÂMERA, para a tela do operador.
+   *
+   * Existe por causa de um caso real (27/08/2026): três câmeras desta frota não
+   * têm stream secundário e entregam 1080p em HEVC direto no mosaico. Num
+   * computador forte passa; num mais fraco os quadros ficam pretos e
+   * reiniciando. Antes disso, o único jeito de descobrir era alguém reclamar.
+   */
+  async relatorioDeFontesDoMosaico(): Promise<Array<{
+    id: string; nome: string; temSubStream: boolean | null;
+    codec: string | null; verificadoEm: Date | null; explicacao: string;
+  }>> {
+    if (!this.prisma) return [];
+    const cams = await this.prisma.camera.findMany({
+      where: { enabled: true },
+      select: { id: true, name: true, gridHasSubStream: true, gridSourceCodec: true, gridProbedAt: true },
+      orderBy: { name: 'asc' },
+    });
+    return cams.map((c) => ({
+      id: c.id,
+      nome: c.name,
+      temSubStream: c.gridHasSubStream,
+      codec: c.gridSourceCodec,
+      verificadoEm: c.gridProbedAt,
+      explicacao: comoExplicar({ temSub: c.gridHasSubStream }),
+    }));
+  }
+
+  /**
+   * "Procure de novo nesta câmera."
+   *
+   * A anotação não pode virar prisão: quem finalmente ligar o stream
+   * secundário dentro da câmera precisa de um jeito de mandar o sistema
+   * reaprender, sem esperar reinício nem mexer no cadastro à toa.
+   */
+  async reaprenderFonteDoMosaico(cameraId: string): Promise<void> {
+    await this.esquecerAnotacaoDoMosaico(cameraId);
+    for (const chave of [...this.gridSourceCache.keys()]) {
+      if (chave.includes(cameraId)) this.gridSourceCache.delete(chave);
+    }
+  }
+
+  private async lerAnotacaoDoMosaico(cameraId: string, impressao: string) {
+    if (!this.prisma) return null;
+    try {
+      const c = await this.prisma.camera.findUnique({
+        where: { id: cameraId },
+        select: {
+          gridHasSubStream: true, gridSourceUrl: true, gridSourceCodec: true,
+          gridRequiresSanitization: true, gridProbeKey: true, gridProbedAt: true,
+        },
+      });
+      if (!c) return null;
+      const r = lerAnotacao(
+        {
+          chave: c.gridProbeKey,
+          urlSemSegredo: c.gridSourceUrl,
+          codec: c.gridSourceCodec,
+          temSub: c.gridHasSubStream,
+          precisaLimpeza: c.gridRequiresSanitization,
+          descobertoEm: c.gridProbedAt,
+        },
+        impressao,
+        Date.now(),
+      );
+      return r.usar ? r : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Anota o que acabamos de descobrir.
+   *
+   * `url = null` significa "esta câmera NÃO tem stream secundário" — e isso é
+   * tão valioso quanto o caminho positivo: é o que faz a sondagem inútil parar.
+   *
+   * A senha é retirada antes de gravar. Ela já vive no cadastro; guardar de
+   * novo aqui só criaria um segundo lugar para vazar.
+   */
+  private async anotarMosaico(
+    cameraId: string,
+    impressao: string,
+    url: string | null,
+    codec: string | null,
+    precisaLimpeza: boolean,
+  ) {
+    if (!this.prisma) return;
+    try {
+      await this.prisma.camera.update({
+        where: { id: cameraId },
+        data: {
+          gridHasSubStream: Boolean(url),
+          gridSourceUrl: semSegredo(url),
+          gridSourceCodec: url ? codec : null,
+          gridRequiresSanitization: precisaLimpeza,
+          gridProbeKey: impressao,
+          gridProbedAt: new Date(),
+        },
+      });
+    } catch {
+      // Anotar é conveniência. Falhar aqui só significa sondar de novo depois.
+    }
+  }
+
+  /** Apaga a anotação — usado quando a fonte anotada se prova morta. */
+  private async esquecerAnotacaoDoMosaico(cameraId: string) {
+    if (!this.prisma) return;
+    try {
+      await this.prisma.camera.update({
+        where: { id: cameraId },
+        data: { gridHasSubStream: null, gridSourceUrl: null, gridSourceCodec: null,
+                gridRequiresSanitization: null, gridProbeKey: null, gridProbedAt: null },
+      });
+    } catch { /* idem */ }
+  }
+
   private async resolveLiveStreamIsHevc(cacheKey: string, sourceUrl: string, transport: string, codecConhecido?: string | null): Promise<boolean> {
     const cached = this.liveCodecCache.get(cacheKey);
     if (cached && Date.now() - cached.at < MediamtxProxyService.LIVE_CODEC_TTL_MS) {
@@ -1347,6 +1479,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         this.gridHealAt.set(cameraId, Date.now());
         this.gridSourceCache.delete(cacheKey);
         cached = undefined;
+        // A anotação do banco descreve a MESMA fonte morta: mantê-la faria o
+        // próximo reinício reaproveitar exatamente o caminho que não entrega.
+        void this.esquecerAnotacaoDoMosaico(cameraId);
         this.logger.warn(
           `Grade de ${cameraId}: fonte cacheada sem mídia (sessão aceita, nenhuma faixa) — descartando decisão e re-sondando.`,
         );
@@ -1370,6 +1505,50 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         usedSubStream: false,
         requiresSanitization: false,
       };
+    }
+
+    // MEMÓRIA DE LONGO PRAZO: o que já descobrimos, guardado no banco.
+    //
+    // O cache acima morre com o processo; este não. Sem ele, reiniciar a API
+    // fazia TODA a frota ser sondada de novo — e câmera sem stream secundário
+    // (Cam-24/25/26 desta frota) era interrogada para sempre, sempre recebendo
+    // a mesma resposta negativa. Ver helpers/memoria-do-mosaico.helper.ts.
+    //
+    // É só uma segunda camada de cache: a decisão em si continua sendo tomada
+    // exatamente pelo mesmo código de sempre. Falhou a leitura, ou o cadastro
+    // mudou? Cai na sondagem de sempre.
+    const impressao = impressaoDoCadastro({
+      ip: camera.ip, rtspPort: camera.rtspPort, username: camera.username,
+      rtspPath: camera.rtspPath, channel: subProfile.channel, subtype: subProfile.subtype,
+    });
+    const anotado = await this.lerAnotacaoDoMosaico(cameraId, impressao);
+    if (anotado) {
+      if (anotado.urlSemSegredo) {
+        const url = comSegredo(anotado.urlSemSegredo, camera.username, password);
+        if (url) {
+          this.gridSourceCache.set(cacheKey, {
+            url, codec: anotado.codec, requiresSanitization: anotado.precisaLimpeza, at: Date.now(),
+          });
+          return {
+            profile: subProfile,
+            sourceUrl: url,
+            isHevc: anotado.codec ? isHevcCodec(anotado.codec) : false,
+            usedSubStream: true,
+            requiresSanitization: anotado.precisaLimpeza,
+          };
+        }
+      } else {
+        // Anotado como "não tem sub". É o caso que mais economiza: sem isto,
+        // três câmeras desta frota seriam sondadas em vão a cada abertura.
+        this.gridSourceCache.set(cacheKey, {
+          url: null, codec: null, requiresSanitization: false, at: Date.now(),
+        });
+        const m = await this.chooseLiveSource(cameraId, camera, password, transport);
+        return {
+          profile: m.profile, sourceUrl: m.sourceUrl, isHevc: m.isHevc,
+          usedSubStream: false, requiresSanitization: false,
+        };
+      }
     }
 
     // Candidato 1: sub no caminho configurado (subtype 1 aplicado ao rtspPath).
@@ -1524,6 +1703,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         requiresSanitization,
         at: Date.now(),
       });
+      void this.anotarMosaico(cameraId, impressao, chosen.url, chosen.codec, requiresSanitization);
       return {
         profile: subProfile,
         sourceUrl: chosen.url,
@@ -1540,6 +1720,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       requiresSanitization: false,
       at: Date.now(),
     });
+    // Anotar a AUSÊNCIA de sub é o que impede a sondagem eterna.
+    void this.anotarMosaico(cameraId, impressao, null, null, false);
     const main = await this.chooseLiveSource(cameraId, camera, password, transport);
     this.logger.log(`Grade sem sub-stream para ${cameraId}; usando o stream principal.`);
     return {

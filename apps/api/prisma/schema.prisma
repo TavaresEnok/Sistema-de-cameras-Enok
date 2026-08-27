@@ -150,6 +150,11 @@ model Camera {
   lastSeenAt             DateTime?
   siteId                 String?
   areaId                 String?
+  /// Endereço físico informado pelo operador. Não é deduzido do IP da câmera:
+  /// IP privado/CGNAT identifica a rede, não o ponto onde o equipamento está.
+  locationAddress        String?
+  latitude               Float?
+  longitude              Float?
   groupId                String?
   recordingEnabled       Boolean      @default(true)
   recordingMode          String       @default("continuous")
@@ -218,12 +223,30 @@ model Camera {
   /// dos que ele autorizar). Null em câmeras normais (gerenciadas pelo provedor).
   ownerUserId            String?
   detectedVideoCodec     String?
-  detectedWidth          Int?
-  detectedHeight         Int?
-  detectedFps            Int?
-  detectedBitrateKbps    Int?
-  createdAt              DateTime     @default(now())
-  updatedAt              DateTime     @updatedAt
+
+  /// MEMÓRIA DO MOSAICO: o que já descobrimos sobre a fonte leve desta câmera.
+  /// Antes isso vivia só na memória do processo e sumia a cada reinício, então
+  /// câmera SEM stream secundário era sondada para sempre. Ver
+  /// helpers/memoria-do-mosaico.helper.ts.
+  ///
+  /// `gridHasSubStream` nulo = nunca verificado; `false` = verificado e a câmera
+  /// não tem — é resposta, não ausência de resposta.
+  gridHasSubStream         Boolean?
+  /// URL do sub SEM usuário e senha. A credencial mora no cadastro e é
+  /// recolocada na hora de usar: um segredo tem um lugar só.
+  gridSourceUrl            String?
+  gridSourceCodec          String?
+  gridRequiresSanitization Boolean?
+  /// Impressão do cadastro quando descobrimos. Mudou o IP/porta/caminho, a
+  /// anotação se invalida sozinha.
+  gridProbeKey             String?
+  gridProbedAt             DateTime?
+  detectedWidth            Int?
+  detectedHeight           Int?
+  detectedFps              Int?
+  detectedBitrateKbps      Int?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
   site          Site?              @relation(fields: [siteId], references: [id], onDelete: SetNull)
   area          Area?              @relation(fields: [areaId], references: [id], onDelete: SetNull)
