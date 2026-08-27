@@ -566,6 +566,138 @@
 .cam-empty { width:100%; height:100%; border:1.5px dashed var(--bdr-hi); border-radius:9px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; cursor:pointer; color:var(--tx-4); transition:border-color .14s,color .14s,background .14s; background:var(--surf-2); }
 .cam-empty:hover { border-color:var(--acc-bdr); color:var(--acc-text); background:var(--acc-dim); }
 
+/* mapa de câmeras — pin legível, compacto e sem o círculo genérico do Leaflet */
+.camera-map-marker-host {
+  background:transparent !important;
+  border:0 !important;
+}
+.camera-map-pin {
+  --map-pin:#45b07d;
+  --map-pin-dark:#166342;
+  --map-pin-ring:rgba(69,176,125,.23);
+  position:relative;
+  display:block;
+  width:52px;
+  height:60px;
+  transform-origin:50% 93%;
+  filter:drop-shadow(0 7px 8px rgba(7,12,22,.3));
+  transition:transform .16s ease,filter .16s ease;
+}
+.camera-map-marker-host:hover .camera-map-pin,
+.camera-map-marker-host:focus .camera-map-pin {
+  transform:translateY(-3px) scale(1.06);
+  filter:drop-shadow(0 10px 11px rgba(7,12,22,.38));
+}
+.camera-map-pin__halo {
+  position:absolute;
+  left:8px;
+  top:3px;
+  width:36px;
+  height:36px;
+  border-radius:15px;
+  background:var(--map-pin-ring);
+  box-shadow:0 0 0 7px var(--map-pin-ring);
+}
+.camera-map-pin__body {
+  position:absolute;
+  left:7px;
+  top:1px;
+  z-index:2;
+  display:grid;
+  width:38px;
+  height:42px;
+  place-items:center;
+  border:2px solid rgba(255,255,255,.86);
+  border-radius:14px 14px 14px 5px;
+  background:linear-gradient(145deg,color-mix(in srgb,var(--map-pin) 94%,white),var(--map-pin-dark));
+  color:#fff;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 3px 9px rgba(7,12,22,.3);
+  transform:rotate(-45deg);
+}
+.camera-map-pin__body svg {
+  width:22px;
+  height:22px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  transform:rotate(45deg);
+}
+.camera-map-pin__status {
+  position:absolute;
+  right:3px;
+  top:31px;
+  z-index:4;
+  width:11px;
+  height:11px;
+  border:2px solid #fff;
+  border-radius:999px;
+  background:var(--map-pin);
+  box-shadow:0 1px 4px rgba(7,12,22,.36);
+}
+.camera-map-pin__count {
+  position:absolute;
+  right:-2px;
+  top:-6px;
+  z-index:5;
+  display:grid;
+  min-width:22px;
+  height:22px;
+  padding:0 5px;
+  place-items:center;
+  border:2px solid #fff;
+  border-radius:999px;
+  background:#111827;
+  color:#fff;
+  box-shadow:0 2px 6px rgba(7,12,22,.34);
+  font-family:var(--ff-mono);
+  font-size:9px;
+  font-weight:700;
+  line-height:1;
+}
+.camera-map-pin--online .camera-map-pin__status {
+  background:#45b07d;
+}
+.camera-map-pin--offline {
+  --map-pin:#7d8899;
+  --map-pin-dark:#303947;
+  --map-pin-ring:rgba(100,116,139,.2);
+}
+.camera-map-pin--estimated {
+  --map-pin:#d99a32;
+  --map-pin-dark:#80500d;
+  --map-pin-ring:rgba(217,154,50,.23);
+}
+.camera-map-pin--estimated .camera-map-pin__halo {
+  border:1px dashed rgba(128,80,13,.68);
+}
+.camera-map-pin--estimated .camera-map-pin__status {
+  background:#fff;
+  border-color:var(--map-pin);
+  box-shadow:inset 0 0 0 2px #fff,0 1px 4px rgba(7,12,22,.32);
+}
+.camera-map-pin--group .camera-map-pin__body {
+  width:42px;
+  height:46px;
+  left:5px;
+  top:-1px;
+}
+.camera-map-pin--group .camera-map-pin__halo {
+  left:7px;
+  top:2px;
+  width:38px;
+  height:38px;
+}
+
+.leaflet-tooltip {
+  border-color:rgba(15,23,42,.15);
+  border-radius:8px;
+  box-shadow:0 5px 16px rgba(15,23,42,.18);
+  font-size:11px;
+  font-weight:600;
+}
+
 /* playback: vídeo + timeline */
 .pb-video { position:relative; background:#0B0E13; border-radius:11px; overflow:hidden; aspect-ratio:16/9; display:flex; align-items:center; justify-content:center; }
 .timeline { position:relative; height:48px; background:var(--surf-2); border:1px solid var(--bdr); border-radius:8px; overflow:hidden; cursor:pointer; }

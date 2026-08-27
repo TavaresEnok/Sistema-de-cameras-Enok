@@ -44,3 +44,16 @@ test('mapa usa motor geográfico estável e impede salto entre cópias do mundo'
   assert.doesNotMatch(map, /onPointerMove/);
   assert.doesNotMatch(map, /nativeEvent\.offset[XY]/);
 });
+
+test('mapa usa pin de câmera com estado e contador em vez de círculo genérico', async () => {
+  const map = await read('src/components/GeographicCameraMap.tsx');
+  const css = await read('src/index.css');
+  assert.match(map, /divIcon/);
+  assert.match(map, /<Marker/);
+  assert.match(map, /camera-map-pin__count/);
+  assert.match(map, /posição estimada/);
+  assert.doesNotMatch(map, /CircleMarker/);
+  assert.match(css, /\.camera-map-pin--online/);
+  assert.match(css, /\.camera-map-pin--offline/);
+  assert.match(css, /\.camera-map-pin--estimated/);
+});

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Camera as CameraIcon, LocateFixed } from 'lucide-react';
-import { latLngBounds, type Map as LeafletMap } from 'leaflet';
-import { CircleMarker, MapContainer, Popup, TileLayer, Tooltip, useMap } from 'react-leaflet';
+import { divIcon, latLngBounds, type Map as LeafletMap } from 'leaflet';
+import { MapContainer, Marker, Popup, TileLayer, Tooltip, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Camera } from '../store/vmsDataStore';
 import {
@@ -16,6 +16,36 @@ type PositionedCamera = { camera: Camera; position: Center };
 
 const FALLBACK_CENTER: [number, number] = [-14.235, -51.9253];
 const WORLD_BOUNDS: [[number, number], [number, number]] = [[-85, -180], [85, 180]];
+
+const CAMERA_MARKER_SVG = `
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M14.7 7.5 16.1 5H7.9l1.4 2.5" />
+    <rect x="3.5" y="7.5" width="17" height="11.5" rx="3" />
+    <circle cx="12" cy="13.25" r="3.25" />
+    <path d="M17.5 10.5h.01" />
+  </svg>`;
+
+function cameraMarkerIcon(ponto: PontoNoMapa, online: boolean) {
+  const estado = ponto.estimado ? 'estimated' : online ? 'online' : 'offline';
+  const contador = ponto.agrupado
+    ? `<span class="camera-map-pin__count">${ponto.cameras.length > 99 ? '99+' : ponto.cameras.length}</span>`
+    : '';
+
+  return divIcon({
+    className: 'camera-map-marker-host',
+    html: `
+      <span class="camera-map-pin camera-map-pin--${estado}${ponto.agrupado ? ' camera-map-pin--group' : ''}">
+        <span class="camera-map-pin__halo"></span>
+        <span class="camera-map-pin__body">${CAMERA_MARKER_SVG}</span>
+        <span class="camera-map-pin__status"></span>
+        ${contador}
+      </span>`,
+    iconSize: [52, 60],
+    iconAnchor: [26, 56],
+    popupAnchor: [0, -54],
+    tooltipAnchor: [0, -52],
+  });
+}
 
 function fitPositions(map: LeafletMap, positions: PositionedCamera[]) {
   map.invalidateSize({ animate: false });
@@ -87,32 +117,22 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
         <CameraBounds positions={positions} signature={signature} />
         {pontos.map((ponto) => {
           const algumaOnline = ponto.cameras.some((c) => (c as Camera).isOnline);
-          // Estimativa em âmbar e tracejada; posição conferida em verde/cinza
-          // sólido. A diferença é visual E textual — cor sozinha não informa
-          // quem não distingue cores.
-          const cor = ponto.estimado ? '#d97706' : algumaOnline ? '#10b981' : '#64748b';
-          const preenchimento = ponto.estimado ? '#78350f' : algumaOnline ? '#064e3b' : '#1e293b';
+          const marcador = cameraMarkerIcon(ponto, algumaOnline);
           return (
-            <CircleMarker
+            <Marker
               key={ponto.id}
-              center={[ponto.latitude, ponto.longitude]}
-              radius={ponto.agrupado ? 15 : 11}
-              pathOptions={{
-                color: cor,
-                fillColor: preenchimento,
-                fillOpacity: 0.96,
-                opacity: 1,
-                weight: 3,
-                dashArray: ponto.estimado ? '4 3' : undefined,
-              }}
+              position={[ponto.latitude, ponto.longitude]}
+              icon={marcador}
+              title={rotuloDoPonto(ponto)}
+              alt={rotuloDoPonto(ponto)}
               eventHandlers={
                 ponto.agrupado || ponto.estimado
                   ? undefined
                   : { click: () => onOpen(ponto.cameras[0] as Camera) }
               }
             >
-              <Tooltip direction="bottom" offset={[0, 17]} opacity={0.95} permanent>
-                {rotuloDoPonto(ponto)}{ponto.estimado ? ' · estimado' : ''}
+              <Tooltip direction="top" offset={[0, -6]} opacity={0.96}>
+                {rotuloDoPonto(ponto)} · {ponto.estimado ? 'posição estimada' : algumaOnline ? 'online' : 'offline'}
               </Tooltip>
               {(ponto.agrupado || ponto.estimado) && (
                 <Popup>
@@ -136,7 +156,7 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
                   </div>
                 </Popup>
               )}
-            </CircleMarker>
+            </Marker>
           );
         })}
       </MapContainer>
