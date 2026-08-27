@@ -606,6 +606,12 @@
       .resource strong { font-weight: 500; font-size: 12px; }
       .resource.allowed { border-color: var(--green-line); background: var(--green-soft); color: var(--green); }
       .resource.blocked { border-color: var(--red-line); background: var(--red-soft); color: var(--red); }
+      .quota-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:8px;margin-bottom:12px }
+      .quota-card { border:1px solid var(--line-hair);border-radius:10px;padding:11px;background:var(--surface-soft) }
+      .quota-card label { display:block;color:var(--quiet);font-size:10.5px;margin-bottom:5px }
+      .quota-card strong { font-size:17px;font-weight:550;font-variant-numeric:tabular-nums }
+      .quota-track { height:4px;border-radius:9px;background:var(--line);overflow:hidden;margin-top:8px }
+      .quota-track span { display:block;height:100%;background:var(--brand);border-radius:inherit }
 
       .spark { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; align-items: end; height: 48px; }
       .spark span { display: block; min-height: 3px; border-radius: 2px 2px 0 0;
@@ -1869,6 +1875,12 @@
 
       const contractLabels = { ACTIVE: 'Regular', GRACE: 'Em tolerância', RESTRICTED: 'Restrito', SUSPENDED: 'Suspenso' };
       const contractClasses = { ACTIVE: 'ok', GRACE: 'warn', RESTRICTED: 'warn', SUSPENDED: 'bad' };
+      const licensePlans = {
+        CUSTOM: { label: 'Personalizada', cameras: '', users: '', retention: '' },
+        ESSENTIAL: { label: 'Essencial · até 16 câmeras', cameras: 16, users: 5, retention: 7 },
+        PROFESSIONAL: { label: 'Profissional · até 50 câmeras', cameras: 50, users: 20, retention: 30 },
+        COMPLETE: { label: 'Completa · até 200 câmeras', cameras: 200, users: 100, retention: 90 },
+      };
       const resources = {
         localLive: 'Ao vivo', localRecording: 'Gravação', localPlayback: 'Reprodução',
         addCameras: 'Cadastrar câmeras', aiAdvanced: 'IA avançada', exports: 'Exportações',
@@ -2546,6 +2558,22 @@
         return `<div class="resource-grid">${Object.entries(map).map(([key, allowed]) => `
           <div class="resource ${allowed ? 'allowed' : 'blocked'}">${escapeHtml(resources[key] || key)}<br><strong>${allowed ? 'liberado' : 'bloqueado'}</strong></div>
         `).join('')}</div>`;
+      }
+      function renderCommercialQuotas(item) {
+        const limits = item?.resourceLimits || {};
+        const usage = item?.resourceUsage || {};
+        const card = (label, used, limit, suffix = '') => {
+          const hasLimit = limit !== null && limit !== undefined && limit !== '';
+          const pct = hasLimit && Number(limit) > 0 ? Math.min(100, Math.round(Number(used || 0) / Number(limit) * 100)) : 0;
+          return `<div class="quota-card"><label>${escapeHtml(label)}</label><strong>${escapeHtml(fmt.format(Number(used || 0)))}${escapeHtml(suffix)}</strong><span class="subtext"> de ${hasLimit ? escapeHtml(fmt.format(Number(limit))) + escapeHtml(suffix) : 'sem limite definido'}</span>${hasLimit ? `<div class="quota-track"><span style="width:${pct}%"></span></div>` : ''}</div>`;
+        };
+        const storageGb = Number(usage.storageBytes || 0) / 1024 / 1024 / 1024;
+        return `<div class="quota-grid">
+          ${card('Câmeras', usage.cameras, limits.maxCameras)}
+          ${card('Usuários ativos', usage.users, limits.maxUsers)}
+          ${card('Retenção permitida', 0, limits.maxRetentionDays, ' dias').replace('<strong>0 dias</strong><span class="subtext"> de ', '<strong>Política</strong><span class="subtext"> até ')}
+          <div class="quota-card"><label>Gravações armazenadas</label><strong>${escapeHtml(storageGb.toLocaleString('pt-BR', { maximumFractionDigits: 1 }))} GB</strong><span class="subtext"> · disco ${escapeHtml(fmt.format(Number(usage.diskUsagePercent || 0)))}%</span></div>
+        </div>`;
       }
 
       /* ── KPIs ───────────────────────────────────────────────────────────
@@ -3815,12 +3843,16 @@
               <section class="panel">
                 <div class="panel-head"><div><div class="panel-title">Recursos permitidos</div><div class="panel-subtitle">Efeito real da política atual</div></div>
                   <span class="badge ${contractClasses[item.licenseStatus] || 'ok'}">${contractLabels[item.licenseStatus] || 'Regular'}</span></div>
-                <div class="detail-body">${renderResources(item.licenseStatus || 'ACTIVE', item)}</div>
+                <div class="detail-body">${renderCommercialQuotas(item)}${renderResources(item.licenseStatus || 'ACTIVE', item)}</div>
               </section>
               <section class="panel">
                 <div class="panel-head"><div><div class="panel-title">Alterar contrato</div><div class="panel-subtitle">Aplicado na próxima sincronização</div></div></div>
                 <div class="detail-body">
                   <div class="license-form">
+                    <div class="field"><label for="license-plan">Modelo comercial</label>
+                      <select id="license-plan">${Object.entries(licensePlans).map(([value, plan]) => `<option value="${value}" ${value === (item.licensePlan || 'CUSTOM') ? 'selected' : ''}>${escapeHtml(plan.label)}</option>`).join('')}</select>
+                      <div class="panel-subtitle" style="margin-top:4px">O modelo preenche cotas de referência; cada campo continua editável para contratos personalizados.</div>
+                    </div>
                     <div class="field"><label for="license-select">Novo estado</label>
                       <select id="license-select">
                         ${Object.entries(contractLabels).map(([value, label]) => `<option value="${value}" ${value === item.licenseStatus ? 'selected' : ''}>${label}</option>`).join('')}
@@ -3834,6 +3866,12 @@
                         Teto total de câmeras desta instalação. Ao atingir, o cadastro de novas é
                         recusado — nenhuma câmera existente é removida. Vazio = sem limite.
                       </div>
+                    </div>
+                    <div class="field"><label for="license-max-users">Usuários ativos contratados</label>
+                      <input id="license-max-users" type="number" min="0" step="1" placeholder="vazio = sem limite" value="${item.maxUsers === null || item.maxUsers === undefined ? '' : Number(item.maxUsers)}">
+                    </div>
+                    <div class="field"><label for="license-max-retention">Retenção máxima (dias)</label>
+                      <input id="license-max-retention" type="number" min="0" step="1" placeholder="vazio = sem limite" value="${item.maxRetentionDays === null || item.maxRetentionDays === undefined ? '' : Number(item.maxRetentionDays)}">
                     </div>
                     <div class="field"><label for="license-message">Mensagem administrativa</label>
                       <textarea id="license-message" placeholder="Opcional — fica no histórico do contrato">${escapeHtml(item.licenseMessage || '')}</textarea>
@@ -4096,8 +4134,25 @@
           }
         });
 
-        els.detail.querySelector('#save-license')?.addEventListener('click', () => requestContractChange(item.id, els.detail.querySelector('#license-select').value, els.detail.querySelector('#license-message').value.trim(), els.detail.querySelector('#license-max-cameras').value.trim()));
-        els.detail.querySelector('#suspend-license')?.addEventListener('click', () => requestContractChange(item.id, 'SUSPENDED', els.detail.querySelector('#license-message').value.trim() || 'Suspensão administrativa.'));
+        const planSelect = els.detail.querySelector('#license-plan');
+        planSelect?.addEventListener('change', () => {
+          const plan = licensePlans[planSelect.value] || licensePlans.CUSTOM;
+          els.detail.querySelector('#license-max-cameras').value = plan.cameras;
+          els.detail.querySelector('#license-max-users').value = plan.users;
+          els.detail.querySelector('#license-max-retention').value = plan.retention;
+        });
+        els.detail.querySelector('#save-license')?.addEventListener('click', () => requestContractChange(item.id, els.detail.querySelector('#license-select').value, els.detail.querySelector('#license-message').value.trim(), {
+          licensePlan: planSelect?.value || 'CUSTOM',
+          maxCameras: els.detail.querySelector('#license-max-cameras').value.trim(),
+          maxUsers: els.detail.querySelector('#license-max-users').value.trim(),
+          maxRetentionDays: els.detail.querySelector('#license-max-retention').value.trim(),
+        }));
+        els.detail.querySelector('#suspend-license')?.addEventListener('click', () => requestContractChange(item.id, 'SUSPENDED', els.detail.querySelector('#license-message').value.trim() || 'Suspensão administrativa.', {
+          licensePlan: planSelect?.value || item.licensePlan || 'CUSTOM',
+          maxCameras: els.detail.querySelector('#license-max-cameras').value.trim(),
+          maxUsers: els.detail.querySelector('#license-max-users').value.trim(),
+          maxRetentionDays: els.detail.querySelector('#license-max-retention').value.trim(),
+        }));
         els.detail.querySelector('#copy-selected-diagnostics')?.addEventListener('click', () => copyDiagnosticsFor(item.id));
         els.detail.querySelector('#copy-selected-installer')?.addEventListener('click', () => copyInstallerFor(item.id));
         els.detail.querySelector('#delete-pending-install')?.addEventListener('click', () => deletePendingInstallation(item.id));
@@ -5067,9 +5122,9 @@
       }
 
       /* ── Contrato ─────────────────────────────────────────────────────── */
-      function requestContractChange(id, status, message, maxCameras) {
+      function requestContractChange(id, status, message, quotas = {}) {
         const item = state.installations.find(entry => entry.id === id);
-        state.pendingContract = { id, status, message, maxCameras };
+        state.pendingContract = { id, status, message, ...quotas };
         document.querySelector('#confirm-title').textContent = status === 'SUSPENDED' ? 'Suspender cliente' : 'Alterar política';
         document.querySelector('#confirm-copy').innerHTML = `<strong>${escapeHtml(item ? displayName(item) : id)}</strong><br>A política será alterada para <strong>${escapeHtml(contractLabels[status])}</strong>. ${status === 'SUSPENDED' ? 'Ao vivo, novas gravações e IA serão bloqueados após a próxima sincronização.' : 'A nova política será aplicada na próxima sincronização.'}`;
         document.querySelector('#confirm-apply').className = status === 'SUSPENDED' ? 'danger' : 'primary';
@@ -5087,7 +5142,10 @@
             // Teto de câmeras. String vazia é enviada de propósito: no servidor
             // ela significa "sem limite", e é diferente de zero (que é limite
             // de verdade). Mandar 0 por engano travaria o cliente inteiro.
-            maxCameras: pending.maxCameras === undefined ? undefined : pending.maxCameras,
+            licensePlan: pending.licensePlan,
+            maxCameras: pending.maxCameras,
+            maxUsers: pending.maxUsers,
+            maxRetentionDays: pending.maxRetentionDays,
           }),
         });
         if (!res.ok) { showToast('Não foi possível salvar a política.'); return; }

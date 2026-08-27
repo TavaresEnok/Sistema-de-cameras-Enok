@@ -4,7 +4,7 @@ import {
   Monitor, PlaySquare,
   Camera, Settings,
   LogOut, Sun, Moon, Shield, Clock, Users, FolderKey, ShieldCheck,
-  Bell, Crosshair, HardDrive, UserCircle,
+  Bell, Crosshair, HardDrive, UserCircle, MapPinned, Newspaper,
   type LucideIcon,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -26,6 +26,8 @@ const PAGES: PalettePage[] = [
   // viewer+
   { label: 'Ao Vivo',       path: '/live',       icon: Monitor,     description: 'Grade de câmeras e controles' },
   { label: 'Reprodução',    path: '/playback',   icon: PlaySquare,  description: 'Revisar gravações' },
+  { label: 'Mapa',          path: '/map',        icon: MapPinned,   description: 'Câmeras posicionadas por unidade' },
+  { label: 'Novidades',     path: '/updates',    icon: Newspaper,  description: 'Últimas funções e melhorias' },
   { label: 'Controle PTZ',  path: '/ptz',        icon: Crosshair,   description: 'Movimentação e presets PTZ' },
   { label: 'Minha conta',   path: '/profile',    icon: UserCircle,  description: 'Seu perfil e gestão do grupo' },
   // operator+

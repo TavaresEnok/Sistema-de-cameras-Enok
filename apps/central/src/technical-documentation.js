@@ -1006,7 +1006,7 @@ const TECHNICAL_DOCUMENTATION = {
                 ['Camera', 'Ponto de vídeo associado ao site/área.', 'A hierarquia não concede acesso; só organiza o inventário.'],
               ],
             ),
-            callout('info', 'A planta saiu', 'A tela de Mapa/Planta foi removida em 07/08/2026. O módulo SiteMapLayout da API continua no código sem nenhum cliente — remover exige migração de banco e é decisão em aberto.'),
+            callout('info', 'Mapa operacional ativo', 'A tela de Mapa usa SiteMapLayout, planta SVG e posições persistidas por unidade e andar. O clique abre o player real da câmera sobre o mapa e respeita o acesso do usuário.'),
             callout('warning', 'Hierarquia não é permissão', 'Conhecer o site ou o ID de uma câmera não libera live, playback ou PTZ. Cada ação repete a autorização do recurso.'),
           ],
           ['site', 'área', 'hierarquia'],

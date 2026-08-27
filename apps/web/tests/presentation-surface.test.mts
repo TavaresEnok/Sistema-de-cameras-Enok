@@ -65,9 +65,10 @@ test('PTZ limita a seleção a câmeras ativas e orienta quando não há compat�
   assert.match(ptz, /Testar agora/, 'a tela voltou a ser só informativa, sem ação');
 });
 
-test('as quatro páginas removidas não voltam por engano', () => {
+test('páginas sem função não voltam por engano e o mapa real permanece disponível', () => {
   // Removidas a pedido do dono (2026-08-07), com motivo cada uma:
-  //   /map          — a planta nunca foi alimentada com posições reais;
+  //   /map foi reintroduzido em 27/08/2026 usando SiteMapLayout, planta SVG,
+  //   posições persistidas e player real. Não pertence mais a esta lista.
   //   /evidence     — o download do vídeo já existe na Reprodução;
   //   /reports      — não havia módulo de relatórios, só exportação de CSV;
   //   /app-builder  — gerar APK é exclusividade da DRAC Central, não da
@@ -77,7 +78,7 @@ test('as quatro páginas removidas não voltam por engano', () => {
   // Este teste existe porque as três primeiras já tinham sido "reintroduzidas"
   // uma vez: estavam sem rota, foram achadas numa auditoria e voltaram ao menu.
   // Sem guarda, o mesmo caminho se repete na próxima varredura de código morto.
-  const rotasRemovidas = ['/map', '/evidence', '/reports', '/app-builder'];
+  const rotasRemovidas = ['/evidence', '/reports', '/app-builder'];
   const arquivos = ['src/App.tsx', 'src/components/Sidebar.tsx', 'src/layouts/AppLayout.tsx'];
   for (const arquivo of arquivos) {
     const fonte = read(arquivo)
@@ -87,7 +88,10 @@ test('as quatro páginas removidas não voltam por engano', () => {
       assert.doesNotMatch(fonte, new RegExp(`['"\`]${rota}['"\`]`), `${arquivo} voltou a referenciar ${rota}`);
     }
   }
-  for (const pagina of ['MapPage', 'EvidencePage', 'ReportsPage', 'AppBuilderPage']) {
+  assert.match(read('src/App.tsx'), /path="\/map"/);
+  assert.match(read('src/pages/MapPage.tsx'), /LiveStreamPlayer/);
+  assert.match(read('src/pages/MapPage.tsx'), /map-layouts/);
+  for (const pagina of ['EvidencePage', 'ReportsPage', 'AppBuilderPage']) {
     assert.throws(() => read(`src/pages/${pagina}.tsx`), `src/pages/${pagina}.tsx foi recriada`);
   }
 });

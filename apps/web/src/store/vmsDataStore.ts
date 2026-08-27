@@ -17,6 +17,8 @@ export interface Camera {
   ipAddress: string;
   /** Origem real do vídeo. No push não existe IP RTSP para exibir ou editar. */
   sourceMode: 'rtsp_pull' | 'rtmp_push';
+  siteId?: string | null;
+  areaId?: string | null;
   rtmpIngestPath?: string | null;
   rtspPort: number;
   model: string;
@@ -316,6 +318,8 @@ function mapCameraItems(
       floor: camera.group?.name ?? previous?.floor ?? '-',
       ipAddress: sourceLabel,
       sourceMode,
+      siteId: camera.siteId ?? null,
+      areaId: camera.areaId ?? null,
       rtmpIngestPath: camera.rtmpIngestPath ?? null,
       rtspPort: camera.rtspPort ?? 554,
       model: sourceMode === 'rtmp_push'

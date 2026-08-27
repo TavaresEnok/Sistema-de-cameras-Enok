@@ -69,6 +69,8 @@ const UsersPage       = lazyWithReload(() => import('./pages/UsersPage'));
 const GroupsPage      = lazyWithReload(() => import('./pages/GroupsPage'));
 const RolesPage       = lazyWithReload(() => import('./pages/RolesPage'));
 const ProfilePage     = lazyWithReload(() => import('./pages/ProfilePage'));
+const MapPage         = lazyWithReload(() => import('./pages/MapPage'));
+const UpdatesPage     = lazyWithReload(() => import('./pages/UpdatesPage'));
 const NotFound        = lazyWithReload(() => import('./pages/not-found'));
 
 function AppFallback() {
@@ -215,6 +217,12 @@ function AppRoutes() {
       </Route>
       <Route path="/playback">
         {() => <ProtectedRoute component={PlaybackPage} />}
+      </Route>
+      <Route path="/map">
+        {() => <ProtectedRoute component={MapPage} />}
+      </Route>
+      <Route path="/updates">
+        {() => <ProtectedRoute component={UpdatesPage} />}
       </Route>
       <Route path="/review">
         {() => <ProtectedRoute component={ReviewPage} />}

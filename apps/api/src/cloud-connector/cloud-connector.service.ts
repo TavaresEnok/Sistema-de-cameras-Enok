@@ -184,6 +184,8 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
           // inventamos um número, senão um campo esquecido no painel travaria
           // o cadastro de um cliente que pagou por mais.
           this.writeSetting('cloud.maxCameras', this.tetoDeCameras(response.data?.maxCameras)),
+          this.writeSetting('cloud.maxUsers', this.tetoDeCameras(response.data?.maxUsers)),
+          this.writeSetting('cloud.maxRetentionDays', this.tetoDeCameras(response.data?.maxRetentionDays)),
           // Túnel até as câmeras do cliente. Guardado como veio; quem decide se
           // aplica é `decidirSobreVpn`, e quem aplica de fato é o script do
           // host — a API não mexe em rota de rede.
@@ -716,7 +718,7 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
         applyError: applied['cloud.configApplyError'] || null,
         // Campos que ESTA versão entende. A Central usa isto para não marcar
         // como "pendente para sempre" uma config que a instalação nem conhece.
-        supports: ['licenseStatus', 'restrictions', 'aiPolicy', 'cloudStorage', 'branding'],
+        supports: ['licenseStatus', 'restrictions', 'aiPolicy', 'cloudStorage', 'branding', 'resourceLimits'],
       },
       ...(shouldReportBranding ? { brandingState, brandingStateHash } : {}),
       summary: {

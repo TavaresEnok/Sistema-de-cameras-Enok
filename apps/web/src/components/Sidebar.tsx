@@ -5,7 +5,7 @@ import {
   Camera, Settings,
   ChevronLeft, ChevronRight, LogOut, Keyboard, Shield,
   Server, Users, Radar, FolderKey, ShieldCheck, Search, Sun, Moon,
-  Bell, Crosshair, HardDrive, UserCircle, ShieldAlert,
+  Bell, Crosshair, HardDrive, UserCircle, ShieldAlert, MapPinned, Newspaper,
   CircleHelp, LayoutGrid, Activity, FileSearch, ScrollText, Brain,
   type LucideIcon,
 } from 'lucide-react';
@@ -38,6 +38,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { path: '/live',     label: 'Ao Vivo',       icon: Monitor },
       { path: '/playback', label: 'Reprodução',     icon: PlaySquare },
+      { path: '/map',      label: 'Mapa',           icon: MapPinned },
       { path: '/review',   label: 'Revisão',        icon: Sparkles },
       // Alertas requerem operador ou superior (viewers não têm acesso)
       { path: '/alarms',   label: 'Alarmes',        icon: Bell,     roles: ['admin', 'operator'] },
@@ -75,6 +76,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       // Viewer vê "Minha conta" (perfil + gestão do próprio grupo se for group admin)
       { path: '/profile', label: 'Minha conta', icon: UserCircle },
+      { path: '/updates', label: 'Novidades', icon: Newspaper },
       { path: '/users',   label: 'Usuários',    icon: Users,       roles: ['admin', 'operator'] },
       // Grupos: apenas admin global (Ajust Consulting gerencia grupos)
       { path: '/groups',  label: 'Grupos',      icon: FolderKey,   roles: ['admin'] },

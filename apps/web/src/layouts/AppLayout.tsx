@@ -17,6 +17,8 @@ import { PRODUCT_TAGLINE } from '../lib/product-brand';
 const PAGE_TITLES: Record<string, string> = {
   '/live':          'Ao Vivo',
   '/playback':      'Reprodução',
+  '/map':           'Mapa operacional',
+  '/updates':       'Novidades',
   '/review':        'Revisão',
   '/alarms':        'Alarmes',
   '/cameras':       'Câmeras',

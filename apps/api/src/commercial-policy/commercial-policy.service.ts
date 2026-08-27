@@ -84,6 +84,7 @@ export class CommercialPolicyService {
             'cloud.maiorInstanteVisto',
             // Teto de câmeras contratado, definido na Central.
             'cloud.maxCameras',
+            'cloud.maxUsers', 'cloud.maxRetentionDays',
           ],
         },
       },
@@ -125,6 +126,8 @@ export class CommercialPolicyService {
       motivoDaLicenca: decisao.motivo,
       /** Teto de câmeras contratado. null = sem teto definido pela Central. */
       maxCameras: this.paraInteiro(settings['cloud.maxCameras']),
+      maxUsers: this.paraInteiro(settings['cloud.maxUsers']),
+      maxRetentionDays: this.paraInteiro(settings['cloud.maxRetentionDays']),
       licenseMessage: settings['cloud.licenseMessage'] || null,
       lastSyncAt: settings['cloud.lastSyncAt'] || null,
       lastError: settings['cloud.lastError'] || null,
@@ -228,6 +231,31 @@ export class CommercialPolicyService {
       },
       423,
     );
+  }
+
+  async assertUserQuota(quantidade = 1) {
+    const policy = await this.getPolicy();
+    if (policy.maxUsers === null) return policy;
+    const activeUsers = await this.prisma.user.count({ where: { isActive: true } });
+    if (activeUsers + quantidade <= policy.maxUsers) return policy;
+    throw new HttpException({
+      error: 'commercial_restriction', code: 'commercial_user_quota_exceeded', feature: 'users',
+      maxUsers: policy.maxUsers, activeUsers,
+      userMessage: 'O limite de usuários ativos desta licença foi atingido.',
+      adminMessage: `A licença permite ${policy.maxUsers} usuário(s) ativo(s); existem ${activeUsers}.`,
+    }, 423);
+  }
+
+  async assertRetentionQuota(retentionDays?: number | null) {
+    if (retentionDays === undefined || retentionDays === null) return;
+    const policy = await this.getPolicy();
+    if (policy.maxRetentionDays === null || retentionDays <= policy.maxRetentionDays) return policy;
+    throw new HttpException({
+      error: 'commercial_restriction', code: 'commercial_retention_quota_exceeded', feature: 'retention',
+      maxRetentionDays: policy.maxRetentionDays,
+      userMessage: `A licença permite retenção de até ${policy.maxRetentionDays} dias.`,
+      adminMessage: `Retenção solicitada (${retentionDays} dias) excede o contrato (${policy.maxRetentionDays} dias).`,
+    }, 423);
   }
 
   private normalizeStatus(value: string | undefined): CommercialLicenseStatus {

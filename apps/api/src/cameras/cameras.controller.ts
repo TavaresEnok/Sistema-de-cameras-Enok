@@ -103,6 +103,7 @@ export class CamerasController {
     await this.commercialPolicy.assertFeature('addCameras', user);
     // Teto contratado: a Central define quantas câmeras esta instalação pode ter.
     await this.commercialPolicy.assertCameraQuota(1, user);
+    await this.commercialPolicy.assertRetentionQuota(dto.retentionDays);
     const camera = await this.camerasService.create(dto);
     await this.auditService.log(user.id, 'camera.create', 'Camera', camera.id, { name: camera.name }, req);
     this.schedulePostCreateProvisioning(camera.id);
@@ -130,6 +131,7 @@ export class CamerasController {
     await this.commercialPolicy.assertFeature('addCameras', user);
     // Teto contratado: a Central define quantas câmeras esta instalação pode ter.
     await this.commercialPolicy.assertCameraQuota(1, user);
+    await this.commercialPolicy.assertRetentionQuota(dto.retentionDays);
     const camera = await this.camerasService.createPrivateForOwner(dto, user);
     await this.auditService.log(user.id, 'camera.create_private', 'Camera', camera.id, { name: camera.name, private: true }, req);
     this.schedulePostCreateProvisioning(camera.id);
@@ -938,6 +940,7 @@ export class CamerasController {
   @Patch(':id')
   async update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateCameraDto, @Req() req: Request) {
     await this.accessControlService.assertCanAdminCamera(user, id);
+    await this.commercialPolicy.assertRetentionQuota(dto.retentionDays);
     const wasEnabled = (await this.camerasService.getCameraOrThrow(id)).enabled !== false;
     const camera = await this.camerasService.update(id, dto);
     if (dto.enabled === false && wasEnabled) {

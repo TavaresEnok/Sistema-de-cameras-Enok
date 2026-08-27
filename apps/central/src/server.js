@@ -11,6 +11,7 @@ const {
 const { normalizeComputeNodes, validateComputeNodes, summarizeNodes } = require('./datastore/compute-nodes');
 const { normalizeAiPolicy, validateAiPolicy, applyAiPolicyToRestrictions, describeAiPolicy } = require('./ai-policy');
 const { normalizarTeto, tetoParaHeartbeat } = require('./teto-de-cameras');
+const { normalizePlan, limitsFor, usageFor } = require('./license-resources');
 const { decidirMatricula } = require('./matricula');
 const { decidirRemocao } = require('./remocao-de-instalacao');
 const { validarPerfilDeVpn, perfilParaHeartbeat, perfilParaPainel } = require('./perfil-de-vpn');
@@ -1070,6 +1071,12 @@ function publicInstallation(item, release = null) {
     ageSeconds,
     licenseStatus: item.licenseStatus || LICENSE_ACTIVE,
     licenseMessage: item.licenseMessage || null,
+    licensePlan: normalizePlan(item.licensePlan),
+    resourceLimits: limitsFor(item),
+    resourceUsage: usageFor(item),
+    maxCameras: tetoParaHeartbeat(item.maxCameras),
+    maxUsers: tetoParaHeartbeat(item.maxUsers),
+    maxRetentionDays: tetoParaHeartbeat(item.maxRetentionDays),
     restrictions: licenseResponse(item).restrictions,
     policyPending,
     launchProfile: item.launchProfile || item.metrics?.launchProfile || null,
@@ -1419,6 +1426,8 @@ function licenseResponse(item) {
     licenseMessage: item.licenseMessage || null,
     // Teto de câmeras contratado. null = sem teto; a instalação trata assim.
     maxCameras: tetoParaHeartbeat(item.maxCameras),
+    maxUsers: tetoParaHeartbeat(item.maxUsers),
+    maxRetentionDays: tetoParaHeartbeat(item.maxRetentionDays),
     // Túnel até a rede de câmeras do cliente. null = sem VPN configurada;
     // perfil vazio faria a instalação concluir que precisa desmontar algo.
     vpn: perfilParaHeartbeat(item.vpn),
@@ -4056,6 +4065,15 @@ async function route(req, res) {
           const r = normalizarTeto(body.maxCameras);
           if (!r.ok) return json(req, res, 400, { error: 'invalid_max_cameras' });
           item.maxCameras = r.valor;
+        }
+        for (const field of ['maxUsers', 'maxRetentionDays']) {
+          if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
+          const r = normalizarTeto(body[field]);
+          if (!r.ok) return json(req, res, 400, { error: `invalid_${field}` });
+          item[field] = r.valor;
+        }
+        if (Object.prototype.hasOwnProperty.call(body, 'licensePlan')) {
+          item.licensePlan = normalizePlan(body.licensePlan);
         }
         item.updatedAt = new Date().toISOString();
         addAuditEvent(db, req, {
