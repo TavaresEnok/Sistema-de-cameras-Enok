@@ -175,9 +175,24 @@ export function Sidebar({
     <motion.aside
       animate={{ width: isExpanded ? 240 : 56 }}
       transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-      className="sidebar-shell relative flex flex-col h-full overflow-hidden shrink-0"
+      className="sidebar-shell relative h-full overflow-visible shrink-0"
       style={{ minWidth: isExpanded ? 240 : 56 }}
     >
+      {/* A alça fica fora da área recortada do menu. Antes ela dividia os
+          56 px do estado recolhido com o logotipo e acabava espremida ou
+          invisível, justamente quando era necessária para reabrir o menu. */}
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label={isExpanded ? 'Recolher menu lateral' : 'Expandir menu lateral'}
+        title={isExpanded ? 'Recolher menu' : 'Expandir menu'}
+        className="sidebar-toggle sidebar-edge-toggle absolute -right-[18px] top-2.5 z-30 hidden h-9 w-9 items-center justify-center rounded-full md:flex"
+        data-testid="button-sidebar-toggle"
+      >
+        {isExpanded ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+      </button>
+
+      <div className="flex h-full min-w-0 flex-col overflow-hidden">
       {/* ── Brand header ── */}
       <div className="sidebar-brand flex items-center h-14 px-3 shrink-0">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -196,14 +211,6 @@ export function Sidebar({
             </motion.div>
           )}
         </div>
-        <button
-          onClick={toggle}
-          aria-label={isExpanded ? 'Recolher menu lateral' : 'Expandir menu lateral'}
-          className="sidebar-toggle shrink-0 w-7 h-7 hidden md:flex items-center justify-center rounded-xl transition-colors"
-          data-testid="button-sidebar-toggle"
-        >
-          {isExpanded ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-        </button>
       </div>
 
       {/* ── Navigation ── */}
@@ -353,6 +360,7 @@ export function Sidebar({
             <LogOut className="h-3.5 w-3.5" />
           </button>
         )}
+      </div>
       </div>
     </motion.aside>
   );

@@ -21,3 +21,12 @@ test('grupos do menu possuem hierarquia visual global e independente da marca', 
   assert.match(css, /border-top:/);
   assert.match(css, /color-mix\(in srgb, hsl\(var\(--sidebar-foreground\)\)/);
 });
+
+test('controle de expandir permanece acessível fora da área recortada do menu', () => {
+  assert.match(sidebar, /sidebar-edge-toggle absolute -right-\[18px\]/);
+  assert.match(sidebar, /h-9 w-9/);
+  assert.match(sidebar, /title=\{isExpanded \? 'Recolher menu' : 'Expandir menu'\}/);
+  assert.match(sidebar, /<div className="flex h-full min-w-0 flex-col overflow-hidden">/);
+  assert.match(css, /\.sidebar-edge-toggle/);
+  assert.match(css, /\.sidebar-edge-toggle:focus-visible/);
+});
