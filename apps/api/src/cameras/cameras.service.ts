@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ModuleRef } from '@nestjs/core';
 import { temZonaDeArea, validarZonasDeDeteccao } from './helpers/validar-zonas.helper';
@@ -129,7 +129,7 @@ type CameraProfilePayload = {
 };
 
 @Injectable()
-export class CamerasService {
+export class CamerasService implements OnModuleInit {
   private readonly logger = new Logger(CamerasService.name);
   // ⚠️ Estes três números eram `Number(process.env.X ?? default)`. Com um valor
   // inválido no .env ("4,5s", "5000ms") o resultado é NaN — e NaN não explode:
@@ -167,6 +167,18 @@ export class CamerasService {
     private readonly moduleRef: ModuleRef,
     @Optional() private readonly rtmpIngestSource?: RtmpIngestSourceService,
   ) {}
+
+  onModuleInit() {
+    // O mapa não depende de alguém abrir a tela para nascer preenchido. Depois
+    // que banco/API sobem, o próprio sistema tenta localizar apenas as câmeras
+    // ainda sem posição. Falha de serviço externo nunca derruba a API.
+    const timer = setTimeout(() => {
+      void this.autoDiscoverLocations().then((result) => {
+        if (result.located > 0) this.logger.log(`Mapa: ${result.located} câmera(s) localizada(s) automaticamente.`);
+      }).catch((error) => this.logger.warn(`Mapa: localização automática adiada: ${error instanceof Error ? error.message : String(error)}`));
+    }, 5_000);
+    timer.unref();
+  }
 
   /**
    * Dispara a sonda de PTZ sem travar quem chamou.
@@ -3884,7 +3896,10 @@ export class CamerasService {
     for (const camera of cameras) {
       let result: Awaited<ReturnType<CamerasService['geocodeAddress']>> | null = null;
       let source = '';
-      const physicalAddress = camera.locationAddress?.trim() || camera.site?.location?.trim() || '';
+      const savedAddress = camera.locationAddress?.trim() || '';
+      const physicalAddress = savedAddress.startsWith('Estimativa por ')
+        ? (camera.site?.location?.trim() || '')
+        : (savedAddress || camera.site?.location?.trim() || '');
       if (physicalAddress.length >= 5) {
         result = await this.geocodeAddress(physicalAddress).catch(() => null);
         source = 'endereço';

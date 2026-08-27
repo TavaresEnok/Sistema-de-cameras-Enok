@@ -29,6 +29,13 @@ test('descoberta automática só atualiza câmera ainda sem coordenadas', async 
   assert.match(source, /where: \{ id: camera\.id, OR: \[\{ latitude: null \}, \{ longitude: null \}\] \}/);
 });
 
+test('o próprio sistema agenda a descoberta sem depender da página do mapa', async () => {
+  const source = await readFile(new URL('../src/cameras/cameras.service.ts', import.meta.url), 'utf8');
+  assert.match(source, /implements OnModuleInit/);
+  assert.match(source, /this\.autoDiscoverLocations\(\)/);
+  assert.match(source, /timer\.unref\(\)/);
+});
+
 test('rejeita resposta vazia ou coordenadas fora do planeta', () => {
   assert.equal(parseGeocodeResult([]), null);
   assert.equal(parseGeocodeResult([{ lat: '200', lon: '0' }]), null);

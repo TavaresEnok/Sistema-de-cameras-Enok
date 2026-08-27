@@ -33,3 +33,11 @@ test('mapa tenta localizar câmeras sem posição e preserva edição manual', a
   // inventa coordenadas nem chama geolocalização pública diretamente.
   assert.doesNotMatch(page, /ipwho\.is/);
 });
+
+test('zoom usa coordenada relativa ao mapa inteiro, nunca offset do tile', async () => {
+  const map = await read('src/components/GeographicCameraMap.tsx');
+  assert.match(map, /event\.clientX - rect\.left/);
+  assert.match(map, /event\.clientY - rect\.top/);
+  assert.doesNotMatch(map, /nativeEvent\.offset[XY]/);
+  assert.match(map, /onLostPointerCapture/);
+});

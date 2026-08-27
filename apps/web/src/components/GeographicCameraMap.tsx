@@ -112,7 +112,17 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
     <div
       ref={stageRef}
       className="relative h-full min-h-[420px] select-none overflow-hidden bg-[#dbe4e8]"
-      onWheel={(event) => { event.preventDefault(); changeZoom(zoom + (event.deltaY < 0 ? 1 : -1), event.nativeEvent.offsetX, event.nativeEvent.offsetY); }}
+      onWheel={(event) => {
+        event.preventDefault();
+        // offsetX/offsetY pertencem ao elemento mais interno sob o cursor —
+        // normalmente um tile de 256px. Ao cruzar a borda do tile, o ponto do
+        // zoom saltava centenas de quilômetros. clientX menos o retângulo do
+        // MAPA mantém a âncora estável em qualquer tile, marcador ou legenda.
+        const rect = stageRef.current?.getBoundingClientRect();
+        const anchorX = rect ? Math.max(0, Math.min(rect.width, event.clientX - rect.left)) : size.width / 2;
+        const anchorY = rect ? Math.max(0, Math.min(rect.height, event.clientY - rect.top)) : size.height / 2;
+        changeZoom(zoom + (event.deltaY < 0 ? 1 : -1), anchorX, anchorY);
+      }}
       onPointerDown={(event) => {
         if ((event.target as HTMLElement).closest('button,a')) return;
         dragRef.current = { x: event.clientX, y: event.clientY, center };
@@ -123,8 +133,9 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
         const start = toWorld(dragRef.current.center.latitude, dragRef.current.center.longitude, zoom);
         setCenter(fromWorld(start.x - (event.clientX - dragRef.current.x), start.y - (event.clientY - dragRef.current.y), zoom));
       }}
-      onPointerUp={() => { dragRef.current = null; }}
+      onPointerUp={(event) => { dragRef.current = null; event.currentTarget.releasePointerCapture?.(event.pointerId); }}
       onPointerCancel={() => { dragRef.current = null; }}
+      onLostPointerCapture={() => { dragRef.current = null; }}
     >
       {tiles.map((tile) => <img key={tile.key} src={`https://tile.openstreetmap.org/${zoom}/${tile.srcX}/${tile.y}.png`} alt="" draggable={false} className="pointer-events-none absolute h-64 w-64 max-w-none" style={{ left: tile.x * TILE - left, top: tile.y * TILE - top }} />)}
       <div className="pointer-events-none absolute inset-0 bg-background/5" />
