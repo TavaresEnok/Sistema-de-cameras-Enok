@@ -30,6 +30,46 @@ export class HealthService {
     }
   }
 
+  /**
+   * Compara as migrações que VIAJARAM na imagem com as que o banco concluiu.
+   * `SELECT 1` só prova que o Postgres está vivo; não prova que ele possui o
+   * schema que este código espera — exatamente o falso-verde do incidente de
+   * 26/08/2026.
+   */
+  private async checkDatabaseSchema(timeoutMs: number) {
+    const candidateDirs = [
+      join(process.cwd(), 'apps/api/prisma/migrations'),
+      join(process.cwd(), 'prisma/migrations'),
+    ];
+    let expected: string[] | null = null;
+    for (const dir of candidateDirs) {
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        expected = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+        break;
+      } catch {
+        // Tenta o próximo layout (monorepo em produção ou cwd do pacote).
+      }
+    }
+    if (!expected?.length) throw new Error('migration_catalog_unavailable');
+
+    const rows = await this.withDeadline(
+      this.prisma.$queryRaw<Array<{ migration_name: string }>>`
+        SELECT migration_name
+        FROM "_prisma_migrations"
+        WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL
+      `,
+      timeoutMs,
+      'database_schema',
+    );
+    const applied = new Set(rows.map((row) => row.migration_name));
+    const missing = expected.filter((name) => !applied.has(name));
+    if (missing.length) {
+      throw new Error(`pending_migrations:${missing.slice(0, 5).join(',')}${missing.length > 5 ? `,+${missing.length - 5}` : ''}`);
+    }
+    return { expected: expected.length, applied: applied.size };
+  }
+
   async getReadiness() {
     const timeoutMs = envNumber('HEALTH_READINESS_TIMEOUT_MS', 3_000, { min: 500 });
     const checks: Record<string, { ok: boolean; detail?: string; optional?: boolean }> = {};
@@ -39,6 +79,20 @@ export class HealthService {
       checks.database = { ok: true };
     } catch (error) {
       checks.database = { ok: false, detail: error instanceof Error ? error.message : 'database_unavailable' };
+    }
+
+    if (checks.database.ok) {
+      try {
+        const schema = await this.checkDatabaseSchema(timeoutMs);
+        checks.databaseSchema = { ok: true, detail: `${schema.expected} migrations aplicadas` };
+      } catch (error) {
+        checks.databaseSchema = {
+          ok: false,
+          detail: error instanceof Error ? error.message : 'database_schema_incompatible',
+        };
+      }
+    } else {
+      checks.databaseSchema = { ok: false, detail: 'database_unavailable' };
     }
 
     const redis = new Redis({
@@ -299,8 +353,13 @@ export class HealthService {
 
   private async getRecordingProfileStats() {
     const [enabled, continuous] = await Promise.all([
-      this.prisma.camera.count({ where: { recordingEnabled: true } }),
-      this.prisma.camera.count({ where: { recordingEnabled: true, recordingMode: 'continuous' } }),
+      // Em movimento/objeto, `recordingEnabled` fica false enquanto a câmera
+      // está ARMADA e ociosamente aguardando o próximo gatilho. O modo, e não
+      // o processo momentâneo, é a configuração permanente de gravação.
+      this.prisma.camera.count({
+        where: { enabled: true, recordingMode: { in: ['continuous', 'motion', 'object'] } },
+      }),
+      this.prisma.camera.count({ where: { enabled: true, recordingMode: 'continuous' } }),
     ]);
     return { enabled, continuous };
   }

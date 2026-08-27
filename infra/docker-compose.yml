@@ -425,6 +425,12 @@ services:
       # Fluxo de eventos analíticos Intelbras (eventManager.cgi). DESLIGADO
       # por padrão: instalação sem câmera Intelbras não paga por isto.
       - INTELBRAS_EVENTS_ENABLED=${INTELBRAS_EVENTS_ENABLED:-false}
+      # Analíticos proprietários (placa, face, linha, intrusão) continuam. O
+      # VideoMotion genérico só entra quando explicitamente pedido e quando a
+      # câmera é a fonte de movimento; em SYSTEM ele duplicava o MOG2 e inundava
+      # o banco com dezenas de milhares de eventos.
+      - INTELBRAS_GENERIC_MOTION_EVENTS_ENABLED=${INTELBRAS_GENERIC_MOTION_EVENTS_ENABLED:-false}
+      - INTELBRAS_GENERIC_MOTION_COOLDOWN_SECONDS=${INTELBRAS_GENERIC_MOTION_COOLDOWN_SECONDS:-30}
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${POSTGRES_USER:-vms}:${POSTGRES_PASSWORD:-change_me_postgres_password}@postgres:5432/${POSTGRES_DB:-vms_db}
       - REDIS_HOST=redis
@@ -584,7 +590,7 @@ services:
       mediamtx:
         condition: service_started
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health/ready').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5

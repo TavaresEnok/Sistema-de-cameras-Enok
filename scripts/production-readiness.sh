@@ -220,7 +220,7 @@ check_http() {
 }
 
 check_endpoints() {
-  check_http "API health" "http://127.0.0.1:3000/health"
+  check_http "API readiness" "http://127.0.0.1:3000/health/ready"
   check_http "Web local" "http://127.0.0.1:5173/"
 
   # A porta local 5173 é HTTP puro. Se o próprio frontend mandar o navegador

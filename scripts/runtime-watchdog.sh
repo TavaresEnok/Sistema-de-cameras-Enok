@@ -54,7 +54,7 @@ for container in vms-postgres vms-redis vms-mediamtx vms-api vms-web vms-ai-serv
 done
 
 # ── 2) SERVIÇOS HTTP internos ────────────────────────────────────────────────
-curl -fsS --max-time 5 http://127.0.0.1:3000/health >/dev/null 2>&1 || issues+=("api:unreachable")
+curl -fsS --max-time 8 http://127.0.0.1:3000/health/ready >/dev/null 2>&1 || issues+=("api:not-ready")
 curl -fsS --max-time 5 http://127.0.0.1:5173/ >/dev/null 2>&1 || issues+=("web:unreachable")
 # O build-agent (geração de APK) só existe no servidor MESTRE. Cobrá-lo numa
 # instalação de cliente deixava o watchdog em "degraded" PARA SEMPRE, por um

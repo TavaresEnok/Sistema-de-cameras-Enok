@@ -170,6 +170,19 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   private readonly minFreePercent: number;
   private redisPublisher: Redis | null = null;
   private readonly motionStopTimers = new Map<string, NodeJS.Timeout>();
+  private lastMotionRecordingFailureEventAt = new Map<string, number>();
+
+  /**
+   * Alguns caminhos de recuperação e testes reidratam o gerenciador sem passar
+   * pelo construtor. Inicializar de forma defensiva evita que um estado legado
+   * transforme uma falha de gravação em uma segunda exceção.
+   */
+  private motionRecordingFailureEvents(): Map<string, number> {
+    if (!this.lastMotionRecordingFailureEventAt) {
+      this.lastMotionRecordingFailureEventAt = new Map<string, number>();
+    }
+    return this.lastMotionRecordingFailureEventAt;
+  }
   private diskGuardTimer: NodeJS.Timeout | null = null;
   private readonly diskGuardSuspended = new Map<string, { segmentSeconds: number; retryAt: number }>();
   private diskGuardResumeInFlight = false;
@@ -331,12 +344,21 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   }
 
   private async assertMinimumStorageFree() {
-    const { totalBytes, freeBytes, freePercent } = await this.getStorageUsage();
-    if (freeBytes < this.minFreeBytes || freePercent < this.minFreePercent) {
+    const { freeBytes, freePercent, usedPercent } = await this.getStorageUsage();
+    const maxUsedPercent = this.getDiskGuardMaxUsedPercent();
+    if (freeBytes < this.minFreeBytes || freePercent < this.minFreePercent || usedPercent >= maxUsedPercent) {
       throw new ServiceUnavailableException(
-        `Espaço livre insuficiente para iniciar gravação (livre=${Math.round(freeBytes / (1024 * 1024))}MB, mínimo=${Math.round(this.minFreeBytes / (1024 * 1024))}MB, livre%=${freePercent.toFixed(2)}%, mínimo%=${this.minFreePercent}%).`,
+        `Espaço insuficiente para iniciar gravação (usado=${usedPercent.toFixed(2)}%, máximo=${maxUsedPercent}%, livre=${Math.round(freeBytes / (1024 * 1024))}MB, mínimo=${Math.round(this.minFreeBytes / (1024 * 1024))}MB).`,
       );
     }
+  }
+
+  private getDiskGuardMaxUsedPercent() {
+    return envNumber('RECORDING_DISK_GUARD_MAX_USED_PERCENT', 85, {
+      min: 1,
+      max: 100,
+      onInvalid: (m) => this.logger.warn(m),
+    });
   }
 
   private async getStorageUsage() {
@@ -360,11 +382,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       // a liberar espaço, sobrescrevendo a gravação MAIS ANTIGA de cada câmera.
       // Antes o default era 92% — mais folga agora reduz o risco de encostar no
       // disco cheio, ao custo de um pouco menos de retenção.
-      const maxUsedPercent = envNumber('RECORDING_DISK_GUARD_MAX_USED_PERCENT', 85, {
-        min: 1,
-        max: 100,
-        onInvalid: (m) => this.logger.warn(m),
-      });
+      const maxUsedPercent = this.getDiskGuardMaxUsedPercent();
       const critical =
         freeBytes < this.minFreeBytes ||
         freePercent < this.minFreePercent ||
@@ -970,6 +988,7 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       try {
         const result = await this.start(cameraId, segmentSeconds);
         startStatus = result.status;
+        this.motionRecordingFailureEvents().delete(cameraId);
         // UMA sessão RTSP de arquivamento por vez: o ring já cumpriu o papel (o
         // pré-roll foi promovido) e a gravação cobre daqui para a frente. Manter
         // os dois era um SEGUNDO ffmpeg concorrente na mesma câmera — as baratas
@@ -1002,13 +1021,28 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
         if (this.preEventSeconds > 0) {
           await this.startPreBuffer(cameraId).catch(() => undefined);
         }
-        await this.camerasService.registerEvent(
-          cameraId,
-          'MOTION_RECORDING_FAILED',
-          'WARNING',
-          'Falha ao iniciar gravação por movimento.',
-          { error: error instanceof Error ? error.message : 'unknown_error', trigger: metadata ?? {} },
-        );
+        // Detector pode disparar muitas vezes por minuto. Disco cheio ou câmera
+        // fora não deve criar milhares de linhas idênticas enquanto a causa
+        // permanece a mesma; uma por janela mantém o alerta visível e o banco
+        // saudável.
+        const failureEventCooldownMs = envNumber('MOTION_RECORDING_FAILURE_EVENT_COOLDOWN_SECONDS', 300, {
+          min: 10,
+          max: 86_400,
+          integer: true,
+        }) * 1_000;
+        const now = Date.now();
+        const failureEvents = this.motionRecordingFailureEvents();
+        const lastFailureEventAt = failureEvents.get(cameraId) ?? 0;
+        if (now - lastFailureEventAt >= failureEventCooldownMs) {
+          failureEvents.set(cameraId, now);
+          await this.camerasService.registerEvent(
+            cameraId,
+            'MOTION_RECORDING_FAILED',
+            'WARNING',
+            'Falha ao iniciar gravação por movimento.',
+            { error: error instanceof Error ? error.message : 'unknown_error', trigger: metadata ?? {} },
+          );
+        }
         throw error;
       }
     }
@@ -1659,22 +1693,68 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     if (!existsSync(mp4Path) || statSync(mp4Path).size === 0) {
       const codec = await this.probeLocalVideoCodec(tsPath);
       const isHevc = Boolean(codec && (codec.includes('hevc') || codec.includes('h265')));
+      const common = [
+        '-y',
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-i', tsPath,
+        '-map', '0:v:0',
+      ];
+      const videoTag = isHevc ? ['-tag:v', 'hvc1'] : [];
+      let firstError: unknown = null;
       try {
         await execFileAsync('ffmpeg', [
-          '-y',
-          '-hide_banner',
-          '-loglevel', 'error',
-          '-i', tsPath,
-          '-map', '0:v:0',
+          ...common,
           '-map', '0:a:0?',
           '-c', 'copy',
-          ...(isHevc ? ['-tag:v', 'hvc1'] : []),
+          ...videoTag,
           '-movflags', '+faststart',
           mp4Path,
         ], { timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
       } catch (error) {
+        firstError = error;
         await unlink(mp4Path).catch(() => undefined);
-        throw new Error(`remux_ts_falhou: ${sanitizeSensitiveText(error)}`);
+      }
+
+      // Firmware ruim às vezes escreve uma trilha declarada como áudio, mas
+      // sem sample_rate/cabeçalho utilizável. O vídeo continua íntegro. Primeiro
+      // tentamos reparar somente o áudio; se nem o decoder aceitar, preservamos
+      // o vídeo sem áudio em vez de jogar toda a evidência em quarentena.
+      if (!existsSync(mp4Path) || statSync(mp4Path).size === 0) {
+        try {
+          await execFileAsync('ffmpeg', [
+            ...common,
+            '-map', '0:a:0?',
+            '-c:v', 'copy',
+            '-c:a', 'aac',
+            '-ar', '44100',
+            '-ac', '1',
+            ...videoTag,
+            '-movflags', '+faststart',
+            mp4Path,
+          ], { timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
+          this.logger.warn(`Áudio inválido reparado no remux camera=${cameraId} arquivo=${basename(tsPath)}.`);
+        } catch {
+          await unlink(mp4Path).catch(() => undefined);
+        }
+      }
+
+      if (!existsSync(mp4Path) || statSync(mp4Path).size === 0) {
+        try {
+          await execFileAsync('ffmpeg', [
+            ...common,
+            '-c:v', 'copy',
+            ...videoTag,
+            '-movflags', '+faststart',
+            mp4Path,
+          ], { timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
+          this.logger.warn(
+            `Áudio irrecuperável removido, vídeo PRESERVADO camera=${cameraId} arquivo=${basename(tsPath)}.`,
+          );
+        } catch (error) {
+          await unlink(mp4Path).catch(() => undefined);
+          throw new Error(`remux_ts_falhou: ${sanitizeSensitiveText(firstError ?? error)}`);
+        }
       }
     }
     // fsync ANTES de registrar no Postgres (técnica moonfire `dir/writer.rs`): força

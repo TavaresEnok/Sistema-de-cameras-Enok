@@ -203,7 +203,7 @@ main() {
     container_running "$name"
   done
 
-  expect_http "API health" "http://127.0.0.1:3000/health" 200
+  expect_http "API readiness" "http://127.0.0.1:3000/health/ready" 200
   expect_http "Web" "http://127.0.0.1:5173/" 200
   check_auth_contract
   check_database_state

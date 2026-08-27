@@ -3,6 +3,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
+import { envNumber } from '../common/config/env-number.helper';
 import {
   ehAberturaDeIncidente,
   extrairBlocos,
@@ -46,6 +47,15 @@ export type EventoRecebido = {
   bruto: Record<string, unknown>;
 };
 
+export function devePersistirEventoIntelbras(
+  tipo: string,
+  motionTrigger: string | null | undefined,
+  movimentoGenericoHabilitado: boolean,
+) {
+  if (tipo !== 'MOTION') return true;
+  return movimentoGenericoHabilitado && motionTrigger === 'CAMERA';
+}
+
 type Assinatura = {
   cameraId: string;
   parar: () => void;
@@ -54,6 +64,7 @@ type Assinatura = {
 @Injectable()
 export class IntelbrasEventsService implements OnModuleInit, OnModuleDestroy {
   private relogio: ReturnType<typeof setInterval> | null = null;
+  private readonly ultimoMovimentoGenerico = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -63,6 +74,10 @@ export class IntelbrasEventsService implements OnModuleInit, OnModuleDestroy {
   /** Desligado por padrão: instalação sem câmera Intelbras não paga por isto. */
   private habilitado() {
     return String(process.env.INTELBRAS_EVENTS_ENABLED ?? 'false').trim().toLowerCase() === 'true';
+  }
+
+  private movimentoGenericoHabilitado() {
+    return String(process.env.INTELBRAS_GENERIC_MOTION_EVENTS_ENABLED ?? 'false').trim().toLowerCase() === 'true';
   }
 
   async onModuleInit() {
@@ -94,7 +109,16 @@ export class IntelbrasEventsService implements OnModuleInit, OnModuleDestroy {
           status: { not: 'OFFLINE' },
           rtspPath: { contains: 'realmonitor' },
         },
-        select: { id: true, name: true, ip: true, httpPort: true, onvifPort: true, username: true, passwordEncrypted: true },
+        select: {
+          id: true,
+          name: true,
+          ip: true,
+          httpPort: true,
+          onvifPort: true,
+          username: true,
+          passwordEncrypted: true,
+          motionTrigger: true,
+        },
       });
       const vivas = new Set(this.ativas());
       for (const cam of cameras) {
@@ -108,7 +132,7 @@ export class IntelbrasEventsService implements OnModuleInit, OnModuleDestroy {
         try { senha = this.cryptoService.decrypt(cam.passwordEncrypted); } catch { continue; }
         this.assinar(
           { cameraId: cam.id, host: cam.ip, porta, usuario: cam.username, senha },
-          (evento) => void this.persistir(evento, cam.name),
+          (evento) => void this.persistir(evento, cam.name, cam.motionTrigger),
         );
       }
       // Câmera que saiu do escopo (desativada, offline) perde o fluxo.
@@ -128,7 +152,18 @@ export class IntelbrasEventsService implements OnModuleInit, OnModuleDestroy {
    * quando ela o informa: gravar o nosso como se fosse o dela apagaria a
    * evidência de uma divergência de horário.
    */
-  private async persistir(evento: EventoRecebido, nomeDaCamera: string) {
+  private async persistir(evento: EventoRecebido, nomeDaCamera: string, motionTrigger?: string | null) {
+    if (!devePersistirEventoIntelbras(evento.tipo, motionTrigger, this.movimentoGenericoHabilitado())) return;
+    if (evento.tipo === 'MOTION') {
+      const cooldownMs = envNumber('INTELBRAS_GENERIC_MOTION_COOLDOWN_SECONDS', 30, {
+        min: 1,
+        max: 3600,
+        integer: true,
+      }) * 1_000;
+      const now = Date.now();
+      if (now - (this.ultimoMovimentoGenerico.get(evento.cameraId) ?? 0) < cooldownMs) return;
+      this.ultimoMovimentoGenerico.set(evento.cameraId, now);
+    }
     const o = evento.observacao;
     const ocorridoEm = o.ocorridoEm ? new Date(o.ocorridoEm * 1000) : new Date();
     const descricao = [

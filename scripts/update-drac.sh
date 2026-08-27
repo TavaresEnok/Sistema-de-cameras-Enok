@@ -130,7 +130,7 @@ rollback() {
   if [ "$rollback_status" -eq 0 ]; then
     if ! "${COMPOSE[@]}" build api web drac-central >/dev/null \
       || ! "${COMPOSE[@]}" up -d api web drac-central >/dev/null \
-      || ! wait_for_http GET http://127.0.0.1:3000/health API \
+      || ! wait_for_http GET http://127.0.0.1:3000/health/ready API \
       || ! wait_for_http HEAD http://127.0.0.1:5173/ Web; then
       printf '[DRAC update][ERRO] Código anterior restaurado, mas os serviços não validaram.\n' >&2
       rollback_status=1
@@ -263,7 +263,7 @@ log "Subindo API, Web e Central atualizadas"
 "${COMPOSE[@]}" up -d api web drac-central
 
 log "Validando healthchecks"
-wait_for_http GET http://127.0.0.1:3000/health API
+wait_for_http GET http://127.0.0.1:3000/health/ready API
 wait_for_http HEAD http://127.0.0.1:5173/ Web
 
 if [ -x "$ROOT_DIR/scripts/production-readiness.sh" ]; then

@@ -154,7 +154,7 @@ rollback_restore() {
 
   if [ "$rollback_status" -eq 0 ]; then
     if ! start_runtime >/dev/null \
-      || ! curl -fsS --max-time 30 http://127.0.0.1:3000/health >/dev/null \
+      || ! curl -fsS --max-time 30 http://127.0.0.1:3000/health/ready >/dev/null \
       || ! curl -fsSI --max-time 30 http://127.0.0.1:5173/ >/dev/null; then
       rollback_status=1
     fi
@@ -254,7 +254,7 @@ log "Subindo serviços"
 start_runtime
 
 log "Validando API e Web"
-curl -fsS --max-time 30 http://127.0.0.1:3000/health >/dev/null
+curl -fsS --max-time 30 http://127.0.0.1:3000/health/ready >/dev/null
 curl -fsSI --max-time 30 http://127.0.0.1:5173/ >/dev/null
 
 if [ -x "$ROOT_DIR/scripts/production-readiness.sh" ]; then
