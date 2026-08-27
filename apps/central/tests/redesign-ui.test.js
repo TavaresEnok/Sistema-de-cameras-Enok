@@ -39,6 +39,19 @@ test('recursos operacionais do redesign permanecem ligados à interface', () => 
   assert.match(PANEL, /addEventListener\('click', exportCsv\)/);
 });
 
+test('botão do menu recolhido fica no topo e nunca provoca rolagem horizontal', () => {
+  const marca = PANEL.indexOf('class="brand"');
+  const controle = PANEL.indexOf('id="rail-toggle"');
+  const navegacao = PANEL.indexOf('class="nav"');
+  assert.ok(marca > -1 && controle > marca && navegacao > controle, 'controle deve ficar entre a marca e a navegação');
+  assert.match(PANEL, /\.sidebar\s*\{[\s\S]*?overflow-x:\s*hidden;/);
+  assert.match(PANEL, /body\.rail \.rail-control\s*\{[\s\S]*?width:\s*40px;/);
+  assert.match(PANEL, /body\.rail \.foot-actions\s*\{\s*flex-direction:\s*column;/);
+  assert.match(PANEL, /class="rail-open-icon"/);
+  assert.match(PANEL, /function syncRailToggle\(\)/);
+  assert.match(PANEL, /recolhido \? 'Expandir menu' : 'Recolher menu'/);
+});
+
 test('a exportação CSV neutraliza fórmulas vindas de campos textuais', () => {
   const corpo = corpoDaFuncao('exportCsv');
   assert.match(corpo, /typeof value === 'string'/);

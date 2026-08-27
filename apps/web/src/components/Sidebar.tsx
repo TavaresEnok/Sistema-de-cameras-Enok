@@ -175,13 +175,12 @@ export function Sidebar({
     <motion.aside
       animate={{ width: isExpanded ? 240 : 56 }}
       transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-      className="sidebar-shell relative flex h-full shrink-0 flex-col overflow-hidden"
+      className="sidebar-shell relative flex flex-col h-full overflow-hidden shrink-0"
       style={{ minWidth: isExpanded ? 240 : 56 }}
     >
-      <div className="flex h-full min-w-0 flex-col overflow-hidden">
       {/* ── Brand header ── */}
-      <div className={`sidebar-brand flex shrink-0 items-center ${isExpanded ? 'h-14 px-3' : 'h-[104px] flex-col justify-center gap-2 px-2 py-2'}`}>
-        <div className={`flex min-w-0 items-center gap-2.5 ${isExpanded ? 'flex-1' : ''}`}>
+      <div className="sidebar-brand flex items-center h-14 px-3 shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <div className={`sidebar-mark shrink-0 h-8 rounded-xl flex items-center justify-center overflow-hidden ${logoDataUrl ? 'w-fit min-w-8 max-w-[108px]' : 'w-8'}`}>
             {logoDataUrl ? <img src={logoDataUrl} alt={facilityName} className="h-full w-auto max-w-[108px] object-contain" /> : <Shield className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />}
           </div>
@@ -198,14 +197,12 @@ export function Sidebar({
           )}
         </div>
         <button
-          type="button"
           onClick={toggle}
           aria-label={isExpanded ? 'Recolher menu lateral' : 'Expandir menu lateral'}
-          title={isExpanded ? 'Recolher menu' : 'Expandir menu'}
-          className={`sidebar-toggle sidebar-toggle-button hidden items-center justify-center rounded-xl md:flex ${isExpanded ? 'h-8 w-8 shrink-0' : 'h-10 w-10'}`}
+          className="sidebar-toggle shrink-0 w-7 h-7 hidden md:flex items-center justify-center rounded-xl transition-colors"
           data-testid="button-sidebar-toggle"
         >
-          {isExpanded ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-5 w-5" />}
+          {isExpanded ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
         </button>
       </div>
 
@@ -356,7 +353,6 @@ export function Sidebar({
             <LogOut className="h-3.5 w-3.5" />
           </button>
         )}
-      </div>
       </div>
     </motion.aside>
   );
