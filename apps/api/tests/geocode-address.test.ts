@@ -27,6 +27,8 @@ test('normaliza localização aproximada por IP', () => {
 test('descoberta automática só atualiza câmera ainda sem coordenadas', async () => {
   const source = await readFile(new URL('../src/cameras/cameras.service.ts', import.meta.url), 'utf8');
   assert.match(source, /where: \{ id: camera\.id, OR: \[\{ latitude: null \}, \{ longitude: null \}\] \}/);
+  assert.match(source, /where: \{ OR: \[\{ latitude: null \}, \{ longitude: null \}\] \}/);
+  assert.doesNotMatch(source, /where: \{ enabled: true, OR: \[\{ latitude: null \}, \{ longitude: null \}\] \}/);
 });
 
 test('o próprio sistema agenda a descoberta sem depender da página do mapa', async () => {

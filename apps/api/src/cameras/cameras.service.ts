@@ -3877,7 +3877,10 @@ export class CamerasService implements OnApplicationBootstrap {
    */
   async autoDiscoverLocations() {
     const cameras = await this.prisma.camera.findMany({
-      where: { enabled: true, OR: [{ latitude: null }, { longitude: null }] },
+      // Localização é metadado do cadastro, não uma operação de streaming.
+      // Câmera desativada também deve continuar pronta para o mapa quando for
+      // reativada; esta consulta não liga nem acessa o equipamento.
+      where: { OR: [{ latitude: null }, { longitude: null }] },
       select: {
         id: true, ip: true, sourceMode: true, locationAddress: true,
         site: { select: { location: true } },
