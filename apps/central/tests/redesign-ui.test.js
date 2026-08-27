@@ -46,6 +46,8 @@ test('botão do menu recolhido fica no topo e nunca provoca rolagem horizontal',
   assert.ok(marca > -1 && controle > marca && navegacao > controle, 'controle deve ficar entre a marca e a navegação');
   assert.match(PANEL, /\.sidebar\s*\{[\s\S]*?overflow-x:\s*hidden;/);
   assert.match(PANEL, /body\.rail \.rail-control\s*\{[\s\S]*?width:\s*40px;/);
+  assert.match(PANEL, /body\.rail \.rail-control \.rail-short-label\s*\{[\s\S]*?display:\s*block;/);
+  assert.match(PANEL, /class="rail-short-label"[^>]*>ABRIR</);
   assert.match(PANEL, /body\.rail \.foot-actions\s*\{\s*flex-direction:\s*column;/);
   assert.match(PANEL, /class="rail-open-icon"/);
   assert.match(PANEL, /function syncRailToggle\(\)/);

@@ -280,13 +280,19 @@
       }
       .rail-control svg { width: 16px; height: 16px; flex: 0 0 auto; }
       .rail-control .rail-open-icon { display: none; }
+      .rail-control .rail-short-label { display: none; }
       .rail-control:hover { color: var(--ink); border-color: var(--brand-line); }
       body.rail .rail-control {
-        width: 40px; min-width: 40px; min-height: 40px; margin: 0 auto 10px; padding: 0;
-        justify-content: center;
+        width: 40px; min-width: 40px; min-height: 54px; margin: 0 auto 10px; padding: 5px 0;
+        flex-direction: column; justify-content: center; gap: 3px;
+        color: var(--brand-strong); border-color: var(--brand-line); background: var(--brand-soft);
       }
       body.rail .rail-control .rail-label, body.rail .rail-control .rail-close-icon { display: none; }
       body.rail .rail-control .rail-open-icon { display: block; }
+      body.rail .rail-control .rail-short-label {
+        display: block; font-size: 7.5px; font-weight: 700; line-height: 1;
+        letter-spacing: .08em;
+      }
 
       .nav { display: flex; flex-direction: column; gap: 2px; }
       .nav-group-label {
@@ -1060,6 +1066,7 @@
           <svg class="rail-close-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
           <svg class="rail-open-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
           <span class="rail-label">Recolher menu</span>
+          <span class="rail-short-label" aria-hidden="true">ABRIR</span>
         </button>
         <nav class="nav">
           <div class="nav-group-label">Frota</div>
