@@ -39,11 +39,11 @@ test('recursos operacionais do redesign permanecem ligados à interface', () => 
   assert.match(PANEL, /addEventListener\('click', exportCsv\)/);
 });
 
-test('botão do menu recolhido fica no topo e nunca provoca rolagem horizontal', () => {
-  const marca = PANEL.indexOf('class="brand"');
+test('botão do menu recolhido fica entre Portal técnico e e-mail sem provocar rolagem horizontal', () => {
+  const portal = PANEL.indexOf('id="technical-nav"');
   const controle = PANEL.indexOf('id="rail-toggle"');
-  const navegacao = PANEL.indexOf('class="nav"');
-  assert.ok(marca > -1 && controle > marca && navegacao > controle, 'controle deve ficar entre a marca e a navegação');
+  const email = PANEL.indexOf('id="user-chip"');
+  assert.ok(portal > -1 && controle > portal && email > controle, 'controle deve ficar entre o Portal técnico e o e-mail do usuário');
   assert.match(PANEL, /\.sidebar\s*\{[\s\S]*?overflow-x:\s*hidden;/);
   assert.match(PANEL, /body\.rail \.rail-control\s*\{[\s\S]*?width:\s*40px;/);
   assert.match(PANEL, /body\.rail \.rail-control \.rail-short-label\s*\{[\s\S]*?display:\s*block;/);
