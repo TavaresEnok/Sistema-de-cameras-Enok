@@ -14,6 +14,30 @@ case "$COMPOSE_MODE" in
   *) printf '[DRAC update][ERRO] DRAC_COMPOSE_MODE deve ser prod ou dev.\n' >&2; exit 1 ;;
 esac
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$ROOT_DIR/infra/docker-compose.yml" -f "$COMPOSE_OVERRIDE")
+
+# A GPU PRECISA SOBREVIVER A UMA ATUALIZAÇÃO.
+#
+# Até 27/08/2026 este script montava o compose SEM os overlays de GPU. Efeito:
+# quem subisse a instalação com aceleração pelo `drac-up.sh` e depois rodasse
+# uma atualização perdia a GPU em silêncio — os containers voltavam sem o
+# runtime nvidia, o vídeo voltava a converter em processador, e nada no log
+# dizia que a placa havia sido descartada.
+#
+# A regra é a mesma do `drac-up.sh`: a presença da GPU é condição de AMBIENTE.
+# Aqui só reaproveitamos a decisão dele, sem duplicar a detecção — se o overlay
+# está em uso AGORA, ele continua em uso depois.
+if docker inspect vms-mediamtx --format '{{.HostConfig.Runtime}}' 2>/dev/null | grep -q nvidia; then
+  if [ -f "$ROOT_DIR/infra/docker-compose.gpu.yml" ]; then
+    COMPOSE+=(-f "$ROOT_DIR/infra/docker-compose.gpu.yml")
+    printf '[DRAC update] GPU detectada em uso: mantendo o overlay de transcode acelerado.\n'
+  fi
+fi
+if docker inspect vms-ai-service --format '{{.HostConfig.Runtime}}' 2>/dev/null | grep -q nvidia; then
+  if [ -f "$ROOT_DIR/infra/docker-compose.gpu-ai.yml" ]; then
+    COMPOSE+=(-f "$ROOT_DIR/infra/docker-compose.gpu-ai.yml")
+    printf '[DRAC update] IA em GPU detectada: mantendo o overlay CUDA.\n'
+  fi
+fi
 BEFORE_COMMIT=""
 ROLLBACK_NEEDED=false
 ROLLBACK_IN_PROGRESS=false

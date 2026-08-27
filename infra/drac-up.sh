@@ -89,11 +89,39 @@ elif gpu_utilizavel; then
   # boot — inaceitável num servidor de gravação voltando do chão. Quem quiser a
   # primeira construção roda explicitamente:
   #   docker compose -f docker-compose.yml -f docker-compose.gpu-ai.yml build ai-service
+  #
+  # EXISTIR NÃO BASTA: A IMAGEM PRECISA ESTAR ATUAL.
+  #
+  # A imagem CUDA EMBUTE o código do serviço de IA (ao contrário da imagem de
+  # CPU, que monta o repositório). Então subir uma imagem velha REVERTE o
+  # serviço para o código do dia em que ela foi construída — em silêncio, sem
+  # erro, sem aviso.
+  #
+  # Custou quase acontecer em 27/08/2026: a imagem tinha 12 dias e nove commits
+  # do serviço de IA depois dela, incluindo o endurecimento do MOG2 e a
+  # configuração de IA por câmera. Subir "em modo GPU" teria desfeito tudo isso
+  # e ninguém veria — a tela continuaria dizendo que a IA está ligada.
+  FONTE_IA="$(cd "$(dirname "$0")/../services/ai-service-python" 2>/dev/null && pwd || true)"
+  IMAGEM_IA_EM=""
+  FONTE_IA_EM=""
   if docker image inspect drac-ai-service-gpu:local >/dev/null 2>&1; then
+    IMAGEM_IA_EM="$(docker image inspect drac-ai-service-gpu:local --format '{{.Created}}' 2>/dev/null | cut -c1-19)"
+    if [ -n "$FONTE_IA" ]; then
+      FONTE_IA_EM="$(find "$FONTE_IA" -type f -not -path '*/.*' -newermt "${IMAGEM_IA_EM:-1970-01-01}" -print -quit 2>/dev/null || true)"
+    fi
+  fi
+
+  if [ -z "$IMAGEM_IA_EM" ]; then
+    MODO="$MODO + IA em CPU (imagem drac-ai-service-gpu:local ausente)"
+  elif [ -n "$FONTE_IA_EM" ]; then
+    MODO="$MODO + IA em CPU (imagem CUDA DESATUALIZADA)"
+    echo "── AVISO: a imagem drac-ai-service-gpu:local é de $IMAGEM_IA_EM e o código"
+    echo "   do serviço de IA mudou depois dela. Subir assim REVERTERIA o código."
+    echo "   Ficando em CPU. Para usar a GPU na IA, reconstrua antes:"
+    echo "     docker compose -f docker-compose.yml -f docker-compose.gpu-ai.yml build ai-service"
+  else
     ARQUIVOS+=(-f docker-compose.gpu-ai.yml)
     MODO="$MODO + IA CUDA"
-  else
-    MODO="$MODO + IA em CPU (imagem drac-ai-service-gpu:local ausente)"
   fi
 fi
 
