@@ -301,7 +301,13 @@ check_recording_capacity() {
   retention_days="${RECORDING_RETENTION_DAYS:-${RETENTION_DAYS:-7}}"
   safe_capacity_gb="$(awk -v kb="$total_kb" 'BEGIN { printf "%.1f", (kb * 1024 * 0.80) / 1024 / 1024 / 1024 }')"
 
-  hist_line="$(psql_value 'select coalesce(sum("sizeBytes"),0)::text || '\''|'\'' || coalesce(extract(epoch from (max("startedAt") - min("startedAt"))),0)::text from "Recording";')"
+  if [ "$enforce_capacity" = "true" ]; then
+    # Dimensiona somente o que está de fato configurado como contínuo. A flag
+    # de auto-start não transforma câmeras manuais/movimento em contínuas.
+    hist_line="$(psql_value 'select coalesce(sum(r."sizeBytes"),0)::text || '\''|'\'' || coalesce(extract(epoch from (max(r."startedAt") - min(r."startedAt"))),0)::text from "Recording" r join "Camera" c on c.id = r."cameraId" where c.enabled = true and c."recordingMode" = '\''continuous'\'';')"
+  else
+    hist_line="$(psql_value 'select coalesce(sum("sizeBytes"),0)::text || '\''|'\'' || coalesce(extract(epoch from (max("startedAt") - min("startedAt"))),0)::text from "Recording";')"
+  fi
   IFS='|' read -r hist_bytes hist_seconds <<< "$hist_line"
 
   if awk -v bytes="${hist_bytes:-0}" -v seconds="${hist_seconds:-0}" 'BEGIN { exit !(bytes > 0 && seconds >= 900) }'; then
@@ -309,7 +315,11 @@ check_recording_capacity() {
     source="historico real de gravacao"
   else
     local bitrate_line known_kbps known_count total_cameras fallback_kbps estimated_kbps
-    bitrate_line="$(psql_value 'select coalesce(sum(coalesce("recordingBitrateKbps",0)),0)::text || '\''|'\'' || count(*) filter (where coalesce("recordingBitrateKbps",0) > 0)::text || '\''|'\'' || count(*)::text from "Camera";')"
+    if [ "$enforce_capacity" = "true" ]; then
+      bitrate_line="$(psql_value 'select coalesce(sum(coalesce("recordingBitrateKbps",0)),0)::text || '\''|'\'' || count(*) filter (where coalesce("recordingBitrateKbps",0) > 0)::text || '\''|'\'' || count(*)::text from "Camera" where enabled = true and "recordingMode" = '\''continuous'\'';')"
+    else
+      bitrate_line="$(psql_value 'select coalesce(sum(coalesce("recordingBitrateKbps",0)),0)::text || '\''|'\'' || count(*) filter (where coalesce("recordingBitrateKbps",0) > 0)::text || '\''|'\'' || count(*)::text from "Camera";')"
+    fi
     IFS='|' read -r known_kbps known_count total_cameras <<< "$bitrate_line"
     fallback_kbps="${RECORDING_CAPACITY_FALLBACK_CAMERA_KBPS:-4096}"
     estimated_kbps="$(awk -v known="${known_kbps:-0}" -v known_count="${known_count:-0}" -v total="${total_cameras:-0}" -v fallback="$fallback_kbps" 'BEGIN { missing = total - known_count; if (missing < 0) missing = 0; printf "%.0f", known + (missing * fallback) }')"
@@ -359,8 +369,8 @@ check_camera_profiles() {
   live_webrtc="$(psql_value 'select count(*) from "Camera" where "preferredLiveProtocol" = '\''webrtc'\'';')"
   live_subtype0="$(psql_value 'select count(*) from "Camera" where coalesce("liveSubtype", subtype) = 0;')"
   live_720p="$(psql_value 'select count(*) from "Camera" where "streamWidth" = 1280 and "streamHeight" = 720;')"
-  recording_enabled="$(psql_value 'select count(*) from "Camera" where "recordingEnabled" = true;')"
-  recording_continuous="$(psql_value 'select count(*) from "Camera" where "recordingEnabled" = true and "recordingMode" = '\''continuous'\'';')"
+  recording_enabled="$(psql_value 'select count(*) from "Camera" where enabled = true and "recordingMode" in ('\''continuous'\'','\''motion'\'','\''object'\'');')"
+  recording_continuous="$(psql_value 'select count(*) from "Camera" where enabled = true and "recordingMode" = '\''continuous'\'';')"
   recording_subtype0="$(psql_value 'select count(*) from "Camera" where coalesce("recordingSubtype", subtype) = 0;')"
   recording_h265="$(psql_value 'select count(*) from "Camera" where lower(coalesce("recordingVideoCodec", '\''h265'\'')) in ('\''h265'\'','\''hevc'\'','\''h.265'\'');')"
   ai_enabled="$(psql_value 'select count(*) from "Camera" where "aiEnabled" = true;')"
@@ -481,10 +491,15 @@ check_storage_and_backups() {
     ok "Disco saudavel: ${usage}% usado"
   fi
 
-  if [ "${RECORDING_AUTO_START_ENABLED:-false}" = "true" ] && [ "${usage:-100}" -ge 75 ]; then
+  local continuous_count enforce_capacity
+  continuous_count="$(psql_value 'select count(*) from "Camera" where enabled = true and "recordingMode" = '\''continuous'\'';')"
+
+  if [ "${RECORDING_AUTO_START_ENABLED:-false}" = "true" ] && [ "${continuous_count:-0}" -gt 0 ] && [ "${usage:-100}" -ge 75 ]; then
     fail "RECORDING_AUTO_START_ENABLED=true com disco acima de 75%; risco de esgotar storage no boot"
-  elif [ "${RECORDING_AUTO_START_ENABLED:-false}" = "true" ]; then
+  elif [ "${RECORDING_AUTO_START_ENABLED:-false}" = "true" ] && [ "${continuous_count:-0}" -gt 0 ]; then
     warn "Gravacao continua inicia automaticamente no boot; use apenas com storage dimensionado"
+  elif [ "${RECORDING_AUTO_START_ENABLED:-false}" = "true" ]; then
+    ok "Auto-start habilitado, mas nenhuma camera esta configurada em modo continuo"
   else
     ok "Auto-start de gravacao continua desativado por padrao seguro"
   fi
@@ -495,10 +510,8 @@ check_storage_and_backups() {
     fail "RECORDING_DISK_GUARD_ENABLED=false; producao fica sem protecao contra disco cheio"
   fi
 
-  local continuous_count enforce_capacity
-  continuous_count="$(psql_value 'select count(*) from "Camera" where "recordingEnabled" = true and "recordingMode" = '\''continuous'\'';')"
   enforce_capacity="false"
-  if [ "${RECORDING_AUTO_START_ENABLED:-false}" = "true" ] || [ "${continuous_count:-0}" -gt 0 ]; then
+  if [ "${continuous_count:-0}" -gt 0 ]; then
     enforce_capacity="true"
   fi
   check_recording_capacity "$storage_path" "$enforce_capacity"

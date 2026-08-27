@@ -9,6 +9,7 @@ const restoreScript = readFileSync(resolve(repositoryRoot, 'scripts/restore-drac
 const apiDockerfile = readFileSync(resolve(repositoryRoot, 'apps/api/Dockerfile'), 'utf8');
 const apiEntrypoint = readFileSync(resolve(repositoryRoot, 'apps/api/docker-entrypoint.sh'), 'utf8');
 const compose = readFileSync(resolve(repositoryRoot, 'infra/docker-compose.yml'), 'utf8');
+const readinessScript = readFileSync(resolve(repositoryRoot, 'scripts/production-readiness.sh'), 'utf8');
 
 test('API aplica migrações antes de iniciar mesmo fora do script oficial', () => {
   assert.match(apiDockerfile, /docker-entrypoint\.sh/);
@@ -39,6 +40,20 @@ test('update bloqueia a migration histórica quando ainda existem gravações du
   assert.match(updateScript, /20260501042000_recordings_indexes/);
   assert.match(updateScript, /GROUP BY \\"filePath\\"/);
   assert.match(updateScript, /recusou a deleção arbitrária por ctid/);
+});
+
+test('readiness não transforma auto-start em gravação contínua para todas as câmeras', () => {
+  assert.match(
+    readinessScript,
+    /enabled = true and "recordingMode" = '\\''continuous'\\''/,
+    'o dimensionamento precisa considerar somente câmeras realmente contínuas',
+  );
+  assert.match(readinessScript, /nenhuma camera esta configurada em modo continuo/i);
+  assert.doesNotMatch(
+    readinessScript,
+    /if \[ "\$\{RECORDING_AUTO_START_ENABLED:-false\}" = "true" \] \|\| \[ "\$\{continuous_count:-0\}" -gt 0 \]/,
+    'auto-start sozinho não pode tornar obrigatório o storage de todas as câmeras',
+  );
 });
 
 test('restore valida dump e archive antes de marcar o ambiente como mutado', () => {
