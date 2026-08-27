@@ -111,7 +111,7 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
   return (
     <div
       ref={stageRef}
-      className="relative h-full min-h-[420px] select-none overflow-hidden bg-[#dbe4e8]"
+      className="relative h-full min-h-[420px] cursor-grab touch-none select-none overflow-hidden overscroll-contain bg-[#dbe4e8] active:cursor-grabbing"
       onWheel={(event) => {
         event.preventDefault();
         // offsetX/offsetY pertencem ao elemento mais interno sob o cursor —

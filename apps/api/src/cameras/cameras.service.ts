@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnApplicationBootstrap, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ModuleRef } from '@nestjs/core';
 import { temZonaDeArea, validarZonasDeDeteccao } from './helpers/validar-zonas.helper';
@@ -129,7 +129,7 @@ type CameraProfilePayload = {
 };
 
 @Injectable()
-export class CamerasService implements OnModuleInit {
+export class CamerasService implements OnApplicationBootstrap {
   private readonly logger = new Logger(CamerasService.name);
   // ⚠️ Estes três números eram `Number(process.env.X ?? default)`. Com um valor
   // inválido no .env ("4,5s", "5000ms") o resultado é NaN — e NaN não explode:
@@ -168,16 +168,28 @@ export class CamerasService implements OnModuleInit {
     @Optional() private readonly rtmpIngestSource?: RtmpIngestSourceService,
   ) {}
 
-  onModuleInit() {
+  onApplicationBootstrap() {
     // O mapa não depende de alguém abrir a tela para nascer preenchido. Depois
     // que banco/API sobem, o próprio sistema tenta localizar apenas as câmeras
     // ainda sem posição. Falha de serviço externo nunca derruba a API.
-    const timer = setTimeout(() => {
+    const execute = () => {
       void this.autoDiscoverLocations().then((result) => {
-        if (result.located > 0) this.logger.log(`Mapa: ${result.located} câmera(s) localizada(s) automaticamente.`);
+        this.logger.log(
+          `Mapa: localização automática verificou ${result.checked}, localizou ${result.located} e deixou ${result.unavailable} pendente(s).`,
+        );
       }).catch((error) => this.logger.warn(`Mapa: localização automática adiada: ${error instanceof Error ? error.message : String(error)}`));
-    }, 5_000);
-    timer.unref();
+    };
+    // Dispara pelo ciclo de vida da aplicação, sem depender de timer, acesso à
+    // página ou sessão de administrador.
+    execute();
+    // Uma indisponibilidade curta do geocodificador durante o boot não pode
+    // deixar a instalação incompleta até alguém abrir o mapa.
+    const retry = setTimeout(execute, 60_000);
+    // Também cobre câmeras novas cadastradas por app/API e mantém a rotina sob
+    // responsabilidade do servidor. Posições existentes nunca são tocadas.
+    const periodic = setInterval(execute, 6 * 60 * 60 * 1_000);
+    retry.unref();
+    periodic.unref();
   }
 
   /**

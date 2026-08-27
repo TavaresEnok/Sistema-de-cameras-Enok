@@ -40,4 +40,6 @@ test('zoom usa coordenada relativa ao mapa inteiro, nunca offset do tile', async
   assert.match(map, /event\.clientY - rect\.top/);
   assert.doesNotMatch(map, /nativeEvent\.offset[XY]/);
   assert.match(map, /onLostPointerCapture/);
+  assert.match(map, /touch-none/);
+  assert.match(map, /overscroll-contain/);
 });
