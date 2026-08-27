@@ -150,6 +150,13 @@ export class UpdateCameraDto {
   @IsIn(['sensitive', 'balanced', 'precise'])
   aiSensitivity?: 'sensitive' | 'balanced' | 'precise';
 
+  /** Confiança mínima exibida na barra simples da tela de IA. */
+  @IsOptional()
+  @IsInt()
+  @Min(55)
+  @Max(90)
+  aiConfidence?: number;
+
   @IsOptional()
   @IsString()
   @IsIn(RECORDING_MODES)

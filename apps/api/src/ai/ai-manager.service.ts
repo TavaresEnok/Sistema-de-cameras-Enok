@@ -20,6 +20,7 @@ import {
   classesPermitidas,
   decidirObjetoDaCamera,
   explicarDecisao,
+  normalizarConfiancaDaIa,
   normalizarModoDeObjeto,
   normalizarSensibilidadeDaIa,
   politicaDeConfirmacaoDaIa,
@@ -612,6 +613,7 @@ export class AiManagerService implements OnModuleInit {
         objectMode: true,
         aiObjectClasses: true,
         aiSensitivity: true,
+        aiConfidence: true,
         motionTrigger: true,
         detectionZones: true,
         recordingMode: true,
@@ -631,6 +633,7 @@ export class AiManagerService implements OnModuleInit {
           aiEnabled: cam.aiEnabled !== false,
           aiObjectClasses: classesEfetivasDaCamera(classes, cam.aiObjectClasses),
           aiSensitivity: normalizarSensibilidadeDaIa(cam.aiSensitivity),
+          aiConfidence: normalizarConfiancaDaIa(cam.aiConfidence, cam.aiSensitivity),
           recordingMode: cam.recordingMode,
           motionTrigger: cam.motionTrigger,
           temLinha: temLinhaDePerimetro(cam.detectionZones),
@@ -1164,7 +1167,7 @@ export class AiManagerService implements OnModuleInit {
     const classesPermitidasNaInstalacao = classesPermitidas({ aiObjectClasses: politica?.aiObjectClasses });
     const classesDeObjeto = classesEfetivasDaCamera(classesPermitidasNaInstalacao, cam.aiObjectClasses);
     const sensibilidade = normalizarSensibilidadeDaIa(cam.aiSensitivity);
-    const confirmacao = politicaDeConfirmacaoDaIa(sensibilidade);
+    const confirmacao = politicaDeConfirmacaoDaIa(sensibilidade, cam.aiConfidence);
     const decisaoDeObjeto = decidirObjetoDaCamera(cam, {
       politicaLiberaObjeto: classesPermitidasNaInstalacao.length > 0,
     });

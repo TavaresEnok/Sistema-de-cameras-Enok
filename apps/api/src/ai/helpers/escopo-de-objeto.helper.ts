@@ -156,13 +156,32 @@ export function normalizarSensibilidadeDaIa(valor: unknown): SensibilidadeDaIa {
   return valor === 'sensitive' || valor === 'precise' ? valor : 'balanced';
 }
 
-/** Valores de CONFIRMAÇÃO do evento; o limiar bruto do tracker fica baixo. */
-export function politicaDeConfirmacaoDaIa(valor: unknown) {
-  switch (normalizarSensibilidadeDaIa(valor)) {
-    case 'sensitive': return { confirmThreshold: 0.60, confirmMinFrames: 3 };
-    case 'precise': return { confirmThreshold: 0.78, confirmMinFrames: 4 };
-    default: return { confirmThreshold: 0.70, confirmMinFrames: 3 };
+export function normalizarConfiancaDaIa(valor: unknown, sensibilidadeLegada?: unknown): number {
+  const numero = Number(valor);
+  if (Number.isFinite(numero)) return Math.max(55, Math.min(90, Math.round(numero)));
+  switch (normalizarSensibilidadeDaIa(sensibilidadeLegada)) {
+    case 'sensitive': return 60;
+    case 'precise': return 78;
+    default: return 70;
   }
+}
+
+/** Valores de CONFIRMAÇÃO do evento; o limiar bruto do tracker fica baixo. */
+export function politicaDeConfirmacaoDaIa(valor: unknown, confiancaPercentual?: unknown) {
+  const sensibilidade = normalizarSensibilidadeDaIa(valor);
+  // Sem o novo campo, preserva byte por byte a política das instalações antigas.
+  if (confiancaPercentual === undefined || confiancaPercentual === null) {
+    switch (sensibilidade) {
+      case 'sensitive': return { confirmThreshold: 0.60, confirmMinFrames: 3 };
+      case 'precise': return { confirmThreshold: 0.78, confirmMinFrames: 4 };
+      default: return { confirmThreshold: 0.70, confirmMinFrames: 3 };
+    }
+  }
+  const confianca = normalizarConfiancaDaIa(confiancaPercentual, sensibilidade);
+  return {
+    confirmThreshold: confianca / 100,
+    confirmMinFrames: confianca >= 75 ? 4 : 3,
+  };
 }
 
 /** Texto curto para o operador entender por que a câmera roda (ou não). */

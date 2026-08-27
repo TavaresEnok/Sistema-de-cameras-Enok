@@ -39,6 +39,7 @@ export interface Camera {
   objectMode: 'auto' | 'sempre' | 'nunca';
   aiObjectClasses: string[];
   aiSensitivity: 'sensitive' | 'balanced' | 'precise';
+  aiConfidence: number;
   alarmsEnabled: boolean;
   /** Câmera ativa no sistema; false = desativada (não mostra nem grava). */
   enabled: boolean;
@@ -351,6 +352,13 @@ function mapCameraItems(
       aiSensitivity: camera.aiSensitivity === 'sensitive' || camera.aiSensitivity === 'precise'
         ? camera.aiSensitivity
         : 'balanced',
+      aiConfidence: Number.isFinite(Number(camera.aiConfidence))
+        ? Math.max(55, Math.min(90, Math.round(Number(camera.aiConfidence))))
+        : camera.aiSensitivity === 'sensitive'
+          ? 60
+          : camera.aiSensitivity === 'precise'
+            ? 78
+            : 70,
       detectionZones: Array.isArray(camera.detectionZones) ? camera.detectionZones : [],
       alarmsEnabled: camera.alarmsEnabled !== false,
       enabled: camera.enabled !== false,

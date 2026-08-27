@@ -25,9 +25,11 @@ test('Detecções é a aba que ABRE a Inteligência', () => {
   // que ela achou (todo dia), não para configurá-la (uma vez por câmera).
   const fonte = semComentarios(ler('src/pages/AiPage.tsx'));
   assert.match(fonte, /defaultValue="deteccoes"/, 'a Inteligência não abre em Detecções');
-  const ordem = ['deteccoes', 'configurar', 'diagnostico', 'ajustes'].map((v) => fonte.indexOf(`'${v}'`));
-  assert.ok(ordem[0] >= 0 && ordem[0] < ordem[1] && ordem[1] < ordem[2] && ordem[2] < ordem[3],
-    'a ordem das abas deixou de ser Detecções → Configurar → Diagnóstico → Ajustes');
+  const ordem = ['deteccoes', 'configurar'].map((v) => fonte.indexOf(`'${v}'`));
+  assert.ok(ordem[0] >= 0 && ordem[0] < ordem[1],
+    'a ordem das abas deixou de ser Detecções → Configuração');
+  assert.doesNotMatch(fonte, /'diagnostico'|'ajustes'/,
+    'abas técnicas voltaram ao fluxo simples do operador');
 });
 
 test('a rota /review continua de pé — o app depende dela', () => {
@@ -71,16 +73,17 @@ test('o vocabulário novo entrou nas telas de IA', () => {
   // §10 dos padrões: três termos, e só três.
   const painel = semComentarios(ler('src/components/PainelDeDeteccoes.tsx'));
   assert.doesNotMatch(painel, /\brevis[ãa]/i, 'a palavra "revisão" voltou para a tela');
-  const ai = semComentarios(ler('src/pages/AiPage.tsx'));
-  assert.match(ai, /O que procurar/, 'a seção de classes não usa o termo do vocabulário');
+  const configuracao = semComentarios(ler('src/components/ConfiguracaoFacilDaIa.tsx'));
+  assert.match(configuracao, /O que identificar/, 'a seção de classes não usa o termo do vocabulário');
 });
 
-test('a tela conta o que a IA descarta sozinha', () => {
-  // O melhor do produto era invisível: supressão de luz piscando e de movimento
-  // crônico não apareciam em lugar nenhum, e é o argumento contra o concorrente.
+test('o fluxo comum não exibe diagnóstico técnico e explicações longas', () => {
   const ai = ler('src/pages/AiPage.tsx');
-  assert.match(ai, /descarta sozinha/i, 'a explicação do que é filtrado sumiu da tela');
-  assert.match(ai, /pisca/i, 'não menciona a supressão de luz piscando');
+  assert.doesNotMatch(ai, /descarta sozinha|pisca|Placa de vídeo|GPU/i);
+  const configuracao = ler('src/components/ConfiguracaoFacilDaIa.tsx');
+  for (const essencial of ['O que identificar', 'Precisão', 'Onde identificar', 'Salvar configuração']) {
+    assert.match(configuracao, new RegExp(essencial));
+  }
 });
 
 // ── FASE 2: a aba Câmeras ───────────────────────────────────────────────────
@@ -139,19 +142,16 @@ test('o custo aparece em número, e separa medido de estimado', () => {
   assert.match(painel, /custoTotal|Custo agora/, 'não mostra o custo somado da instalação');
 });
 
-test('o estado da placa é dito em linguagem de IA, não de servidor', () => {
+test('a placa de vídeo fica nos ajustes do servidor, fora da configuração simples', () => {
   const ai = ler('src/pages/AiPage.tsx');
-  assert.match(ai, /Placa de vídeo/, 'a aba Ajustes não fala da placa');
-  assert.match(ai, /mais câmeras/, 'não explica o que a placa muda para quem usa IA');
-  assert.doesNotMatch(ai, /NVENC|CUDA|nvidia-smi/i, 'jargão de infraestrutura vazou para a tela');
+  assert.doesNotMatch(ai, /gpu\/status|Placa de vídeo|NVENC|CUDA|nvidia-smi/i);
+  const ajustes = ler('src/pages/SettingsPage.tsx');
+  assert.match(ajustes, /GPU \/ Placa de vídeo/);
 });
 
-test('a placa é informativa: 403 nela não pode derrubar a tela', () => {
-  // A rota /gpu/status exige ADMIN; um operador não pode perder a página
-  // inteira por causa de um cartão secundário.
+test('a tela simples não consulta a rota administrativa de GPU', () => {
   const ai = semComentarios(ler('src/pages/AiPage.tsx'));
-  assert.match(ai, /gpu\/status'\)\s*\n?\s*\.then/s, 'a chamada da GPU está dentro do Promise.all crítico');
-  assert.match(ai, /catch\(\(\) => setGpu\(null\)\)/, 'falha da GPU precisa ser engolida');
+  assert.doesNotMatch(ai, /gpu\/status/);
 });
 
 // ── FASE 4: procurar por objeto na Reprodução ───────────────────────────────

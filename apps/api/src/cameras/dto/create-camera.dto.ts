@@ -226,6 +226,12 @@ export class CreateCameraDto {
   aiSensitivity?: 'sensitive' | 'balanced' | 'precise';
 
   @IsOptional()
+  @IsInt()
+  @Min(55)
+  @Max(90)
+  aiConfidence?: number;
+
+  @IsOptional()
   @IsBoolean()
   alarmsEnabled?: boolean;
 

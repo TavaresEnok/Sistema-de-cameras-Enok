@@ -5,6 +5,7 @@ import {
   classesPermitidas,
   decidirObjetoDaCamera,
   explicarDecisao,
+  normalizarConfiancaDaIa,
   normalizarModoDeObjeto,
   normalizarSensibilidadeDaIa,
   politicaDeConfirmacaoDaIa,
@@ -126,6 +127,22 @@ test('perfis de sensibilidade só alteram a confirmação e têm padrão seguro'
   assert.deepEqual(politicaDeConfirmacaoDaIa('sensitive'), { confirmThreshold: 0.60, confirmMinFrames: 3 });
   assert.deepEqual(politicaDeConfirmacaoDaIa('balanced'), { confirmThreshold: 0.70, confirmMinFrames: 3 });
   assert.deepEqual(politicaDeConfirmacaoDaIa('precise'), { confirmThreshold: 0.78, confirmMinFrames: 4 });
+});
+
+test('confiança percentual controla o limiar REAL e respeita a faixa segura', () => {
+  assert.equal(normalizarConfiancaDaIa(55), 55);
+  assert.equal(normalizarConfiancaDaIa(73.6), 74);
+  assert.equal(normalizarConfiancaDaIa(10), 55);
+  assert.equal(normalizarConfiancaDaIa(100), 90);
+  assert.equal(normalizarConfiancaDaIa(undefined, 'precise'), 78);
+  assert.deepEqual(politicaDeConfirmacaoDaIa('balanced', 64), {
+    confirmThreshold: 0.64,
+    confirmMinFrames: 3,
+  });
+  assert.deepEqual(politicaDeConfirmacaoDaIa('balanced', 82), {
+    confirmThreshold: 0.82,
+    confirmMinFrames: 4,
+  });
 });
 
 test('toda decisão tem explicação em português para o operador', () => {

@@ -15,11 +15,6 @@ const semComentarios = (t: string) => t
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PAGINA = 'src/pages/AiPage.tsx';
-// A lista de câmeras saiu da página e virou a aba "Câmeras"
-// (`components/PainelDeCamerasDaIa.tsx`), que junta o que era só configuração
-// com o ESTADO REAL de cada processador. As regras abaixo continuam valendo —
-// mudou o arquivo onde moram, não o que protegem.
-const PAINEL_CAMERAS = 'src/components/PainelDeCamerasDaIa.tsx';
 
 test('a instalação NÃO pode escolher as classes de objeto', () => {
   // Se a tela oferecesse a escolha, o operador ampliaria sozinho o escopo do
@@ -30,7 +25,7 @@ test('a instalação NÃO pode escolher as classes de objeto', () => {
 });
 
 test('mas EXPLICA que a lista vem do provedor — senão o operador procura o botão', () => {
-  const fonte = read(PAGINA);
+  const fonte = read('src/components/ConfiguracaoFacilDaIa.tsx');
   assert.match(fonte, /painel central|provedor do sistema/i);
 });
 
@@ -43,35 +38,38 @@ test('a configuração abre mesmo quando ainda não existe câmera', () => {
 
 test('o "mostrar quadrado no objeto" existe e diz que não afeta a detecção', () => {
   const fonte = read(PAGINA);
-  assert.match(fonte, /Mostrar quadrado no objeto/);
-  assert.match(fonte, /a detecção continua igual/i, 'sem isso o operador teme desligar a detecção');
+  assert.match(fonte, /Marcação.*visível.*oculta/s);
+  assert.match(fonte, /não altera a detecção/i, 'sem isso o operador teme desligar a detecção');
   assert.match(fonte, /aria-pressed=/, 'o alternador precisa anunciar estado');
 });
 
-test('cada câmera mostra POR QUE roda ou não', () => {
-  // "Sem linha desenhada", "desligado pelo operador" e "não liberado para esta
-  // instalação" pedem ações DIFERENTES; um interruptor apagado não diria qual.
+test('a tela consulta o estado, mas traduz para ligado ou desligado', () => {
   assert.match(read(PAGINA), /escopo-objeto/, 'a tela precisa consultar a decisão do backend');
-  // Agora a explicação vem de DUAS fontes que se completam: o escopo diz por que
-  // a busca por objeto roda ou não, e o estado diz se o processador está de pé.
-  const painel = read(PAINEL_CAMERAS);
-  assert.match(painel, /estadoDaIa\(/, 'o painel não traduz o estado do processador');
-  assert.match(painel, /estado\.detalhe/, 'o painel não mostra a explicação ao operador');
+  const configuracao = read('src/components/ConfiguracaoFacilDaIa.tsx');
+  assert.match(configuracao, /Detecção de objetos ativa/);
+  assert.match(configuracao, /Detecção de objetos desligada/);
 });
 
-test('os três modos por câmera estão disponíveis', () => {
-  const fonte = read(PAINEL_CAMERAS);
+test('os três modos técnicos não aparecem na configuração comum', () => {
+  const fonte = read('src/components/ConfiguracaoFacilDaIa.tsx');
   for (const modo of ['auto', 'sempre', 'nunca']) {
-    assert.match(fonte, new RegExp(`value="${modo}"`), `falta o modo ${modo}`);
+    assert.doesNotMatch(fonte, new RegExp(`value="${modo}"`), `o modo técnico ${modo} vazou`);
   }
-  assert.match(fonte, /aria-label=/, 'o seletor por câmera precisa de rótulo acessível');
+  assert.match(fonte, /aria-label="Ativar ou desativar a IA nesta câmera"/);
 });
 
-test('sem objeto liberado, os controles ficam desabilitados — não escondidos', () => {
-  // Esconder faria parecer defeito; desabilitar com explicação mostra que a
-  // função existe e depende de outra coisa.
-  assert.match(read(PAINEL_CAMERAS), /disabled=\{!objetoLiberado\}/);
-  assert.match(read(PAGINA), /Nenhum tipo de objeto liberado/);
+test('sem objeto liberado, a tela explica a causa', () => {
+  assert.match(read(PAGINA), /Detecção de objetos não liberada/);
+  assert.match(read('src/components/ConfiguracaoFacilDaIa.tsx'), /não possui classes de objeto liberadas/);
+});
+
+test('precisão é uma barra percentual real, não três rótulos', () => {
+  const fonte = read('src/components/ConfiguracaoFacilDaIa.tsx');
+  assert.match(fonte, /<Slider/);
+  assert.match(fonte, /min=\{55\}/);
+  assert.match(fonte, /max=\{90\}/);
+  assert.match(fonte, /aiConfidence/);
+  assert.doesNotMatch(fonte, />Sensível<|>Equilibrada<|>Precisa</);
 });
 
 test('falha de rede não zera a tela', () => {

@@ -6,6 +6,7 @@ import {
   Bus,
   CarFront,
   Check,
+  Gauge,
   Loader2,
   Save,
   Search,
@@ -19,6 +20,7 @@ import { getRequestErrorMessage } from '../lib/request-error';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { toast } from '../hooks/use-toast';
+import { Slider } from './ui/slider';
 
 const API_URL = getApiBaseUrl();
 
@@ -31,12 +33,13 @@ export type CameraDaConfiguracaoDaIa = {
   aiEnabled: boolean;
   aiObjectClasses: string[];
   aiSensitivity: 'sensitive' | 'balanced' | 'precise';
+  aiConfidence: number;
   recordingMode: string;
   motionTrigger: string;
   temLinha: boolean;
 };
 
-type Draft = Pick<CameraDaConfiguracaoDaIa, 'objectMode' | 'aiEnabled' | 'aiObjectClasses' | 'aiSensitivity'>;
+type Draft = Pick<CameraDaConfiguracaoDaIa, 'objectMode' | 'aiEnabled' | 'aiObjectClasses' | 'aiConfidence'>;
 
 const CLASSES: Record<string, { nome: string; Icone: typeof UserRound }> = {
   person: { nome: 'Pessoas', Icone: UserRound },
@@ -46,26 +49,6 @@ const CLASSES: Record<string, { nome: string; Icone: typeof UserRound }> = {
   bus: { nome: 'Ônibus', Icone: Bus },
   truck: { nome: 'Caminhões', Icone: CarFront },
 };
-
-const SENSIBILIDADES: Array<{
-  valor: Draft['aiSensitivity'];
-  titulo: string;
-  detalhe: string;
-}> = [
-  { valor: 'sensitive', titulo: 'Sensível', detalhe: 'Melhor para objetos pequenos ou distantes.' },
-  { valor: 'balanced', titulo: 'Equilibrada', detalhe: 'Recomendada para a maioria das cenas.' },
-  { valor: 'precise', titulo: 'Precisa', detalhe: 'Exige mais evidência e reduz alarmes falsos.' },
-];
-
-const MODOS: Array<{
-  valor: Draft['objectMode'];
-  titulo: string;
-  detalhe: string;
-}> = [
-  { valor: 'auto', titulo: 'Automático', detalhe: 'Analisa quando houver área/linha ou gravação por objeto.' },
-  { valor: 'sempre', titulo: 'Sempre', detalhe: 'Mantém a procura de objetos ativa nesta câmera.' },
-  { valor: 'nunca', titulo: 'Desligado', detalhe: 'Não procura objetos; movimento continua funcionando.' },
-];
 
 function resumoDeZonas(zonas: DetectionZone[]) {
   const areas = zonas.filter((z) => z.kind === 'include').length;
@@ -121,9 +104,9 @@ export function ConfiguracaoFacilDaIa({
       objectMode: camera.objectMode,
       aiEnabled: camera.aiEnabled,
       aiObjectClasses: camera.aiObjectClasses.length ? camera.aiObjectClasses : [...classesPermitidas],
-      aiSensitivity: camera.aiSensitivity,
+      aiConfidence: Math.max(55, Math.min(90, Math.round(Number(camera.aiConfidence) || 70))),
     });
-  }, [camera?.cameraId, camera?.objectMode, camera?.aiEnabled, camera?.aiSensitivity, camera?.aiObjectClasses.join('|'), classesPermitidas.join('|')]);
+  }, [camera?.cameraId, camera?.objectMode, camera?.aiEnabled, camera?.aiConfidence, camera?.aiObjectClasses.join('|'), classesPermitidas.join('|')]);
 
   if (desenhando && camera) {
     return (
@@ -181,6 +164,18 @@ export function ConfiguracaoFacilDaIa({
     return <div className="p-10 text-center text-xs text-[hsl(var(--muted-foreground))]">Nenhuma câmera disponível.</div>;
   }
 
+  const iaLigada = draft.aiEnabled && draft.objectMode !== 'nunca';
+  const alternarIa = () => {
+    const ligar = !iaLigada;
+    setDraft({
+      ...draft,
+      aiEnabled: ligar,
+      // A escolha técnica fica interna: para o operador, ligar significa que a
+      // câmera deve analisar; desligar significa que não deve.
+      objectMode: ligar ? 'sempre' : 'nunca',
+    });
+  };
+
   return (
     <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[260px_minmax(0,1fr)]">
       <aside className="flex min-h-[160px] flex-col border-b border-border bg-[hsl(var(--card))] lg:min-h-0 lg:border-b-0 lg:border-r">
@@ -214,27 +209,31 @@ export function ConfiguracaoFacilDaIa({
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[hsl(var(--primary)_/_0.12)] text-[hsl(var(--primary))]"><Brain className="h-5 w-5" /></div>
             <div className="min-w-0 flex-1">
               <h2 className="truncate text-sm font-semibold">{camera.nome}</h2>
-              <p className="text-[11px] text-[hsl(var(--muted-foreground))]">{camera.explicacao}</p>
+              <p className="text-[11px] text-[hsl(var(--muted-foreground))]">
+                {iaLigada ? 'Detecção de objetos ativa' : 'Detecção de objetos desligada'}
+              </p>
             </div>
             <button
               type="button"
-              onClick={() => setDraft({ ...draft, aiEnabled: !draft.aiEnabled })}
+              onClick={alternarIa}
               disabled={iaObrigatoria}
-              className={`relative h-7 w-12 rounded-full transition-colors ${draft.aiEnabled ? 'bg-[hsl(var(--primary))]' : 'bg-[hsl(var(--muted))]'}`}
-              aria-pressed={draft.aiEnabled}
+              className={`relative h-7 w-12 rounded-full transition-colors ${iaLigada ? 'bg-[hsl(var(--primary))]' : 'bg-[hsl(var(--muted))]'}`}
+              aria-pressed={iaLigada}
               aria-label="Ativar ou desativar a IA nesta câmera"
             >
-              <span className={`absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${draft.aiEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+              <span className={`absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${iaLigada ? 'translate-x-5' : 'translate-x-0'}`} />
             </button>
             <span className="text-xs font-medium">
-              {iaObrigatoria ? 'IA obrigatória para a gravação' : `IA ${draft.aiEnabled ? 'ativa' : 'desligada'}`}
+              {iaObrigatoria ? 'Obrigatória para gravar' : iaLigada ? 'Ativa' : 'Desligada'}
             </span>
           </header>
 
-          <section className={`rounded-lg border border-border bg-card ${!draft.aiEnabled ? 'pointer-events-none opacity-50' : ''}`}>
+          <section className={`rounded-lg border border-border bg-card ${!iaLigada ? 'pointer-events-none opacity-50' : ''}`}>
             <div className="border-b border-border px-4 py-3">
               <h3 className="text-sm font-medium">O que identificar</h3>
-              <p className="mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">Escolha somente o que importa nesta câmera.</p>
+              <p className="mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">
+                Escolha entre os tipos liberados pelo painel central.
+              </p>
             </div>
             <div className="flex flex-wrap gap-2 p-4">
               {classesPermitidas.map((classe) => {
@@ -253,19 +252,30 @@ export function ConfiguracaoFacilDaIa({
             </div>
           </section>
 
-          <div className={`grid gap-4 xl:grid-cols-2 ${!draft.aiEnabled ? 'pointer-events-none opacity-50' : ''}`}>
+          <div className={`grid gap-4 xl:grid-cols-2 ${!iaLigada ? 'pointer-events-none opacity-50' : ''}`}>
             <section className="rounded-lg border border-border bg-card p-4">
-              <h3 className="text-sm font-medium">Sensibilidade</h3>
-              <p className="mt-0.5 text-[11px] text-[hsl(var(--muted-foreground))]">Controla quanta evidência é exigida antes de gerar um evento.</p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
-                {SENSIBILIDADES.map((opcao) => (
-                  <button key={opcao.valor} type="button" onClick={() => setDraft({ ...draft, aiSensitivity: opcao.valor })}
-                    className={`rounded-lg border px-3 py-2.5 text-left ${draft.aiSensitivity === opcao.valor ? 'border-[hsl(var(--primary)_/_0.55)] bg-[hsl(var(--primary)_/_0.10)]' : 'border-border hover:bg-[hsl(var(--muted)_/_0.4)]'}`}>
-                    <span className="block text-xs font-medium">{opcao.titulo}</span>
-                    <span className="mt-0.5 block text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">{opcao.detalhe}</span>
-                  </button>
-                ))}
+              <div className="flex items-center gap-2">
+                <Gauge className="h-4 w-4 text-[hsl(var(--primary))]" aria-hidden />
+                <h3 className="text-sm font-medium">Precisão</h3>
+                <strong className="ml-auto rounded-md bg-[hsl(var(--primary)_/_0.12)] px-2 py-0.5 text-sm text-[hsl(var(--primary))]">
+                  {draft.aiConfidence}%
+                </strong>
               </div>
+              <Slider
+                className="mt-5"
+                min={55}
+                max={90}
+                step={1}
+                value={[draft.aiConfidence]}
+                onValueChange={([valor]) => setDraft({ ...draft, aiConfidence: valor ?? 70 })}
+                aria-label="Precisão da detecção"
+              />
+              <div className="mt-2 flex justify-between text-[10px] text-[hsl(var(--muted-foreground))]">
+                <span>55%</span><span>60%</span><span>70%</span><span>80%</span><span>90%</span>
+              </div>
+              <p className="mt-3 text-[11px] leading-relaxed text-[hsl(var(--muted-foreground))]">
+                Mais alta reduz alarmes falsos. Mais baixa ajuda a encontrar objetos pequenos ou distantes.
+              </p>
             </section>
 
             <section className="rounded-lg border border-border bg-card p-4">
@@ -280,22 +290,6 @@ export function ConfiguracaoFacilDaIa({
               </button>
             </section>
           </div>
-
-          <section className={`rounded-lg border border-border bg-card p-4 ${!draft.aiEnabled ? 'pointer-events-none opacity-50' : ''}`}>
-            <h3 className="text-sm font-medium">Quando procurar objetos</h3>
-            <div className="mt-3 grid gap-2 md:grid-cols-3">
-              {MODOS.map((opcao) => {
-                const bloqueada = opcao.valor === 'nunca' && camera.recordingMode === 'object';
-                return (
-                  <button key={opcao.valor} type="button" disabled={bloqueada} onClick={() => setDraft({ ...draft, objectMode: opcao.valor })}
-                    className={`rounded-lg border px-3 py-2.5 text-left disabled:cursor-not-allowed disabled:opacity-40 ${draft.objectMode === opcao.valor ? 'border-[hsl(var(--primary)_/_0.55)] bg-[hsl(var(--primary)_/_0.10)]' : 'border-border hover:bg-[hsl(var(--muted)_/_0.4)]'}`}>
-                    <span className="block text-xs font-medium">{opcao.titulo}</span>
-                    <span className="mt-0.5 block text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">{bloqueada ? 'Indisponível porque a gravação depende da IA.' : opcao.detalhe}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
 
           <div className="sticky bottom-0 flex items-center justify-end border-t border-border bg-background/95 py-3 backdrop-blur">
             <button type="button" onClick={() => void salvar()} disabled={salvando} className="btn btn-primary min-w-[150px]">
