@@ -106,8 +106,13 @@ export function ConfiguracaoFacilDaIa({
   const camera = camerasDaIa.find((c) => c.cameraId === selecionada) ?? camerasDaIa[0] ?? null;
   const cameraStore = cameras.find((c) => c.id === camera?.cameraId);
   const zonas = (cameraStore?.detectionZones ?? []) as DetectionZone[];
-  const iaObrigatoria = camera.recordingMode === 'object'
-    || (camera.recordingMode === 'motion' && camera.motionTrigger !== 'CAMERA');
+  // A lista pode ficar vazia durante o primeiro cadastro ou uma recuperação de
+  // rede. A tela vazia precisa continuar utilizável, sem tentar acessar campos
+  // de uma câmera inexistente.
+  const iaObrigatoria = Boolean(camera && (
+    camera.recordingMode === 'object'
+    || (camera.recordingMode === 'motion' && camera.motionTrigger !== 'CAMERA')
+  ));
 
   useEffect(() => {
     if (!camera) return;

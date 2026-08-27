@@ -34,6 +34,13 @@ test('mas EXPLICA que a lista vem do provedor — senão o operador procura o bo
   assert.match(fonte, /painel central|provedor do sistema/i);
 });
 
+test('a configuração abre mesmo quando ainda não existe câmera', () => {
+  const fonte = read('src/components/ConfiguracaoFacilDaIa.tsx');
+  assert.doesNotMatch(fonte, /const iaObrigatoria = camera\.recordingMode/);
+  assert.match(fonte, /Boolean\(camera &&/);
+  assert.match(fonte, /Nenhuma câmera disponível/);
+});
+
 test('o "mostrar quadrado no objeto" existe e diz que não afeta a detecção', () => {
   const fonte = read(PAGINA);
   assert.match(fonte, /Mostrar quadrado no objeto/);

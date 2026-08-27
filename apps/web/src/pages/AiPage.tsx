@@ -282,8 +282,9 @@ export default function AiPage() {
               <div className="mt-3 flex gap-2 rounded-md bg-[hsl(var(--muted)_/_0.4)] px-2.5 py-2">
                 <Info className="mt-0.5 h-3 w-3 shrink-0 text-[hsl(var(--muted-foreground))]" aria-hidden />
                 <p className="text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
-                  Estes são os tipos disponíveis no contrato. Na aba Configurar você escolhe quais
-                  deles cada câmera deve procurar; para liberar um tipo novo, fale com o suporte.
+                  O painel central define os tipos disponíveis no contrato. Na aba Configurar você
+                  escolhe quais deles cada câmera deve procurar; para liberar um tipo novo, fale com
+                  o suporte.
                 </p>
               </div>
             </div>
