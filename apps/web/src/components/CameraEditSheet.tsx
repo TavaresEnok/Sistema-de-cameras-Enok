@@ -493,7 +493,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                   <div className="space-y-3 rounded-lg border border-border bg-background/55 p-3">
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4 text-primary" />
-                      <div><p className="text-[12px] font-semibold">Localização no mapa</p><p className="text-[10px] text-muted-foreground">O endereço físico é independente do IP da câmera.</p></div>
+                      <div><p className="text-[12px] font-semibold">Localização no mapa</p><p className="text-[10px] leading-relaxed text-muted-foreground">Sem endereço, o mapa posiciona a câmera por <strong>estimativa da rede</strong> — que cai na saída do provedor, não onde a câmera está. O endereço é independente do IP.</p></div>
                     </div>
                     <FormField label="Endereço físico" hint="rua, número, cidade e estado">
                       <div className="flex gap-2">

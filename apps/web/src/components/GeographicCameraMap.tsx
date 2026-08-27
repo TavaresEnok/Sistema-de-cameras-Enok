@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Camera as CameraIcon, LocateFixed } from 'lucide-react';
 import { latLngBounds, type Map as LeafletMap } from 'leaflet';
-import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet';
+import { CircleMarker, MapContainer, Popup, TileLayer, Tooltip, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Camera } from '../store/vmsDataStore';
+import {
+  agruparPorPosicao,
+  explicacaoDoPonto,
+  rotuloDoPonto,
+  type PontoNoMapa,
+} from '../lib/posicao-no-mapa';
 
 type Center = { latitude: number; longitude: number };
 type PositionedCamera = { camera: Camera; position: Center };
@@ -45,42 +51,18 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
     () => cameras.filter((camera) => Number.isFinite(camera.latitude) && Number.isFinite(camera.longitude)),
     [cameras],
   );
-  const displayCoordinates = useMemo(() => {
-    const groups = new Map<string, Camera[]>();
-    for (const camera of positioned) {
-      const key = `${Number(camera.latitude).toFixed(5)}:${Number(camera.longitude).toFixed(5)}`;
-      groups.set(key, [...(groups.get(key) ?? []), camera]);
-    }
-    const result = new Map<string, Center>();
-    for (const group of groups.values()) {
-      group.forEach((camera, index) => {
-        const latitude = Number(camera.latitude);
-        const longitude = Number(camera.longitude);
-        if (group.length === 1) {
-          result.set(camera.id, { latitude, longitude });
-          return;
-        }
-        // IP público compartilhado gera uma estimativa igual. O leque é só
-        // visual para os marcadores continuarem clicáveis; o banco não muda.
-        const ring = Math.floor(index / 10) + 1;
-        const angle = (index % 10) * (Math.PI * 2 / Math.min(10, group.length));
-        const radius = 0.0012 * ring;
-        result.set(camera.id, {
-          latitude: latitude + Math.sin(angle) * radius,
-          longitude: longitude + Math.cos(angle) * radius,
-        });
-      });
-    }
-    return result;
-  }, [positioned]);
-  const positions = useMemo<PositionedCamera[]>(() => positioned.map((camera) => ({
-    camera,
-    position: displayCoordinates.get(camera.id) ?? {
-      latitude: Number(camera.latitude),
-      longitude: Number(camera.longitude),
-    },
-  })), [displayCoordinates, positioned]);
-  const signature = positions.map(({ camera, position }) => `${camera.id}:${position.latitude}:${position.longitude}`).join('|');
+  // AGRUPA em vez de espalhar. Ver lib/posicao-no-mapa.ts: até 27/08/2026 os
+  // marcadores empilhados eram abertos num leque de ~130 m "só para ficarem
+  // clicáveis" — e isso fazia 25 estimativas idênticas parecerem 25 medidas.
+  const pontos = useMemo<PontoNoMapa[]>(() => agruparPorPosicao(positioned), [positioned]);
+  const positions = useMemo<PositionedCamera[]>(
+    () => pontos.map((ponto) => ({
+      camera: ponto.cameras[0] as Camera,
+      position: { latitude: ponto.latitude, longitude: ponto.longitude },
+    })),
+    [pontos],
+  );
+  const signature = pontos.map((p) => `${p.id}:${p.cameras.length}`).join('|');
 
   return (
     <div className="relative h-full min-h-[420px] overflow-hidden bg-[#dbe4e8]">
@@ -103,23 +85,60 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
           noWrap
         />
         <CameraBounds positions={positions} signature={signature} />
-        {positions.map(({ camera, position }) => (
-          <CircleMarker
-            key={camera.id}
-            center={[position.latitude, position.longitude]}
-            radius={11}
-            pathOptions={{
-              color: camera.isOnline ? '#10b981' : '#64748b',
-              fillColor: camera.isOnline ? '#064e3b' : '#1e293b',
-              fillOpacity: 0.96,
-              opacity: 1,
-              weight: 3,
-            }}
-            eventHandlers={{ click: () => onOpen(camera) }}
-          >
-            <Tooltip direction="bottom" offset={[0, 13]} opacity={0.95} permanent>{camera.name}</Tooltip>
-          </CircleMarker>
-        ))}
+        {pontos.map((ponto) => {
+          const algumaOnline = ponto.cameras.some((c) => (c as Camera).isOnline);
+          // Estimativa em âmbar e tracejada; posição conferida em verde/cinza
+          // sólido. A diferença é visual E textual — cor sozinha não informa
+          // quem não distingue cores.
+          const cor = ponto.estimado ? '#d97706' : algumaOnline ? '#10b981' : '#64748b';
+          const preenchimento = ponto.estimado ? '#78350f' : algumaOnline ? '#064e3b' : '#1e293b';
+          return (
+            <CircleMarker
+              key={ponto.id}
+              center={[ponto.latitude, ponto.longitude]}
+              radius={ponto.agrupado ? 15 : 11}
+              pathOptions={{
+                color: cor,
+                fillColor: preenchimento,
+                fillOpacity: 0.96,
+                opacity: 1,
+                weight: 3,
+                dashArray: ponto.estimado ? '4 3' : undefined,
+              }}
+              eventHandlers={
+                ponto.agrupado || ponto.estimado
+                  ? undefined
+                  : { click: () => onOpen(ponto.cameras[0] as Camera) }
+              }
+            >
+              <Tooltip direction="bottom" offset={[0, 17]} opacity={0.95} permanent>
+                {rotuloDoPonto(ponto)}{ponto.estimado ? ' · estimado' : ''}
+              </Tooltip>
+              {(ponto.agrupado || ponto.estimado) && (
+                <Popup>
+                  <div className="max-h-56 min-w-[15rem] overflow-y-auto">
+                    <p className="m-0 mb-2 text-[11px] leading-relaxed text-muted-foreground">
+                      {explicacaoDoPonto(ponto)}
+                    </p>
+                    <ul className="m-0 list-none p-0">
+                      {ponto.cameras.map((c) => (
+                        <li key={c.id}>
+                          <button
+                            type="button"
+                            onClick={() => onOpen(c as Camera)}
+                            className="w-full rounded px-1.5 py-1 text-left text-xs hover:bg-accent"
+                          >
+                            {c.name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </Popup>
+              )}
+            </CircleMarker>
+          );
+        })}
       </MapContainer>
 
       <button

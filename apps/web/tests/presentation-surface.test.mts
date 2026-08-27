@@ -95,3 +95,41 @@ test('páginas sem função não voltam por engano e o mapa real permanece dispo
     assert.throws(() => read(`src/pages/${pagina}.tsx`), `src/pages/${pagina}.tsx foi recriada`);
   }
 });
+
+// ── §5 no MAPA ──────────────────────────────────────────────────────────────
+//
+// Defeito real (27/08/2026): o mapa recebia 29 câmeras posicionadas por
+// ESTIMATIVA DE IP — todas em dois pontos, que são saídas do provedor — e
+// espalhava os marcadores num leque de ~130 m "só para ficarem clicáveis".
+// Quem olhava via 25 pinos distribuídos por um bairro e concluía que o sistema
+// sabia onde cada câmera estava. Num sistema de segurança isso manda gente a um
+// endereço que não significa nada.
+//
+// O teste da §5 não cobria o mapa. Passou a cobrir.
+
+test('§5 no mapa: posição estimada NÃO é espalhada para parecer medida', () => {
+  const fonte = read('src/components/GeographicCameraMap.tsx');
+
+  // O leque era feito com trigonometria sobre a coordenada real. Nenhuma das
+  // duas tem o que fazer num mapa que só desenha o que o servidor mediu.
+  assert.doesNotMatch(fonte, /Math\.sin\s*\(/, 'o mapa voltou a deslocar marcadores por ângulo');
+  assert.doesNotMatch(fonte, /Math\.cos\s*\(/, 'o mapa voltou a deslocar marcadores por ângulo');
+  assert.doesNotMatch(fonte, /radius\s*=\s*0\.\d+\s*\*/, 'o mapa voltou a abrir um leque em graus');
+
+  // E precisa continuar agrupando pelo módulo honesto.
+  assert.match(fonte, /agruparPorPosicao/, 'o mapa deve AGRUPAR posições iguais, não espalhá-las');
+});
+
+test('§5 no mapa: o operador é avisado de que a posição é estimativa', () => {
+  const mapa = read('src/components/GeographicCameraMap.tsx');
+  const pagina = read('src/pages/MapPage.tsx');
+
+  // No marcador: o rótulo diz, não só a cor — cor sozinha não informa quem não
+  // distingue cores.
+  assert.match(mapa, /estimado/, 'o marcador precisa dizer quando a posição é estimada');
+  assert.match(mapa, /explicacaoDoPonto/, 'o ponto precisa explicar o que significa');
+
+  // Na página: uma faixa contando quantas estão estimadas.
+  assert.match(pagina, /resumirMapa/, 'a página precisa contar quantas posições são estimativa');
+  assert.match(pagina, /estimada pela rede|posição estimada/i, 'a faixa precisa dizer isso em português');
+});
