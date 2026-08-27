@@ -27,6 +27,7 @@ export default function MapPage() {
   const token = useAuthStore((state) => state.accessToken);
   const role = useAuthStore((state) => state.user?.role ?? 'viewer');
   const cameras = useVmsDataStore((state) => state.cameras);
+  const loadData = useVmsDataStore((state) => state.load);
   const [, setLocation] = useLocation();
   const stageRef = useRef<HTMLDivElement>(null);
   const [sites, setSites] = useState<Site[]>([]);
@@ -40,6 +41,8 @@ export default function MapPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [mode, setMode] = useState<'geographic' | 'floorplan'>('geographic');
+  const [autoLocating, setAutoLocating] = useState(false);
+  const [autoLocationDone, setAutoLocationDone] = useState(false);
 
   const accessibleSiteIds = useMemo(() => new Set(cameras.map((c) => c.siteId).filter(Boolean)), [cameras]);
   const visibleSites = useMemo(
@@ -58,6 +61,25 @@ export default function MapPage() {
     if (!token) return;
     void api(token).get<Site[]>('/sites').then(({ data }) => setSites(data)).catch(() => setError('Não foi possível carregar as unidades.'));
   }, [token]);
+
+  const discoverLocations = async () => {
+    if (!token || role !== 'admin' || autoLocating) return;
+    setAutoLocating(true);
+    try {
+      await api(token).post('/cameras/location/auto-discover');
+      await loadData();
+      setAutoLocationDone(true);
+    } catch {
+      setError('Não foi possível estimar a localização das câmeras agora. Você ainda pode informar o endereço manualmente.');
+    } finally { setAutoLocating(false); }
+  };
+
+  useEffect(() => {
+    if (role !== 'admin' || !token || !cameras.length || autoLocationDone || autoLocating) return;
+    if (cameras.some((camera) => camera.enabled && (camera.latitude == null || camera.longitude == null))) {
+      void discoverLocations();
+    }
+  }, [cameras.length, role, token, autoLocationDone, autoLocating]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!visibleSites.length) return;
@@ -138,6 +160,7 @@ export default function MapPage() {
             <button type="button" onClick={() => setMode('geographic')} className={`h-7 rounded px-3 ${mode === 'geographic' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>Mapa</button>
             <button type="button" onClick={() => setMode('floorplan')} className={`h-7 rounded px-3 ${mode === 'floorplan' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>Planta</button>
           </div>
+          {mode === 'geographic' && role === 'admin' && cameras.some((camera) => camera.latitude == null || camera.longitude == null) && <button type="button" disabled={autoLocating} onClick={() => void discoverLocations()} className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-card px-3 text-xs hover:bg-accent disabled:opacity-50"><MapPin className="h-3.5 w-3.5" />{autoLocating ? 'Localizando…' : 'Tentar localizar'}</button>}
           {mode === 'floorplan' && <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className="h-9 rounded-md border border-border bg-card px-3 text-xs">
             {visibleSites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
           </select>}

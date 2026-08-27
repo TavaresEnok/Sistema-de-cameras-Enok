@@ -24,3 +24,12 @@ test('coordenada ausente não vira 0,0 no Atlântico', async () => {
   assert.match(store, /camera\.latitude === null \|\| camera\.latitude === undefined \|\| camera\.latitude === ''/);
   assert.match(store, /camera\.longitude === null \|\| camera\.longitude === undefined \|\| camera\.longitude === ''/);
 });
+
+test('mapa tenta localizar câmeras sem posição e preserva edição manual', async () => {
+  const page = await read('src/pages/MapPage.tsx');
+  assert.match(page, /cameras\/location\/auto-discover/);
+  assert.match(page, /Tentar localizar/);
+  // O teste de persistência vive na API; aqui garantimos que o cliente não
+  // inventa coordenadas nem chama geolocalização pública diretamente.
+  assert.doesNotMatch(page, /ipwho\.is/);
+});

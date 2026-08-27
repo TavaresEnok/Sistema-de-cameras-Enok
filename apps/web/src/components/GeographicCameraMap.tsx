@@ -27,6 +27,28 @@ function fromWorld(x: number, y: number, zoom: number): Center {
 
 export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; onOpen: (camera: Camera) => void }) {
   const positioned = useMemo(() => cameras.filter((camera) => Number.isFinite(camera.latitude) && Number.isFinite(camera.longitude)), [cameras]);
+  const displayCoordinates = useMemo(() => {
+    const groups = new Map<string, Camera[]>();
+    for (const camera of positioned) {
+      const key = `${Number(camera.latitude).toFixed(5)}:${Number(camera.longitude).toFixed(5)}`;
+      groups.set(key, [...(groups.get(key) ?? []), camera]);
+    }
+    const result = new Map<string, Center>();
+    for (const group of groups.values()) {
+      group.forEach((camera, index) => {
+        const latitude = Number(camera.latitude);
+        const longitude = Number(camera.longitude);
+        if (group.length === 1) { result.set(camera.id, { latitude, longitude }); return; }
+        // IP público compartilhado coloca várias câmeras no mesmo ponto. O
+        // pequeno leque é só visual e permite clicar em cada câmera; não muda o banco.
+        const ring = Math.floor(index / 10) + 1;
+        const angle = (index % 10) * (Math.PI * 2 / Math.min(10, group.length));
+        const radius = 0.0012 * ring;
+        result.set(camera.id, { latitude: latitude + Math.sin(angle) * radius, longitude: longitude + Math.cos(angle) * radius });
+      });
+    }
+    return result;
+  }, [positioned]);
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; y: number; center: Center } | null>(null);
   const [size, setSize] = useState<Size>({ width: 900, height: 600 });
@@ -107,7 +129,8 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
       {tiles.map((tile) => <img key={tile.key} src={`https://tile.openstreetmap.org/${zoom}/${tile.srcX}/${tile.y}.png`} alt="" draggable={false} className="pointer-events-none absolute h-64 w-64 max-w-none" style={{ left: tile.x * TILE - left, top: tile.y * TILE - top }} />)}
       <div className="pointer-events-none absolute inset-0 bg-background/5" />
       {positioned.map((camera) => {
-        const point = toWorld(Number(camera.latitude), Number(camera.longitude), zoom);
+        const display = displayCoordinates.get(camera.id) ?? { latitude: Number(camera.latitude), longitude: Number(camera.longitude) };
+        const point = toWorld(display.latitude, display.longitude, zoom);
         return <button key={camera.id} type="button" onClick={() => onOpen(camera)} className="group absolute z-10 -translate-x-1/2 -translate-y-full" style={{ left: point.x - left, top: point.y - top }} title={camera.locationAddress || camera.name}>
           <span className={`flex h-10 w-10 items-center justify-center rounded-full rounded-bl-md border-2 bg-card shadow-xl transition-transform group-hover:scale-110 ${camera.isOnline ? 'border-emerald-500 text-emerald-500' : 'border-muted-foreground text-muted-foreground'}`}><CameraIcon className="h-4 w-4" /></span>
           <span className="absolute left-1/2 top-11 max-w-52 -translate-x-1/2 whitespace-nowrap rounded bg-background/90 px-2 py-1 text-[10px] font-semibold shadow backdrop-blur">{camera.name}</span>

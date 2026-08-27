@@ -328,6 +328,14 @@ export class CamerasController {
     return this.camerasService.geocodeAddress(address);
   }
 
+  @Roles(UserRole.ADMIN)
+  @RequirePermission('cameraConfig')
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
+  @Post('location/auto-discover')
+  autoDiscoverLocations() {
+    return this.camerasService.autoDiscoverLocations();
+  }
+
   @Roles(UserRole.VIEWER)
   @Get('events')
   async listEvents(@CurrentUser() user: AuthUser, @Query('cameraId') cameraId?: string, @Query('limit') limit?: string) {

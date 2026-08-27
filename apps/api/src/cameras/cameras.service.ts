@@ -43,7 +43,7 @@ import {
   sanitizeRtspUrl,
 } from './helpers/rtsp-url.helper';
 import { sanitizeSensitiveText } from '../common/security/sensitive-text.helper';
-import { parseGeocodeResult } from './helpers/geocode-address.helper';
+import { isPublicIpForGeolocation, parseGeocodeResult, parseIpGeocodeResult } from './helpers/geocode-address.helper';
 import { envNumber } from '../common/config/env-number.helper';
 import { RtmpIngestSourceService, type RtmpStreamMetadata } from './rtmp-ingest-source.service';
 import {
@@ -3845,6 +3845,72 @@ export class CamerasService {
       if (error instanceof NotFoundException) throw error;
       throw new BadRequestException('O serviço de localização não respondeu. Informe as coordenadas manualmente ou tente novamente.');
     }
+  }
+
+  /**
+   * Primeira tentativa para o mapa. Nunca sobrescreve posição já salva: depois
+   * que o operador corrige uma câmera, o valor manual sempre vence.
+   */
+  async autoDiscoverLocations() {
+    const cameras = await this.prisma.camera.findMany({
+      where: { enabled: true, OR: [{ latitude: null }, { longitude: null }] },
+      select: {
+        id: true, ip: true, sourceMode: true, locationAddress: true,
+        site: { select: { location: true } },
+      },
+    });
+    const ipCache = new Map<string, ReturnType<typeof parseIpGeocodeResult>>();
+    let located = 0;
+    let unavailable = 0;
+
+    const locateIp = async (ip: string | null) => {
+      const cacheKey = ip || '__server_egress__';
+      if (ipCache.has(cacheKey)) return ipCache.get(cacheKey) ?? null;
+      try {
+        const path = ip ? encodeURIComponent(ip) : '';
+        const response = await fetch(`https://ipwho.is/${path}`, {
+          headers: { Accept: 'application/json', 'User-Agent': this.configService.get<string>('GEOCODING_USER_AGENT') || 'AjustCam/1.0' },
+          signal: AbortSignal.timeout(8000),
+        });
+        const result = response.ok ? parseIpGeocodeResult(await response.json()) : null;
+        ipCache.set(cacheKey, result);
+        return result;
+      } catch {
+        ipCache.set(cacheKey, null);
+        return null;
+      }
+    };
+
+    for (const camera of cameras) {
+      let result: Awaited<ReturnType<CamerasService['geocodeAddress']>> | null = null;
+      let source = '';
+      const physicalAddress = camera.locationAddress?.trim() || camera.site?.location?.trim() || '';
+      if (physicalAddress.length >= 5) {
+        result = await this.geocodeAddress(physicalAddress).catch(() => null);
+        source = 'endereço';
+      }
+      if (!result) {
+        const publicIp = isPublicIpForGeolocation(camera.ip) ? camera.ip : null;
+        // RTMP push não guarda o IP remoto como endereço da câmera. Neste caso
+        // a saída pública da instalação é só uma aproximação inicial explícita.
+        const canUseEgress = camera.sourceMode === SOURCE_MODE_PUSH;
+        result = publicIp ? await locateIp(publicIp) : canUseEgress ? await locateIp(null) : null;
+        source = publicIp ? 'IP público da câmera' : canUseEgress ? 'IP público da instalação' : '';
+      }
+      if (!result || !source) { unavailable += 1; continue; }
+      const updated = await this.prisma.camera.updateMany({
+        where: { id: camera.id, OR: [{ latitude: null }, { longitude: null }] },
+        data: {
+          latitude: result.latitude,
+          longitude: result.longitude,
+          locationAddress: source === 'endereço'
+            ? (camera.locationAddress?.trim() || result.displayName)
+            : `Estimativa por ${source} — ${result.displayName}`,
+        },
+      });
+      located += updated.count;
+    }
+    return { checked: cameras.length, located, unavailable, approximate: true };
   }
 
   private async validateReferences(siteId?: string, areaId?: string, groupId?: string) {
