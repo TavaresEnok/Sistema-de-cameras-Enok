@@ -236,6 +236,8 @@ model Camera {
   /// recolocada na hora de usar: um segredo tem um lugar só.
   gridSourceUrl            String?
   gridSourceCodec          String?
+  gridSourceWidth          Int?
+  gridSourceHeight         Int?
   gridRequiresSanitization Boolean?
   /// Impressão do cadastro quando descobrimos. Mudou o IP/porta/caminho, a
   /// anotação se invalida sozinha.

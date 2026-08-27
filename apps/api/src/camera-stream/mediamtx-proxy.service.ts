@@ -46,13 +46,16 @@ import { decidirFonteDaMaxima } from './helpers/fonte-da-maxima.helper';
 import { decidirCopiaDeVideo } from './helpers/copia-em-vez-de-reencode.helper';
 import { SourceGatewayService } from './source-gateway.service';
 import { RtmpIngestSourceService } from '../cameras/rtmp-ingest-source.service';
+import { conferirPadrao, resumirFrota } from './helpers/padrao-de-stream.helper';
 import {
   comSegredo,
-  comoExplicar,
   impressaoDoCadastro,
   lerAnotacao,
   semSegredo,
 } from './helpers/memoria-do-mosaico.helper';
+
+/** O padrão de instalação, em uma frase, para a tela repetir. */
+const PADRAO_EM_PALAVRAS = 'Principal 1080p em H.265; stream 2 em 480p H.264.';
 
 type DeliveryUrls = {
   enabled: boolean;
@@ -1167,24 +1170,48 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
    * computador forte passa; num mais fraco os quadros ficam pretos e
    * reiniciando. Antes disso, o único jeito de descobrir era alguém reclamar.
    */
-  async relatorioDeFontesDoMosaico(): Promise<Array<{
-    id: string; nome: string; temSubStream: boolean | null;
-    codec: string | null; verificadoEm: Date | null; explicacao: string;
-  }>> {
-    if (!this.prisma) return [];
+  async relatorioDeFontesDoMosaico(): Promise<{
+    resumo: { conformes: number; desviadas: number; naoVerificadas: number };
+    padrao: string;
+    items: Array<{
+      id: string; nome: string; situacao: string; resumo: string; desvios: string[];
+      principal: { codec: string | null; altura: number | null };
+      stream2: { existe: boolean | null; codec: string | null; altura: number | null };
+      verificadoEm: Date | null;
+    }>;
+  }> {
+    const vazio = { resumo: { conformes: 0, desviadas: 0, naoVerificadas: 0 }, padrao: PADRAO_EM_PALAVRAS, items: [] };
+    if (!this.prisma) return vazio;
     const cams = await this.prisma.camera.findMany({
       where: { enabled: true },
-      select: { id: true, name: true, gridHasSubStream: true, gridSourceCodec: true, gridProbedAt: true },
+      select: {
+        id: true, name: true,
+        detectedVideoCodec: true, streamHeight: true,
+        gridHasSubStream: true, gridSourceCodec: true, gridSourceHeight: true, gridProbedAt: true,
+      },
       orderBy: { name: 'asc' },
     });
-    return cams.map((c) => ({
-      id: c.id,
-      nome: c.name,
-      temSubStream: c.gridHasSubStream,
-      codec: c.gridSourceCodec,
-      verificadoEm: c.gridProbedAt,
-      explicacao: comoExplicar({ temSub: c.gridHasSubStream }),
+    const diagnosticos = cams.map((c) => conferirPadrao({
+      codecPrincipal: c.detectedVideoCodec,
+      alturaPrincipal: c.streamHeight,
+      temSub: c.gridHasSubStream,
+      codecSub: c.gridSourceCodec,
+      alturaSub: c.gridSourceHeight,
     }));
+    return {
+      resumo: resumirFrota(diagnosticos),
+      padrao: PADRAO_EM_PALAVRAS,
+      items: cams.map((c, i) => ({
+        id: c.id,
+        nome: c.name,
+        situacao: diagnosticos[i].situacao,
+        resumo: diagnosticos[i].resumo,
+        desvios: diagnosticos[i].desvios,
+        principal: { codec: c.detectedVideoCodec, altura: c.streamHeight },
+        stream2: { existe: c.gridHasSubStream, codec: c.gridSourceCodec, altura: c.gridSourceHeight },
+        verificadoEm: c.gridProbedAt,
+      })),
+    };
   }
 
   /**
@@ -1245,6 +1272,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     url: string | null,
     codec: string | null,
     precisaLimpeza: boolean,
+    largura: number | null = null,
+    altura: number | null = null,
   ) {
     if (!this.prisma) return;
     try {
@@ -1254,6 +1283,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           gridHasSubStream: Boolean(url),
           gridSourceUrl: semSegredo(url),
           gridSourceCodec: url ? codec : null,
+          gridSourceWidth: url ? largura : null,
+          gridSourceHeight: url ? altura : null,
           gridRequiresSanitization: precisaLimpeza,
           gridProbeKey: impressao,
           gridProbedAt: new Date(),
@@ -1271,6 +1302,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       await this.prisma.camera.update({
         where: { id: cameraId },
         data: { gridHasSubStream: null, gridSourceUrl: null, gridSourceCodec: null,
+                gridSourceWidth: null, gridSourceHeight: null,
                 gridRequiresSanitization: null, gridProbeKey: null, gridProbedAt: null },
       });
     } catch { /* idem */ }
@@ -1703,7 +1735,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         requiresSanitization,
         at: Date.now(),
       });
-      void this.anotarMosaico(cameraId, impressao, chosen.url, chosen.codec, requiresSanitization);
+      void this.anotarMosaico(cameraId, impressao, chosen.url, chosen.codec, requiresSanitization,
+        chosen.width, chosen.height);
       return {
         profile: subProfile,
         sourceUrl: chosen.url,
