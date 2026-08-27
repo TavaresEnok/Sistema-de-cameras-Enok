@@ -340,11 +340,11 @@
     background: color-mix(in srgb, hsl(var(--sidebar)) 93%, black 7%);
   }
 
-  .sidebar-toggle, .sidebar-item, .sidebar-footer-btn, .sidebar-user {
+  .sidebar-item, .sidebar-footer-btn, .sidebar-user {
     border: 1px solid transparent;
   }
 
-  .sidebar-toggle:hover, .sidebar-footer-btn:hover, .sidebar-user:hover {
+  .sidebar-footer-btn:hover, .sidebar-user:hover {
     background: hsl(var(--sidebar-accent));
   }
 

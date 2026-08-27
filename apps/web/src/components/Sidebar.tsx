@@ -3,14 +3,13 @@ import { motion } from 'framer-motion';
 import {
   Monitor, PlaySquare, Sparkles,
   Camera, Settings,
-  ChevronLeft, ChevronRight, LogOut, Keyboard, Shield,
+  LogOut, Keyboard, Shield,
   Server, Users, Radar, FolderKey, ShieldCheck, Search, Sun, Moon,
   Bell, Crosshair, HardDrive, UserCircle, ShieldAlert, MapPinned, Newspaper,
   CircleHelp, LayoutGrid, Activity, FileSearch, ScrollText, Brain,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useSidebarStore } from '../store/sidebarStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useIsMobile } from '../hooks/use-mobile';
@@ -136,9 +135,10 @@ export function Sidebar({
   onAtalhosOpen?: () => void;
   onSearchOpen?: () => void;
 }) {
-  const { isExpanded: storedExpanded, toggle } = useSidebarStore();
   const isMobile = useIsMobile();
-  const isExpanded = storedExpanded && !isMobile;
+  // Desktop permanece sempre aberto. No celular a versão compacta continua
+  // automática por responsividade, sem botão ou preferência de recolhimento.
+  const isExpanded = !isMobile;
   const { user, logout } = useAuthStore();
   const { theme, setTheme } = useThemeStore();
   const [location] = useLocation();
@@ -198,14 +198,6 @@ export function Sidebar({
             </motion.div>
           )}
         </div>
-        <button
-          onClick={toggle}
-          aria-label={isExpanded ? 'Recolher menu lateral' : 'Expandir menu lateral'}
-          className="sidebar-toggle shrink-0 w-7 h-7 hidden md:flex items-center justify-center rounded-xl transition-colors"
-          data-testid="button-sidebar-toggle"
-        >
-          {isExpanded ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-        </button>
       </div>
 
       {/* ── Navigation ── */}

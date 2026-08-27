@@ -21,3 +21,9 @@ test('grupos do menu possuem hierarquia visual global e independente da marca', 
   assert.match(css, /border-top:/);
   assert.match(css, /color-mix\(in srgb, hsl\(var\(--sidebar-foreground\)\)/);
 });
+
+test('menu lateral não oferece recolhimento manual no desktop', () => {
+  assert.doesNotMatch(sidebar, /button-sidebar-toggle|sidebarStore|Recolher menu lateral|Expandir menu lateral/);
+  assert.match(sidebar, /const isExpanded = !isMobile/);
+  assert.equal(fs.existsSync(path.join(root, 'src/store/sidebarStore.ts')), false);
+});

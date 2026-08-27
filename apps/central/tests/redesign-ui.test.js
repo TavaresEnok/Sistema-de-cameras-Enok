@@ -31,7 +31,7 @@ test('a instalação conserva as seis áreas administrativas do redesign', () =>
 });
 
 test('recursos operacionais do redesign permanecem ligados à interface', () => {
-  for (const id of ['omni-open', 'pulse', 'wall-toggle', 'export-csv', 'rail-toggle']) {
+  for (const id of ['omni-open', 'pulse', 'wall-toggle', 'export-csv']) {
     assert.match(PANEL, new RegExp(`id="${id}"`), `controle ${id}`);
   }
   assert.match(PANEL, /addEventListener\('click', openPalette\)/);
@@ -39,19 +39,10 @@ test('recursos operacionais do redesign permanecem ligados à interface', () => 
   assert.match(PANEL, /addEventListener\('click', exportCsv\)/);
 });
 
-test('botão do menu recolhido fica entre Portal técnico e e-mail sem provocar rolagem horizontal', () => {
-  const portal = PANEL.indexOf('id="technical-nav"');
-  const controle = PANEL.indexOf('id="rail-toggle"');
-  const email = PANEL.indexOf('id="user-chip"');
-  assert.ok(portal > -1 && controle > portal && email > controle, 'controle deve ficar entre o Portal técnico e o e-mail do usuário');
+test('menu lateral permanece aberto e não oferece modo recolhido', () => {
   assert.match(PANEL, /\.sidebar\s*\{[\s\S]*?overflow-x:\s*hidden;/);
-  assert.match(PANEL, /body\.rail \.rail-control\s*\{[\s\S]*?width:\s*40px;/);
-  assert.match(PANEL, /body\.rail \.rail-control \.rail-short-label\s*\{[\s\S]*?display:\s*block;/);
-  assert.match(PANEL, /class="rail-short-label"[^>]*>ABRIR</);
-  assert.match(PANEL, /body\.rail \.foot-actions\s*\{\s*flex-direction:\s*column;/);
-  assert.match(PANEL, /class="rail-open-icon"/);
-  assert.match(PANEL, /function syncRailToggle\(\)/);
-  assert.match(PANEL, /recolhido \? 'Expandir menu' : 'Recolher menu'/);
+  assert.doesNotMatch(PANEL, /rail-toggle|drac-central-rail|body\.rail|syncRailToggle/);
+  assert.doesNotMatch(PANEL, /Recolher menu|Expandir menu/);
 });
 
 test('a exportação CSV neutraliza fórmulas vindas de campos textuais', () => {
