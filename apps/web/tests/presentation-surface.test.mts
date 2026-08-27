@@ -129,7 +129,7 @@ test('§5 no mapa: o operador é avisado de que a posição é estimativa', () =
   assert.match(mapa, /estimado/, 'o marcador precisa dizer quando a posição é estimada');
   assert.match(mapa, /explicacaoDoPonto/, 'o ponto precisa explicar o que significa');
 
-  // Na página: uma faixa contando quantas estão estimadas.
-  assert.match(pagina, /resumirMapa/, 'a página precisa contar quantas posições são estimativa');
-  assert.match(pagina, /estimada pela rede|posição estimada/i, 'a faixa precisa dizer isso em português');
+  // Na página: orientação curta, sem faixa técnica ou contagem alarmista.
+  assert.match(pagina, /Verifique a localização das câmeras\./, 'a página precisa orientar a conferência');
+  assert.doesNotMatch(pagina, /AvisoDeEstimativa/, 'a faixa técnica não deve voltar');
 });

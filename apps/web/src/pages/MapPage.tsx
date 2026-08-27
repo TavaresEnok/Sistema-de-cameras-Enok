@@ -4,7 +4,6 @@ import { Camera as CameraIcon, Check, ExternalLink, Layers3, Map, MapPin, Pencil
 import { Link, useLocation } from 'wouter';
 import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
 import { GeographicCameraMap } from '../components/GeographicCameraMap';
-import { resumirMapa, type CameraNoMapa } from '../lib/posicao-no-mapa';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore, type Camera } from '../store/vmsDataStore';
 import { getApiBaseUrl } from '../lib/api-base';
@@ -22,38 +21,6 @@ function api(token?: string | null) {
 function statusLabel(camera: Camera) {
   if (!camera.enabled) return 'Desativada';
   return camera.isOnline ? 'Online' : 'Offline';
-}
-
-/**
- * A FAIXA QUE CONTA A VERDADE DO MAPA.
- *
- * Sem ela, um mapa cheio de pinos passa a impressão de que o sistema sabe onde
- * cada câmera está. Nesta instalação, em 27/08/2026, as 29 estavam posicionadas
- * por estimativa de IP — nenhuma por endereço conferido.
- *
- * Só aparece quando há o que avisar: mapa todo conferido não ganha faixa.
- */
-function AvisoDeEstimativa({ cameras }: { cameras: CameraNoMapa[] }) {
-  const r = resumirMapa(cameras);
-  if (!r.estimadas && !r.semPosicao) return null;
-  return (
-    <div
-      role="status"
-      className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-[hsl(var(--status-motion)_/_0.45)] bg-[hsl(var(--status-motion)_/_0.10)] px-3 py-2 text-[11.5px] leading-relaxed"
-    >
-      <span className="inline-block h-2 w-2 shrink-0 rounded-full border-2 border-dashed border-[hsl(var(--status-motion))]" aria-hidden />
-      {r.estimadas > 0 && (
-        <span>
-          <strong>{r.estimadas}</strong> de {r.comPosicao} câmera{r.comPosicao === 1 ? '' : 's'} no mapa
-          {' '}está{r.estimadas === 1 ? '' : 'ão'} em <strong>posição estimada pela rede</strong>, não no lugar real.
-        </span>
-      )}
-      {r.semPosicao > 0 && <span><strong>{r.semPosicao}</strong> sem posição nenhuma.</span>}
-      <span className="text-muted-foreground">
-        Informe o endereço em Editar → da câmera para posicioná-la de verdade.
-      </span>
-    </div>
-  );
 }
 
 export default function MapPage() {
@@ -187,7 +154,7 @@ export default function MapPage() {
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="mr-auto">
             <div className="flex items-center gap-2 text-sm font-semibold"><Map className="h-4 w-4 text-primary" /> Mapa operacional</div>
-            <div className="mt-0.5 text-[11px] text-muted-foreground">Selecione um ponto para abrir a câmera sem perder o contexto do local.</div>
+            <div className="mt-0.5 text-[11px] text-muted-foreground">Selecione um ponto para abrir a câmera · Verifique a localização das câmeras.</div>
           </div>
           <div className="flex h-9 items-center rounded-md border border-border bg-card p-1 text-xs">
             <button type="button" onClick={() => setMode('geographic')} className={`h-7 rounded px-3 ${mode === 'geographic' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>Mapa</button>
@@ -224,8 +191,7 @@ export default function MapPage() {
         )}
 
         {mode === 'geographic' ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-2">
-            <AvisoDeEstimativa cameras={cameras.filter((camera) => camera.enabled)} />
+          <div className="flex min-h-0 flex-1 flex-col">
             <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card">
               <GeographicCameraMap cameras={cameras.filter((camera) => camera.enabled)} onOpen={openCamera} />
             </div>

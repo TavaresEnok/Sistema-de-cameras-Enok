@@ -29,6 +29,9 @@ test('mapa tenta localizar câmeras sem posição e preserva edição manual', a
   const page = await read('src/pages/MapPage.tsx');
   assert.match(page, /cameras\/location\/auto-discover/);
   assert.match(page, /Tentar localizar/);
+  assert.match(page, /Verifique a localização das câmeras\./);
+  assert.doesNotMatch(page, /AvisoDeEstimativa/);
+  assert.doesNotMatch(page, /de \{r\.comPosicao\} câmera/);
   // O teste de persistência vive na API; aqui garantimos que o cliente não
   // inventa coordenadas nem chama geolocalização pública diretamente.
   assert.doesNotMatch(page, /ipwho\.is/);
