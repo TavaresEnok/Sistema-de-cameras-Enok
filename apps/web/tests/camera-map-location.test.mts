@@ -34,12 +34,13 @@ test('mapa tenta localizar câmeras sem posição e preserva edição manual', a
   assert.doesNotMatch(page, /ipwho\.is/);
 });
 
-test('zoom usa coordenada relativa ao mapa inteiro, nunca offset do tile', async () => {
+test('mapa usa motor geográfico estável e impede salto entre cópias do mundo', async () => {
   const map = await read('src/components/GeographicCameraMap.tsx');
-  assert.match(map, /event\.clientX - rect\.left/);
-  assert.match(map, /event\.clientY - rect\.top/);
+  assert.match(map, /MapContainer/);
+  assert.match(map, /maxBounds=\{WORLD_BOUNDS\}/);
+  assert.match(map, /maxBoundsViscosity=\{1\}/);
+  assert.match(map, /worldCopyJump=\{false\}/);
+  assert.match(map, /noWrap/);
+  assert.doesNotMatch(map, /onPointerMove/);
   assert.doesNotMatch(map, /nativeEvent\.offset[XY]/);
-  assert.match(map, /onLostPointerCapture/);
-  assert.match(map, /touch-none/);
-  assert.match(map, /overscroll-contain/);
 });
