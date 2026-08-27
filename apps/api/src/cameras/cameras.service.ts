@@ -43,6 +43,7 @@ import {
   sanitizeRtspUrl,
 } from './helpers/rtsp-url.helper';
 import { sanitizeSensitiveText } from '../common/security/sensitive-text.helper';
+import { parseGeocodeResult } from './helpers/geocode-address.helper';
 import { envNumber } from '../common/config/env-number.helper';
 import { RtmpIngestSourceService, type RtmpStreamMetadata } from './rtmp-ingest-source.service';
 import {
@@ -253,6 +254,9 @@ export class CamerasService {
         analyticsSubtype,
         siteId: dto.siteId,
         areaId: dto.areaId,
+        locationAddress: dto.locationAddress?.trim() || null,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
         groupId: dto.groupId,
         recordingEnabled: dto.recordingEnabled ?? true,
         recordingMode: dto.recordingMode ?? ((dto.recordingEnabled ?? true) ? 'continuous' : 'manual'),
@@ -606,6 +610,9 @@ export class CamerasService {
         analyticsSubtype: dto.analyticsSubtype,
         siteId: dto.siteId,
         areaId: dto.areaId,
+        locationAddress: dto.locationAddress === undefined ? undefined : (dto.locationAddress?.trim() || null),
+        latitude: dto.latitude,
+        longitude: dto.longitude,
         groupId: dto.groupId,
         enabled: dto.enabled !== undefined ? dto.enabled : existing.enabled,
         recordingEnabled: dto.recordingEnabled !== undefined ? dto.recordingEnabled : existing.recordingEnabled,
@@ -1761,6 +1768,9 @@ export class CamerasService {
         rtmpIngestKeyEncrypted: this.cryptoService.encrypt(key),
         siteId: dto.siteId,
         areaId: dto.areaId,
+        locationAddress: dto.locationAddress?.trim() || null,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
         groupId: dto.groupId,
         recordingEnabled: dto.recordingEnabled ?? true,
         recordingMode: dto.recordingMode ?? ((dto.recordingEnabled ?? true) ? 'continuous' : 'manual'),
@@ -3807,6 +3817,34 @@ export class CamerasService {
         rtspTransport: process.env.FFMPEG_RTSP_TRANSPORT ?? 'tcp',
       },
     };
+  }
+
+  async geocodeAddress(address: string) {
+    const query = address.trim();
+    if (query.length < 5 || query.length > 300) {
+      throw new BadRequestException('Informe um endereço completo para localizar no mapa.');
+    }
+    const url = new URL('https://nominatim.openstreetmap.org/search');
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('countrycodes', 'br');
+    url.searchParams.set('q', query);
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': this.configService.get<string>('GEOCODING_USER_AGENT') || 'AjustCam/1.0',
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) throw new Error(`geocoder_${response.status}`);
+      const result = parseGeocodeResult(await response.json());
+      if (!result) throw new NotFoundException('Endereço não encontrado. Ajuste o texto ou informe latitude e longitude.');
+      return result;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      throw new BadRequestException('O serviço de localização não respondeu. Informe as coordenadas manualmente ou tente novamente.');
+    }
   }
 
   private async validateReferences(siteId?: string, areaId?: string, groupId?: string) {

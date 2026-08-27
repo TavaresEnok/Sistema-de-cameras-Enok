@@ -19,6 +19,9 @@ export interface Camera {
   sourceMode: 'rtsp_pull' | 'rtmp_push';
   siteId?: string | null;
   areaId?: string | null;
+  locationAddress?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   rtmpIngestPath?: string | null;
   rtspPort: number;
   model: string;
@@ -320,6 +323,9 @@ function mapCameraItems(
       sourceMode,
       siteId: camera.siteId ?? null,
       areaId: camera.areaId ?? null,
+      locationAddress: camera.locationAddress ?? null,
+      latitude: Number.isFinite(Number(camera.latitude)) ? Number(camera.latitude) : null,
+      longitude: Number.isFinite(Number(camera.longitude)) ? Number(camera.longitude) : null,
       rtmpIngestPath: camera.rtmpIngestPath ?? null,
       rtspPort: camera.rtspPort ?? 554,
       model: sourceMode === 'rtmp_push'

@@ -1,4 +1,4 @@
-import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { DetectionZoneDto } from './detection-zone.dto';
 
@@ -104,6 +104,23 @@ export class UpdateCameraDto {
   @IsOptional()
   @IsString()
   areaId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  locationAddress?: string | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number | null;
 
   @IsOptional()
   @IsString()

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { useLocation } from 'wouter';
-import { Save, Trash2, ExternalLink, LoaderCircle, Copy, RefreshCw, Check, Radio, ArrowRightLeft, Eye, EyeOff } from 'lucide-react';
+import { Save, Trash2, ExternalLink, LoaderCircle, Copy, RefreshCw, Check, Radio, ArrowRightLeft, Eye, EyeOff, LocateFixed, MapPin } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,9 @@ type Form = {
   rtspPort: string;
   username: string;
   password: string;
+  locationAddress: string;
+  latitude: string;
+  longitude: string;
   onvifPort: string;
   httpPort: string;
   rtspPath: string;
@@ -123,6 +126,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
   const [senhaVisivel, setSenhaVisivel] = useState(false);
   const [buscandoSenha, setBuscandoSenha] = useState(false);
   const [avisoDaSenha, setAvisoDaSenha] = useState<string | null>(null);
+  const [geocoding, setGeocoding] = useState(false);
   // A senha COMO VEIO do servidor, para saber se o dono só espiou ou mexeu.
   const [senhaRevelada, setSenhaRevelada] = useState<string | null>(null);
   const onCloseRef = useRef(onClose);
@@ -185,6 +189,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           rtspPort: String(data.rtspPort ?? selectedCamera.rtspPort ?? 554),
           username: data.username ?? '',
           password: '',
+          locationAddress: data.locationAddress ?? '',
+          latitude: data.latitude == null ? '' : String(data.latitude),
+          longitude: data.longitude == null ? '' : String(data.longitude),
           onvifPort: data.onvifPort != null ? String(data.onvifPort) : '',
           httpPort: data.httpPort != null ? String(data.httpPort) : '',
           rtspPath: data.rtspPath ?? '',
@@ -336,12 +343,23 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
       });
       return;
     }
+    const latitude = form.latitude.trim() === '' ? null : Number(form.latitude);
+    const longitude = form.longitude.trim() === '' ? null : Number(form.longitude);
+    if ((latitude === null) !== (longitude === null)
+      || (latitude !== null && (!Number.isFinite(latitude) || latitude < -90 || latitude > 90))
+      || (longitude !== null && (!Number.isFinite(longitude) || longitude < -180 || longitude > 180))) {
+      toast({ title: 'Localização incompleta', description: 'Informe latitude e longitude válidas juntas.', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
       await axios.patch(
         `${getApiBaseUrl()}/cameras/${camera.id}`,
         {
           name: form.name.trim(),
+          locationAddress: form.locationAddress.trim() || null,
+          latitude,
+          longitude,
           ip: form.ip.trim(),
           rtspPort: Number(form.rtspPort),
           username: form.username.trim() || undefined,
@@ -378,6 +396,31 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
       toast({ title: 'Erro ao salvar', description: message, variant: 'destructive' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const geocodeLocation = async () => {
+    if (!accessToken || !form?.locationAddress.trim()) return;
+    setGeocoding(true);
+    try {
+      const { data } = await axios.get(`${getApiBaseUrl()}/cameras/location/geocode`, {
+        params: { address: form.locationAddress.trim() },
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      setForm((current) => current ? {
+        ...current,
+        locationAddress: data.displayName || current.locationAddress,
+        latitude: String(data.latitude),
+        longitude: String(data.longitude),
+      } : current);
+      toast({ title: 'Endereço localizado', description: 'Confira o ponto no mapa e salve a câmera.' });
+    } catch (error) {
+      const description = axios.isAxiosError(error)
+        ? error.response?.data?.message ?? error.message
+        : 'Não foi possível localizar este endereço.';
+      toast({ title: 'Endereço não encontrado', description, variant: 'destructive' });
+    } finally {
+      setGeocoding(false);
     }
   };
 
@@ -447,6 +490,29 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                   <FormField label="Nome da câmera" required>
                     <Input value={form.name} onChange={(e) => upd('name', e.target.value)} className="text-sm" />
                   </FormField>
+                  <div className="space-y-3 rounded-lg border border-border bg-background/55 p-3">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4 text-primary" />
+                      <div><p className="text-[12px] font-semibold">Localização no mapa</p><p className="text-[10px] text-muted-foreground">O endereço físico é independente do IP da câmera.</p></div>
+                    </div>
+                    <FormField label="Endereço físico" hint="rua, número, cidade e estado">
+                      <div className="flex gap-2">
+                        <Input value={form.locationAddress} onChange={(e) => upd('locationAddress', e.target.value)} placeholder="Ex.: Av. Paulista, 1000, São Paulo - SP" className="min-w-0 text-sm" />
+                        <Button type="button" variant="outline" disabled={geocoding || form.locationAddress.trim().length < 5} onClick={() => void geocodeLocation()} className="shrink-0 gap-1.5 px-3 text-xs">
+                          {geocoding ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <LocateFixed className="h-3.5 w-3.5" />}
+                          Localizar
+                        </Button>
+                      </div>
+                    </FormField>
+                    <div className="grid grid-cols-2 gap-2">
+                      <FormField label="Latitude" hint="opcional">
+                        <Input value={form.latitude} onChange={(e) => upd('latitude', e.target.value)} placeholder="-8.05428" inputMode="decimal" className="font-mono text-xs" />
+                      </FormField>
+                      <FormField label="Longitude" hint="opcional">
+                        <Input value={form.longitude} onChange={(e) => upd('longitude', e.target.value)} placeholder="-34.88130" inputMode="decimal" className="font-mono text-xs" />
+                      </FormField>
+                    </div>
+                  </div>
                   <Separator />
                   <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Como o vídeo chega</p>
                   <div className="grid grid-cols-2 gap-2">

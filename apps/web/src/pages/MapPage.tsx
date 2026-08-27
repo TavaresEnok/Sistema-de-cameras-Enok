@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Camera as CameraIcon, Check, ExternalLink, Layers3, Map, MapPin, Pencil, Plus, Upload, X } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
+import { GeographicCameraMap } from '../components/GeographicCameraMap';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore, type Camera } from '../store/vmsDataStore';
 import { getApiBaseUrl } from '../lib/api-base';
@@ -38,6 +39,7 @@ export default function MapPage() {
   const [draftMarkers, setDraftMarkers] = useState<Record<string, Marker>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [mode, setMode] = useState<'geographic' | 'floorplan'>('geographic');
 
   const accessibleSiteIds = useMemo(() => new Set(cameras.map((c) => c.siteId).filter(Boolean)), [cameras]);
   const visibleSites = useMemo(
@@ -132,13 +134,17 @@ export default function MapPage() {
             <div className="flex items-center gap-2 text-sm font-semibold"><Map className="h-4 w-4 text-primary" /> Mapa operacional</div>
             <div className="mt-0.5 text-[11px] text-muted-foreground">Selecione um ponto para abrir a câmera sem perder o contexto do local.</div>
           </div>
-          <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className="h-9 rounded-md border border-border bg-card px-3 text-xs">
+          <div className="flex h-9 items-center rounded-md border border-border bg-card p-1 text-xs">
+            <button type="button" onClick={() => setMode('geographic')} className={`h-7 rounded px-3 ${mode === 'geographic' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>Mapa</button>
+            <button type="button" onClick={() => setMode('floorplan')} className={`h-7 rounded px-3 ${mode === 'floorplan' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>Planta</button>
+          </div>
+          {mode === 'floorplan' && <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className="h-9 rounded-md border border-border bg-card px-3 text-xs">
             {visibleSites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
-          </select>
-          <select value={floor} onChange={(e) => setFloor(e.target.value)} className="h-9 rounded-md border border-border bg-card px-3 text-xs">
+          </select>}
+          {mode === 'floorplan' && <select value={floor} onChange={(e) => setFloor(e.target.value)} className="h-9 rounded-md border border-border bg-card px-3 text-xs">
             {(currentLayouts.length ? currentLayouts : [{ floor: 'Principal' }]).map((layout) => <option key={layout.floor} value={layout.floor}>{layout.floor}</option>)}
-          </select>
-          {role === 'admin' && (
+          </select>}
+          {mode === 'floorplan' && role === 'admin' && (
             <button type="button" onClick={() => { setDraftMarkers(activeLayout?.markers ?? {}); setEditing((value) => !value); }} className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-card px-3 text-xs hover:bg-accent">
               {editing ? <X className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}{editing ? 'Cancelar edição' : 'Organizar mapa'}
             </button>
@@ -147,7 +153,7 @@ export default function MapPage() {
 
         {error && <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
 
-        {editing && (
+        {mode === 'floorplan' && editing && (
           <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 p-2.5">
             <span className="px-1 text-xs text-muted-foreground">Escolha a câmera e clique no ponto da planta:</span>
             <select value={placingId} onChange={(e) => setPlacingId(e.target.value)} className="h-8 min-w-48 rounded border border-border bg-card px-2 text-xs">
@@ -161,7 +167,11 @@ export default function MapPage() {
           </div>
         )}
 
-        <div ref={stageRef} onClick={placeMarker} className={`relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card ${editing && placingId ? 'cursor-crosshair' : ''}`}>
+        {mode === 'geographic' ? (
+          <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card">
+            <GeographicCameraMap cameras={cameras.filter((camera) => camera.enabled)} onOpen={openCamera} />
+          </div>
+        ) : <div ref={stageRef} onClick={placeMarker} className={`relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card ${editing && placingId ? 'cursor-crosshair' : ''}`}>
           {activeLayout?.svgDataUrl ? (
             <img src={activeLayout.svgDataUrl} alt={`Planta ${floor}`} className="absolute inset-0 h-full w-full object-fill opacity-80" />
           ) : (
@@ -175,15 +185,15 @@ export default function MapPage() {
               <span className="absolute left-1/2 top-10 max-w-40 -translate-x-1/2 whitespace-nowrap rounded bg-background/90 px-2 py-1 text-[10px] font-medium shadow-sm backdrop-blur">{camera.name}</span>
             </button>;
           })}
-          {!mappedCameras.length && <div className="absolute inset-0 flex items-center justify-center"><div className="max-w-sm rounded-xl border border-border bg-card/95 p-5 text-center shadow-lg"><Layers3 className="mx-auto h-7 w-7 text-muted-foreground" /><div className="mt-3 text-sm font-medium">Nenhuma câmera posicionada</div><div className="mt-1 text-xs text-muted-foreground">{siteCameras.length ? 'Use “Organizar mapa” para posicionar as câmeras desta unidade.' : 'Associe uma unidade às câmeras na página de cadastro.'}</div></div></div>}
-        </div>
+          {!mappedCameras.length && <div className="absolute inset-0 flex items-center justify-center"><div className="max-w-sm rounded-xl border border-border bg-card/95 p-5 text-center shadow-lg"><Layers3 className="mx-auto h-7 w-7 text-muted-foreground" /><div className="mt-3 text-sm font-medium">Nenhuma câmera nesta planta</div><div className="mt-1 text-xs text-muted-foreground">{siteCameras.length ? 'Use “Organizar mapa” para posicionar as câmeras desta unidade.' : 'A planta é opcional. Use o Mapa para visualizar todas as câmeras cadastradas.'}</div></div></div>}
+        </div>}
       </section>
 
       <aside className="hidden w-64 shrink-0 border-l border-border bg-card/50 p-3 xl:block">
-        <div className="mb-3 flex items-center justify-between"><span className="text-xs font-semibold">Câmeras da unidade</span><span className="text-[10px] text-muted-foreground">{mappedCameras.length}/{siteCameras.length}</span></div>
+        <div className="mb-3 flex items-center justify-between"><span className="text-xs font-semibold">{mode === 'geographic' ? 'Todas as câmeras' : 'Câmeras da unidade'}</span><span className="text-[10px] text-muted-foreground">{mode === 'geographic' ? `${cameras.filter((camera) => camera.latitude != null && camera.longitude != null).length}/${cameras.length}` : `${mappedCameras.length}/${siteCameras.length}`}</span></div>
         <div className="space-y-1 overflow-y-auto">
-          {[...mappedCameras, ...unmappedCameras].map((camera) => <button key={camera.id} onClick={() => currentMarkers[camera.id] ? openCamera(camera) : (editing && setPlacingId(camera.id))} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-accent">
-            <span className={`h-2 w-2 rounded-full ${camera.isOnline ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`} /><span className="min-w-0 flex-1 truncate text-xs">{camera.name}</span>{currentMarkers[camera.id] ? <MapPin className="h-3 w-3 text-primary" /> : <Plus className="h-3 w-3 text-muted-foreground" />}
+          {(mode === 'geographic' ? cameras.filter((camera) => camera.enabled) : [...mappedCameras, ...unmappedCameras]).map((camera) => <button key={camera.id} onClick={() => mode === 'geographic' ? (camera.latitude != null && camera.longitude != null ? openCamera(camera) : setLocation(`/cameras?edit=${encodeURIComponent(camera.id)}`)) : (currentMarkers[camera.id] ? openCamera(camera) : (editing && setPlacingId(camera.id)))} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-accent">
+            <span className={`h-2 w-2 rounded-full ${camera.isOnline ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`} /><span className="min-w-0 flex-1"><span className="block truncate text-xs">{camera.name}</span>{mode === 'geographic' && <span className="block truncate text-[9px] text-muted-foreground">{camera.locationAddress || 'Definir endereço'}</span>}</span>{mode === 'geographic' ? (camera.latitude != null && camera.longitude != null ? <MapPin className="h-3 w-3 text-primary" /> : <Pencil className="h-3 w-3 text-muted-foreground" />) : currentMarkers[camera.id] ? <MapPin className="h-3 w-3 text-primary" /> : <Plus className="h-3 w-3 text-muted-foreground" />}
           </button>)}
         </div>
       </aside>

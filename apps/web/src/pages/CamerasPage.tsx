@@ -988,6 +988,12 @@ export default function CamerasPage() {
   const openCamera = useCallback((cameraId: string) => {
     setLocation(`/cameras/${encodeURIComponent(cameraId)}`);
   }, [setLocation]);
+  useEffect(() => {
+    const editId = new URLSearchParams(window.location.search).get('edit');
+    if (!editId) return;
+    const camera = cameras.find((item) => item.id === editId);
+    if (camera) setEditCamera(camera);
+  }, [cameras]);
   const [recordingHealthByCamera, setRecordingHealthByCamera] = useState<Record<string, {
     total: number;
     broken: number;
@@ -1819,7 +1825,10 @@ export default function CamerasPage() {
       <CameraEditSheet
         camera={editCamera}
         open={!!editCamera}
-        onClose={() => setEditCamera(null)}
+        onClose={() => {
+          setEditCamera(null);
+          if (new URLSearchParams(window.location.search).has('edit')) setLocation('/cameras', { replace: true });
+        }}
         onDeleted={(id) => { if (selectedCam?.id === id) setSelectedCam(null); }}
       />
 

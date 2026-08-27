@@ -1,4 +1,4 @@
-import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIP, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 
 const SOURCE_MODES = ['rtsp_pull', 'rtmp_push'] as const;
 // Agenda não é aceita enquanto não houver persistência de janelas, fuso e
@@ -118,6 +118,23 @@ export class CreateCameraDto {
   @IsOptional()
   @IsString()
   areaId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  locationAddress?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
 
   @IsOptional()
   @IsString()

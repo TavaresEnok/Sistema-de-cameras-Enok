@@ -320,6 +320,14 @@ export class CamerasController {
     return Promise.all(cameras.map((camera: any) => this.withCapabilities(user, camera)));
   }
 
+  @Roles(UserRole.ADMIN)
+  @RequirePermission('cameraConfig')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Get('location/geocode')
+  geocodeAddress(@Query('address') address = '') {
+    return this.camerasService.geocodeAddress(address);
+  }
+
   @Roles(UserRole.VIEWER)
   @Get('events')
   async listEvents(@CurrentUser() user: AuthUser, @Query('cameraId') cameraId?: string, @Query('limit') limit?: string) {
