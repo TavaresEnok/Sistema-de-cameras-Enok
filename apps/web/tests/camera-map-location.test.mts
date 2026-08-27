@@ -18,3 +18,9 @@ test('edição da câmera permite endereço, localização automática e coorden
   assert.match(sheet, /latitude/);
   assert.match(sheet, /longitude/);
 });
+
+test('coordenada ausente não vira 0,0 no Atlântico', async () => {
+  const store = await read('src/store/vmsDataStore.ts');
+  assert.match(store, /camera\.latitude === null \|\| camera\.latitude === undefined \|\| camera\.latitude === ''/);
+  assert.match(store, /camera\.longitude === null \|\| camera\.longitude === undefined \|\| camera\.longitude === ''/);
+});

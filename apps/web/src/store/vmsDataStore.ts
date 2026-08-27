@@ -324,8 +324,14 @@ function mapCameraItems(
       siteId: camera.siteId ?? null,
       areaId: camera.areaId ?? null,
       locationAddress: camera.locationAddress ?? null,
-      latitude: Number.isFinite(Number(camera.latitude)) ? Number(camera.latitude) : null,
-      longitude: Number.isFinite(Number(camera.longitude)) ? Number(camera.longitude) : null,
+      // Number(null) e Number('') são 0. Em coordenadas, esse "atalho" manda
+      // toda câmera sem localização para 0,0 — Atlântico, perto da África.
+      latitude: camera.latitude === null || camera.latitude === undefined || camera.latitude === ''
+        ? null
+        : Number.isFinite(Number(camera.latitude)) ? Number(camera.latitude) : null,
+      longitude: camera.longitude === null || camera.longitude === undefined || camera.longitude === ''
+        ? null
+        : Number.isFinite(Number(camera.longitude)) ? Number(camera.longitude) : null,
       rtmpIngestPath: camera.rtmpIngestPath ?? null,
       rtspPort: camera.rtspPort ?? 554,
       model: sourceMode === 'rtmp_push'
