@@ -22,11 +22,14 @@ test('grupos do menu possuem hierarquia visual global e independente da marca', 
   assert.match(css, /color-mix\(in srgb, hsl\(var\(--sidebar-foreground\)\)/);
 });
 
-test('controle de expandir permanece acessível fora da área recortada do menu', () => {
-  assert.match(sidebar, /sidebar-edge-toggle absolute -right-\[18px\]/);
-  assert.match(sidebar, /h-9 w-9/);
+test('controle de expandir permanece dentro do menu sem criar rolagem horizontal', () => {
+  assert.match(sidebar, /sidebar-shell relative flex h-full shrink-0 flex-col overflow-hidden/);
+  assert.match(sidebar, /h-\[104px\] flex-col justify-center gap-2/);
+  assert.match(sidebar, /sidebar-toggle-button/);
+  assert.match(sidebar, /'h-10 w-10'/);
   assert.match(sidebar, /title=\{isExpanded \? 'Recolher menu' : 'Expandir menu'\}/);
   assert.match(sidebar, /<div className="flex h-full min-w-0 flex-col overflow-hidden">/);
-  assert.match(css, /\.sidebar-edge-toggle/);
-  assert.match(css, /\.sidebar-edge-toggle:focus-visible/);
+  assert.doesNotMatch(sidebar, /-right-\[18px\]/);
+  assert.match(css, /\.sidebar-toggle-button/);
+  assert.match(css, /\.sidebar-toggle-button:focus-visible/);
 });

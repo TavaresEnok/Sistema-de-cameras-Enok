@@ -175,27 +175,13 @@ export function Sidebar({
     <motion.aside
       animate={{ width: isExpanded ? 240 : 56 }}
       transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-      className="sidebar-shell relative h-full overflow-visible shrink-0"
+      className="sidebar-shell relative flex h-full shrink-0 flex-col overflow-hidden"
       style={{ minWidth: isExpanded ? 240 : 56 }}
     >
-      {/* A alça fica fora da área recortada do menu. Antes ela dividia os
-          56 px do estado recolhido com o logotipo e acabava espremida ou
-          invisível, justamente quando era necessária para reabrir o menu. */}
-      <button
-        type="button"
-        onClick={toggle}
-        aria-label={isExpanded ? 'Recolher menu lateral' : 'Expandir menu lateral'}
-        title={isExpanded ? 'Recolher menu' : 'Expandir menu'}
-        className="sidebar-toggle sidebar-edge-toggle absolute -right-[18px] top-2.5 z-30 hidden h-9 w-9 items-center justify-center rounded-full md:flex"
-        data-testid="button-sidebar-toggle"
-      >
-        {isExpanded ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-      </button>
-
       <div className="flex h-full min-w-0 flex-col overflow-hidden">
       {/* ── Brand header ── */}
-      <div className="sidebar-brand flex items-center h-14 px-3 shrink-0">
-        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+      <div className={`sidebar-brand flex shrink-0 items-center ${isExpanded ? 'h-14 px-3' : 'h-[104px] flex-col justify-center gap-2 px-2 py-2'}`}>
+        <div className={`flex min-w-0 items-center gap-2.5 ${isExpanded ? 'flex-1' : ''}`}>
           <div className={`sidebar-mark shrink-0 h-8 rounded-xl flex items-center justify-center overflow-hidden ${logoDataUrl ? 'w-fit min-w-8 max-w-[108px]' : 'w-8'}`}>
             {logoDataUrl ? <img src={logoDataUrl} alt={facilityName} className="h-full w-auto max-w-[108px] object-contain" /> : <Shield className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />}
           </div>
@@ -211,6 +197,16 @@ export function Sidebar({
             </motion.div>
           )}
         </div>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={isExpanded ? 'Recolher menu lateral' : 'Expandir menu lateral'}
+          title={isExpanded ? 'Recolher menu' : 'Expandir menu'}
+          className={`sidebar-toggle sidebar-toggle-button hidden items-center justify-center rounded-xl md:flex ${isExpanded ? 'h-8 w-8 shrink-0' : 'h-10 w-10'}`}
+          data-testid="button-sidebar-toggle"
+        >
+          {isExpanded ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-5 w-5" />}
+        </button>
       </div>
 
       {/* ── Navigation ── */}

@@ -344,23 +344,23 @@
     border: 1px solid transparent;
   }
 
-  .sidebar-edge-toggle {
+  .sidebar-toggle-button {
     color: hsl(var(--sidebar-foreground));
-    background: hsl(var(--sidebar));
+    background: hsl(var(--sidebar-accent));
     border-color: hsl(var(--sidebar-border));
-    box-shadow: 0 8px 22px -8px rgba(0, 0, 0, 0.72);
+    box-shadow: 0 5px 14px -8px rgba(0, 0, 0, 0.72);
     transition: color 150ms ease, background-color 150ms ease,
       border-color 150ms ease, transform 150ms ease;
   }
 
-  .sidebar-edge-toggle:hover {
+  .sidebar-toggle-button:hover {
     color: hsl(var(--sidebar-primary));
     background: hsl(var(--sidebar-accent));
     border-color: hsl(var(--primary) / 0.42);
     transform: scale(1.06);
   }
 
-  .sidebar-edge-toggle:focus-visible {
+  .sidebar-toggle-button:focus-visible {
     outline: 2px solid hsl(var(--sidebar-ring));
     outline-offset: 2px;
   }
