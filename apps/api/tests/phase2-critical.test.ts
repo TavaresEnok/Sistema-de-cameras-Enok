@@ -793,6 +793,41 @@ test('cameras controller: admin lista todas as cameras sem filtro e com capacida
   assert.equal(result[0].canRecord, true);
 });
 
+test('cameras controller: admin lê metadados da câmera privada sem receber acesso ao conteúdo', async () => {
+  const user: AuthUser = { id: 'admin', email: 'admin@test.local', name: 'Admin', role: UserRole.ADMIN };
+  const camerasService = {
+    findOne: async () => ({ id: 'cam-private', name: 'Privada', isPrivate: true, ownerUserId: 'owner' }),
+  };
+  const access = {
+    canViewCamera: async () => false,
+    canControlCamera: async () => false,
+    canRecordCamera: async () => false,
+    canAdminCamera: async () => true,
+  };
+  const controller = new CamerasController(camerasService as any, {} as any, access as any, {} as any, {} as any);
+
+  const result = await controller.findOne(user, 'cam-private');
+
+  assert.equal(result.canAdmin, true, 'admin continua podendo configurar');
+  assert.equal(result.canView, false, 'metadados não podem liberar o vídeo privado');
+  assert.equal(result.canControl, false, 'metadados não podem liberar PTZ privado');
+  assert.equal(result.canRecord, false, 'metadados não podem liberar gravação privada');
+});
+
+test('cameras controller: metadados continuam proibidos para quem não vê nem administra', async () => {
+  const user: AuthUser = { id: 'intruso', email: 'intruso@test.local', name: 'Intruso', role: UserRole.VIEWER };
+  let consulted = false;
+  const camerasService = { findOne: async () => { consulted = true; return { id: 'cam-private' }; } };
+  const access = {
+    canViewCamera: async () => false,
+    canAdminCamera: async () => false,
+  };
+  const controller = new CamerasController(camerasService as any, {} as any, access as any, {} as any, {} as any);
+
+  await assert.rejects(() => controller.findOne(user, 'cam-private'), ForbiddenException);
+  assert.equal(consulted, false, 'a câmera não pode ser consultada antes do gate');
+});
+
 test('camera-stream controller: cria token somente apos validar permissao de visualizacao', async () => {
   const user: AuthUser = { id: 'operator', email: 'op@test.local', name: 'Operador', role: UserRole.OPERATOR };
   const order: string[] = [];

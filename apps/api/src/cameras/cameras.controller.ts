@@ -1,5 +1,5 @@
 import { PendingIngestRegistry } from './pending-ingest.registry';
-import { BadRequestException, Body, ConflictException, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { UserRole, CameraStatus, AlarmPriority, AlarmSource } from '@prisma/client';
 import { type Request, type Response } from 'express';
@@ -894,7 +894,18 @@ export class CamerasController {
   @Roles(UserRole.VIEWER)
   @Get(':id')
   async findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    await this.accessControlService.assertCanViewCamera(user, id);
+    // Esta rota entrega METADADOS sanitizados para a tela de configuração, não
+    // imagem, áudio ou gravação. O administrador da instalação precisa poder
+    // gerenciar uma câmera privada do cliente sem ganhar acesso ao conteúdo
+    // dela. As rotas de live/playback/snapshot continuam passando somente por
+    // `assertCanViewCamera` e portanto preservam a privacidade.
+    const [canView, canAdmin] = await Promise.all([
+      this.accessControlService.canViewCamera(user, id),
+      this.accessControlService.canAdminCamera(user, id),
+    ]);
+    if (!canView && !canAdmin) {
+      throw new ForbiddenException('Sem permissão para consultar esta câmera.');
+    }
     const camera = await this.camerasService.findOne(id);
     return this.withCapabilities(user, camera);
   }

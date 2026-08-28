@@ -4,6 +4,8 @@ import test from 'node:test';
 
 const camerasPage = readFileSync(new URL('../src/pages/CamerasPage.tsx', import.meta.url), 'utf8');
 const livePage = readFileSync(new URL('../src/pages/LiveViewPage.tsx', import.meta.url), 'utf8');
+const editSheet = readFileSync(new URL('../src/components/CameraEditSheet.tsx', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 
 test('clicar na linha ou no cartão abre a câmera individual, sem roubar o botão editar', () => {
   assert.match(camerasPage, /setLocation\(`\/cameras\/\$\{encodeURIComponent\(cameraId\)\}`\)/);
@@ -19,4 +21,16 @@ test('painel lateral do ao vivo usa poster autenticado, lote e carregamento tard
   assert.match(livePage, /loading="lazy"/);
   assert.match(livePage, /if \(!panelOpen\) return/);
   assert.match(livePage, /retrySidebarPoster\(cam\.id\)/);
+});
+
+test('gaveta de edição descreve o conteúdo para leitores de tela', () => {
+  assert.match(editSheet, /SheetDescription/);
+  assert.match(editSheet, /Editar identificação, transmissão e gravação da câmera/);
+});
+
+test('barra de rolagem horizontal permanece visível em tabelas estreitas', () => {
+  assert.match(camerasPage, /ops-card overflow-x-auto/);
+  assert.match(css, /::-webkit-scrollbar \{ width: 12px; height: 12px; \}/);
+  assert.match(css, /scrollbar-color: hsl\(var\(--muted-foreground\) \/ 0\.68\)/);
+  assert.doesNotMatch(css, /::-webkit-scrollbar-track\s*\{\s*background:\s*transparent/);
 });

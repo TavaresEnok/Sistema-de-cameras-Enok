@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { useLocation } from 'wouter';
 import { Save, Trash2, ExternalLink, LoaderCircle, Copy, RefreshCw, Check, Radio, ArrowRightLeft, Eye, EyeOff, LocateFixed, MapPin } from 'lucide-react';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -445,6 +445,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
             <span className={cn('w-2 h-2 rounded-full shrink-0', camera.isOnline ? 'bg-[hsl(var(--status-online))]' : 'bg-[hsl(var(--status-offline))]')} />
             <div className="min-w-0">
               <SheetTitle className="text-[14px] font-semibold truncate">{camera.name}</SheetTitle>
+              <SheetDescription className="sr-only">Editar identificação, transmissão e gravação da câmera {camera.name}.</SheetDescription>
               <p className="text-[10px] text-muted-foreground font-mono mt-0.5 truncate">{camera.zone} · {camera.ipAddress}</p>
             </div>
           </div>
