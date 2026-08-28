@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera as CameraIcon, LocateFixed } from 'lucide-react';
 import { divIcon, latLngBounds, type Map as LeafletMap } from 'leaflet';
 import { MapContainer, Marker, Popup, TileLayer, Tooltip, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Camera } from '../store/vmsDataStore';
 import {
-  agruparPorPosicao,
+  agruparParaZoom,
   explicacaoDoPonto,
   rotuloDoPonto,
   type PontoNoMapa,
@@ -64,6 +64,23 @@ function fitPositions(map: LeafletMap, positions: PositionedCamera[]) {
   );
 }
 
+/**
+ * Informa o zoom atual para fora do mapa.
+ *
+ * Sem isto o agrupamento era fixo: aproximar não separava nada, porque a tela
+ * não sabia que o zoom havia mudado. Era o que o dono via em 28/08/2026.
+ */
+function OuvinteDeZoom({ aoMudar }: { aoMudar: (zoom: number) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    const avisar = () => aoMudar(map.getZoom());
+    avisar();
+    map.on('zoomend', avisar);
+    return () => { map.off('zoomend', avisar); };
+  }, [map, aoMudar]);
+  return null;
+}
+
 function CameraBounds({ positions, signature }: { positions: PositionedCamera[]; signature: string }) {
   const map = useMap();
   useEffect(() => {
@@ -84,7 +101,8 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
   // AGRUPA em vez de espalhar. Ver lib/posicao-no-mapa.ts: até 27/08/2026 os
   // marcadores empilhados eram abertos num leque de ~130 m "só para ficarem
   // clicáveis" — e isso fazia 25 estimativas idênticas parecerem 25 medidas.
-  const pontos = useMemo<PontoNoMapa[]>(() => agruparPorPosicao(positioned), [positioned]);
+  const [zoom, setZoom] = useState(4);
+  const pontos = useMemo<PontoNoMapa[]>(() => agruparParaZoom(positioned, zoom), [positioned, zoom]);
   const positions = useMemo<PositionedCamera[]>(
     () => pontos.map((ponto) => ({
       camera: ponto.cameras[0] as Camera,
@@ -92,7 +110,10 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
     })),
     [pontos],
   );
-  const signature = pontos.map((p) => `${p.id}:${p.cameras.length}`).join('|');
+  // A assinatura do enquadramento usa as CÂMERAS, não os agrupamentos: se
+  // dependesse dos grupos, cada mudança de zoom reenquadraria o mapa e o
+  // operador nunca conseguiria aproximar — o mapa puxaria a visão de volta.
+  const signature = positioned.map((c) => `${c.id}:${c.latitude}:${c.longitude}`).join('|');
 
   return (
     <div className="relative h-full min-h-[420px] overflow-hidden bg-[#dbe4e8]">
@@ -114,6 +135,7 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
           bounds={WORLD_BOUNDS}
           noWrap
         />
+        <OuvinteDeZoom aoMudar={setZoom} />
         <CameraBounds positions={positions} signature={signature} />
         {pontos.map((ponto) => {
           const algumaOnline = ponto.cameras.some((c) => (c as Camera).isOnline);

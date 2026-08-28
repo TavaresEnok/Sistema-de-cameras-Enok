@@ -76,6 +76,11 @@ export type PontoNoMapa = {
   estimado: boolean;
   /** Mais de uma câmera no mesmo ponto. */
   agrupado: boolean;
+  /**
+   * Todas as câmeras deste ponto têm a MESMA coordenada — aproximar não vai
+   * separá-las, porque não existe posição diferente para mostrar.
+   */
+  mesmoPonto?: boolean;
 };
 
 /**
@@ -103,6 +108,7 @@ export function agruparPorPosicao(cameras: CameraNoMapa[]): PontoNoMapa[] {
       // câmera com endereço conferido, o ponto é real e o aviso seria falso.
       estimado: lista.every(ehEstimativa),
       agrupado: lista.length > 1,
+      mesmoPonto: lista.length > 1,
     };
   });
 }
@@ -115,10 +121,18 @@ export function rotuloDoPonto(ponto: PontoNoMapa): string {
 
 /** A frase que explica, sem enfeite, o que aquele ponto significa. */
 export function explicacaoDoPonto(ponto: PontoNoMapa): string {
+  if (ponto.estimado && ponto.mesmoPonto) {
+    // O caso que o dono viu: aproximar não separa porque a coordenada é a
+    // MESMA para todas. Dizer isso evita que ele fique dando zoom em vão.
+    return 'Estas câmeras têm exatamente a mesma posição estimada pela rede, '
+      + 'por isso aproximar não as separa. Informe o endereço de cada uma para '
+      + 'que apareçam no ponto certo.';
+  }
   if (ponto.estimado && ponto.agrupado) {
     return 'Posição estimada pela rede — as câmeras não estão necessariamente aqui. '
       + 'Informe o endereço de cada uma para posicioná-las de verdade.';
   }
+  if (ponto.mesmoPonto) return 'Câmeras no mesmo endereço — aproximar não as separa.';
   if (ponto.estimado) {
     return 'Posição estimada pela rede — a câmera não está necessariamente aqui. '
       + 'Informe o endereço para posicioná-la de verdade.';
@@ -138,4 +152,75 @@ export function resumirMapa(cameras: CameraNoMapa[]) {
     estimadas,
     conferidas: comPosicao.length - estimadas,
   };
+}
+
+// ── AGRUPAMENTO QUE RESPEITA O ZOOM ────────────────────────────────────────
+//
+// Pedido do dono em 28/08/2026: "no zoom baixo aparece um símbolo com o número
+// de câmeras, o que está correto; mas ao aproximar deveria aparecer cada câmera
+// no seu ponto/rua, e continua como um símbolo grande".
+//
+// Eram duas coisas diferentes, e só uma era defeito:
+//
+//  1. DEFEITO MEU: o agrupamento olhava só coordenadas IDÊNTICAS. Duas câmeras
+//     a 20 metros uma da outra nunca se juntavam — ficavam sobrepostas e
+//     ilegíveis no zoom de cidade. Corrigido aqui: junta por DISTÂNCIA NA TELA,
+//     então aproximar realmente separa.
+//
+//  2. NÃO É DEFEITO: quando as câmeras têm a MESMA coordenada — o caso das 25
+//     desta frota, todas no mesmo chute de IP — nenhum zoom as separa, porque
+//     não existe posição diferente para mostrar. Separá-las ali seria inventar
+//     rua. O que o mapa deve fazer é DIZER isso, e é o que `mesmoPonto` permite.
+
+/** Um pixel do mapa vale quantos graus, neste zoom? (Web Mercator, 256px/ladrilho.) */
+export function grausPorPixel(zoom: number): number {
+  const z = Number.isFinite(zoom) ? Math.max(0, Math.min(22, zoom)) : 0;
+  return 360 / (256 * Math.pow(2, z));
+}
+
+/** Distância mínima na tela para dois marcadores caberem lado a lado. */
+export const RAIO_DE_AGRUPAMENTO_PX = 44;
+
+/**
+ * Agrupa por proximidade NA TELA, no zoom atual.
+ *
+ * Longitude é comprimida por `cos(latitude)`: um grau de longitude no Recife
+ * vale bem menos metros que um grau de latitude, e ignorar isso agruparia
+ * demais no sentido leste-oeste.
+ */
+export function agruparParaZoom(
+  cameras: CameraNoMapa[],
+  zoom: number,
+  raioEmPixels: number = RAIO_DE_AGRUPAMENTO_PX,
+): PontoNoMapa[] {
+  const exatos = agruparPorPosicao(cameras);
+  const limiteGraus = grausPorPixel(zoom) * raioEmPixels;
+
+  const clusters: { lat: number; lon: number; partes: PontoNoMapa[] }[] = [];
+  for (const ponto of exatos) {
+    const fator = Math.max(0.2, Math.cos((ponto.latitude * Math.PI) / 180));
+    const perto = clusters.find((c) => {
+      const dLat = c.lat - ponto.latitude;
+      const dLon = (c.lon - ponto.longitude) * fator;
+      return Math.sqrt(dLat * dLat + dLon * dLon) < limiteGraus;
+    });
+    if (perto) perto.partes.push(ponto);
+    else clusters.push({ lat: ponto.latitude, lon: ponto.longitude, partes: [ponto] });
+  }
+
+  return clusters.map((c) => {
+    const cameras = c.partes.flatMap((p) => p.cameras);
+    return {
+      // A chave inclui a composição: sem isso o React reaproveitaria o marcador
+      // de um agrupamento diferente ao trocar de zoom.
+      id: c.partes.map((p) => p.id).join('+'),
+      latitude: c.lat,
+      longitude: c.lon,
+      cameras,
+      estimado: cameras.every(ehEstimativa),
+      agrupado: cameras.length > 1,
+      // Só há UMA posição real aqui dentro: aproximar não vai separar nada.
+      mesmoPonto: c.partes.length === 1 && cameras.length > 1,
+    };
+  });
 }

@@ -117,7 +117,10 @@ test('§5 no mapa: posição estimada NÃO é espalhada para parecer medida', ()
   assert.doesNotMatch(fonte, /radius\s*=\s*0\.\d+\s*\*/, 'o mapa voltou a abrir um leque em graus');
 
   // E precisa continuar agrupando pelo módulo honesto.
-  assert.match(fonte, /agruparPorPosicao/, 'o mapa deve AGRUPAR posições iguais, não espalhá-las');
+  // Desde 28/08 o agrupamento respeita o zoom (agruparParaZoom), mas continua
+  // sendo AGRUPAMENTO — nunca deslocamento artificial de marcador.
+  assert.match(fonte, /agruparPa?r?a?Z?o?o?m|agruparPorPosicao/,
+    'o mapa deve AGRUPAR posições próximas, não espalhá-las');
 });
 
 test('§5 no mapa: o operador é avisado de que a posição é estimativa', () => {

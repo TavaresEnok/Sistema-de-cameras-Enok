@@ -7,6 +7,8 @@ import {
   resumirMapa,
   rotuloDoPonto,
   temPosicao,
+  agruparParaZoom,
+  grausPorPixel,
 } from '../src/lib/posicao-no-mapa.ts';
 
 // "verifique se a geolocalização automática está sendo feita corretamente
@@ -57,7 +59,10 @@ test('UMA câmera conferida no grupo já tira o aviso de estimativa', () => {
   ]);
   assert.equal(pontos.length, 1);
   assert.equal(pontos[0].estimado, false);
-  assert.equal(explicacaoDoPonto(pontos[0]), 'Câmeras no mesmo endereço.');
+  // Desde 28/08 a frase também explica que aproximar não vai separá-las —
+  // era a dúvida do dono ao dar zoom e nada mudar.
+  assert.match(explicacaoDoPonto(pontos[0]), /mesmo endereço/i);
+  assert.match(explicacaoDoPonto(pontos[0]), /aproximar não as separa/i);
 });
 
 test('câmeras em lugares DIFERENTES continuam separadas', () => {
@@ -106,4 +111,48 @@ test('o CASO REAL desta instalação, ponta a ponta', () => {
   const r = resumirMapa(frota);
   assert.equal(r.estimadas, 29);
   assert.equal(r.conferidas, 0);
+});
+
+// ── 28/08/2026: agrupamento que respeita o zoom ─────────────────────────────
+//
+// "no zoom baixo aparece um símbolo com o número de câmeras, o que está
+//  correto; mas ao aproximar deveria aparecer cada câmera no seu ponto/rua, e
+//  continua como um símbolo grande" (dono)
+
+test('APROXIMAR SEPARA: duas câmeras vizinhas juntam longe e separam perto', () => {
+  // ~250 m de distância — duas ruas.
+  const duas = [
+    conferida('a', -8.0500, -34.8800, 'Rua A'),
+    conferida('b', -8.0522, -34.8800, 'Rua B'),
+  ];
+  assert.equal(agruparParaZoom(duas, 11).length, 1, 'no zoom de cidade, viram um só');
+  assert.equal(agruparParaZoom(duas, 17).length, 2, 'aproximando, cada uma no seu ponto');
+});
+
+test('MESMA COORDENADA NUNCA SEPARA — e o mapa diz por quê', () => {
+  // O caso real: 25 câmeras no mesmo chute de IP, com sete casas decimais
+  // idênticas. Nenhum zoom inventa rua.
+  const frota = Array.from({ length: 25 }, (_, i) => estimada(String(i), -7.9408333, -34.8731087));
+  for (const zoom of [3, 11, 17, 19, 22]) {
+    const pontos = agruparParaZoom(frota, zoom);
+    assert.equal(pontos.length, 1, `zoom ${zoom} não pode separar posições idênticas`);
+    assert.equal(pontos[0].mesmoPonto, true);
+  }
+  assert.match(explicacaoDoPonto(agruparParaZoom(frota, 19)[0]), /mesma posição estimada/i);
+  assert.match(explicacaoDoPonto(agruparParaZoom(frota, 19)[0]), /aproximar não as separa/i);
+});
+
+test('o pixel vale menos grau conforme se aproxima', () => {
+  assert.ok(grausPorPixel(10) > grausPorPixel(16), 'zoom maior = mais detalhe por pixel');
+  assert.equal(grausPorPixel(0), 360 / 256);
+  // Entrada estragada não vira NaN e não some com o mapa.
+  assert.ok(Number.isFinite(grausPorPixel(Number.NaN)));
+});
+
+test('câmeras em cidades diferentes nunca se juntam, nem no zoom mais baixo', () => {
+  const longe = [
+    conferida('recife', -8.0538, -34.8813, 'Recife'),
+    conferida('sp', -23.5505, -46.6333, 'São Paulo'),
+  ];
+  assert.equal(agruparParaZoom(longe, 4).length, 2);
 });
