@@ -43,7 +43,7 @@ import {
   sanitizeRtspUrl,
 } from './helpers/rtsp-url.helper';
 import { sanitizeSensitiveText } from '../common/security/sensitive-text.helper';
-import { isPublicIpForGeolocation, parseGeocodeResult, parseIpGeocodeResult } from './helpers/geocode-address.helper';
+import { parseGeocodeResult } from './helpers/geocode-address.helper';
 import { envNumber } from '../common/config/env-number.helper';
 import { RtmpIngestSourceService, type RtmpStreamMetadata } from './rtmp-ingest-source.service';
 import {
@@ -3877,27 +3877,8 @@ export class CamerasService implements OnApplicationBootstrap {
         site: { select: { location: true } },
       },
     });
-    const ipCache = new Map<string, ReturnType<typeof parseIpGeocodeResult>>();
     let located = 0;
     let unavailable = 0;
-
-    const locateIp = async (ip: string | null) => {
-      const cacheKey = ip || '__server_egress__';
-      if (ipCache.has(cacheKey)) return ipCache.get(cacheKey) ?? null;
-      try {
-        const path = ip ? encodeURIComponent(ip) : '';
-        const response = await fetch(`https://ipwho.is/${path}`, {
-          headers: { Accept: 'application/json', 'User-Agent': this.configService.get<string>('GEOCODING_USER_AGENT') || 'AjustCam/1.0' },
-          signal: AbortSignal.timeout(8000),
-        });
-        const result = response.ok ? parseIpGeocodeResult(await response.json()) : null;
-        ipCache.set(cacheKey, result);
-        return result;
-      } catch {
-        ipCache.set(cacheKey, null);
-        return null;
-      }
-    };
 
     for (const camera of cameras) {
       let result: Awaited<ReturnType<CamerasService['geocodeAddress']>> | null = null;
@@ -3910,14 +3891,20 @@ export class CamerasService implements OnApplicationBootstrap {
         result = await this.geocodeAddress(physicalAddress).catch(() => null);
         source = 'endereço';
       }
-      if (!result) {
-        const publicIp = isPublicIpForGeolocation(camera.ip) ? camera.ip : null;
-        // RTMP push não guarda o IP remoto como endereço da câmera. Neste caso
-        // a saída pública da instalação é só uma aproximação inicial explícita.
-        const canUseEgress = camera.sourceMode === SOURCE_MODE_PUSH;
-        result = publicIp ? await locateIp(publicIp) : canUseEgress ? await locateIp(null) : null;
-        source = publicIp ? 'IP público da câmera' : canUseEgress ? 'IP público da instalação' : '';
-      }
+      // ESTIMATIVA POR IP FOI REMOVIDA EM 28/08/2026.
+      //
+      // Ela punha TODAS as câmeras que dividem uma saída de internet no mesmo
+      // ponto: nesta frota, 25 câmeras caíram na mesma coordenada, com sete
+      // casas decimais iguais, num bairro onde nenhuma delas está. O dono viu
+      // no mapa e a reação foi exata: "as câmeras não estão 25 juntas na mesma
+      // rua e prédio".
+      //
+      // IP não diz onde a câmera está. Diz por onde a internet dela sai, que é
+      // o equipamento do provedor. Num mapa de segurança, um pino errado é pior
+      // que pino nenhum: manda gente ao lugar errado com ar de certeza.
+      //
+      // Sem endereço, a câmera fica SEM posição — e o mapa diz quantas estão
+      // assim, com o caminho para resolver. Ver posicao-no-mapa.ts.
       if (!result || !source) { unavailable += 1; continue; }
       const updated = await this.prisma.camera.updateMany({
         where: { id: camera.id, OR: [{ latitude: null }, { longitude: null }] },

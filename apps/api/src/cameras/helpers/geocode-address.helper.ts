@@ -4,29 +4,18 @@ export type GeocodedAddress = {
   longitude: number;
 };
 
-export function isPublicIpForGeolocation(ip: string): boolean {
-  const parts = ip.split('.').map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  const [a, b] = parts;
-  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
-  if (a === 169 && b === 254) return false;
-  if (a === 172 && b >= 16 && b <= 31) return false;
-  if (a === 192 && b === 168) return false;
-  if (a === 100 && b >= 64 && b <= 127) return false;
-  return true;
-}
-
-export function parseIpGeocodeResult(payload: unknown): GeocodedAddress | null {
-  if (!payload || typeof payload !== 'object') return null;
-  const item = payload as Record<string, unknown>;
-  if (item.success !== true) return null;
-  const latitude = Number(item.latitude);
-  const longitude = Number(item.longitude);
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) return null;
-  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) return null;
-  const parts = [item.city, item.region, item.country].filter((value) => typeof value === 'string' && value.trim()).map(String);
-  return { displayName: parts.join(', ') || 'posição estimada pela rede', latitude, longitude };
-}
+// ESTIMATIVA POR IP FOI REMOVIDA EM 28/08/2026.
+//
+// `isPublicIpForGeolocation` e `parseIpGeocodeResult` viviam aqui e punham no
+// mapa a posição do provedor de internet — não a da câmera. Efeito medido nesta
+// frota: 25 câmeras na MESMA coordenada, com sete casas decimais iguais, num
+// bairro onde nenhuma delas está.
+//
+// Num mapa de segurança, pino errado é pior que pino nenhum: manda gente ao
+// lugar errado com ar de certeza. Câmera sem endereço agora fica SEM posição, e
+// o mapa diz quantas estão assim.
+//
+// Há teste que impede o retorno disto (geocode-address.test.ts).
 
 /**
  * Converte a resposta do geocodificador em um contrato pequeno e validado.

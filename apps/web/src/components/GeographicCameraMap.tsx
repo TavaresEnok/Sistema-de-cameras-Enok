@@ -81,6 +81,36 @@ function OuvinteDeZoom({ aoMudar }: { aoMudar: (zoom: number) => void }) {
   return null;
 }
 
+/**
+ * O Leaflet mede o contêiner UMA vez. Se ele muda de tamanho depois — e passou
+ * a mudar em 27/08/2026, quando a faixa de aviso entrou ACIMA do mapa — o mapa
+ * continua desenhando para o tamanho antigo e a tela fica CINZA, com os
+ * ladrilhos posicionados fora da área visível.
+ *
+ * Foi o que o dono viu: "quando dou zoom total fica cinza". Os ladrilhos
+ * existiam (nove de nove responderam 200 no zoom 19); o mapa é que estava
+ * desenhando no lugar errado.
+ */
+function VigiaDeTamanho() {
+  const map = useMap();
+  useEffect(() => {
+    const alvo = map.getContainer();
+    const remedir = () => map.invalidateSize({ animate: false });
+    const observador = new ResizeObserver(remedir);
+    observador.observe(alvo);
+    window.addEventListener('resize', remedir);
+    // Uma medida logo apos a montagem: a rota pode terminar de dimensionar
+    // depois que o mapa ja nasceu.
+    const t = window.setTimeout(remedir, 120);
+    return () => {
+      observador.disconnect();
+      window.removeEventListener('resize', remedir);
+      window.clearTimeout(t);
+    };
+  }, [map]);
+  return null;
+}
+
 function CameraBounds({ positions, signature }: { positions: PositionedCamera[]; signature: string }) {
   const map = useMap();
   useEffect(() => {
@@ -135,6 +165,7 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
           bounds={WORLD_BOUNDS}
           noWrap
         />
+        <VigiaDeTamanho />
         <OuvinteDeZoom aoMudar={setZoom} />
         <CameraBounds positions={positions} signature={signature} />
         {pontos.map((ponto) => {
@@ -198,7 +229,7 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
           <div className="max-w-sm rounded-xl border border-border bg-card/95 p-5 text-center shadow-xl">
             <CameraIcon className="mx-auto h-7 w-7 text-primary" />
             <div className="mt-3 text-sm font-semibold">{cameras.length} câmera{cameras.length === 1 ? '' : 's'} cadastrada{cameras.length === 1 ? '' : 's'}</div>
-            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">O sistema tentará estimar a localização automaticamente. Se necessário, corrija o endereço na opção Editar da câmera.</div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">Nenhuma tem endereço cadastrado ainda. O sistema <strong>não adivinha</strong> a posição: chutar pela rede colocaria todas no mesmo ponto, no lugar errado. Informe o endereço em <strong>Editar → Localização no mapa</strong> e a câmera aparece aqui.</div>
           </div>
         </div>
       )}
