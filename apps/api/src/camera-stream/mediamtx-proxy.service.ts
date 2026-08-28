@@ -44,6 +44,7 @@ import {
 import { liveViewModeToSourceProfile } from './helpers/source-profile.helper';
 import { decidirFonteDaMaxima } from './helpers/fonte-da-maxima.helper';
 import { decidirCopiaDeVideo } from './helpers/copia-em-vez-de-reencode.helper';
+import { calcularBitrateH264Compativel } from './helpers/bitrate-de-transcode.helper';
 import { SourceGatewayService } from './source-gateway.service';
 import { RtmpIngestSourceService } from '../cameras/rtmp-ingest-source.service';
 import { conferirPadrao, resumirFrota } from './helpers/padrao-de-stream.helper';
@@ -1445,7 +1446,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
     // A fonte Live e uma escolha operacional explicita. HEVC e convertido
     // para o navegador, mas nunca trocado silenciosamente por outro subtype.
-    return { profile: configuredProfile, sourceUrl: chosenSourceUrl, isHevc };
+    return {
+      profile: configuredProfile,
+      sourceUrl: chosenSourceUrl,
+      isHevc,
+      bitrateKbps: Number(camera.detectedBitrateKbps ?? camera.streamBitrateKbps) || null,
+    };
   }
 
   /**
@@ -2183,6 +2189,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     let width = Number(camera.detectedWidth ?? camera.streamWidth) || null;
     let height = Number(camera.detectedHeight ?? camera.streamHeight) || null;
     let fps = Number(camera.detectedFps ?? camera.streamFps) || null;
+    let bitrateKbps = Number(camera.detectedBitrateKbps ?? camera.streamBitrateKbps) || null;
 
     if (this.rtmpIngestSource) {
       const resolved = await this.rtmpIngestSource.resolve(camera);
@@ -2192,6 +2199,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       width = resolved.metadata.width ?? width;
       height = resolved.metadata.height ?? height;
       fps = resolved.metadata.fps ?? fps;
+      bitrateKbps = resolved.metadata.bitrateKbps ?? bitrateKbps;
       if (!codec && resolved.ready) {
         codec = await this.probeStreamVideoCodec(sourceUrl!, rtspTransport);
       }
@@ -2237,6 +2245,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       width,
       height,
       fps,
+      bitrateKbps,
       // Codec desconhecido é tratado conservadoramente como HEVC nos modos que
       // exigem compatibilidade web. Em "original" ele continua em passthrough.
       isHevc: codec ? isHevcCodec(codec) : true,
@@ -2287,6 +2296,16 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const sourceWidth = Number(('width' in selected ? selected.width : null) ?? camera.streamWidth) || null;
     const sourceHeight = Number(('height' in selected ? selected.height : null) ?? camera.streamHeight) || null;
     const sourceFps = Number(('fps' in selected ? selected.fps : null) ?? camera.streamFps) || null;
+    const sourceBitrateKbps = Number(
+      ('bitrateKbps' in selected ? selected.bitrateKbps : null)
+      ?? camera.detectedBitrateKbps
+      ?? camera.streamBitrateKbps,
+    ) || null;
+    const compatibleH264BitrateKbps = calcularBitrateH264Compativel({
+      bitrateKbps: sourceBitrateKbps,
+      largura: sourceWidth,
+      altura: sourceHeight,
+    });
     const transcodeAudioForWebrtc = deliveryMode === 'selected' && Boolean(camera.audioEnabled);
     const sanitizeGridSource =
       deliveryMode === 'grid' &&
@@ -2498,13 +2517,15 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           `-bufsize ${GRID_LIVE_BITRATE_KBPS * 2}k -pix_fmt yuv420p ` +
           `-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2 -vf "${gridScaleFilter}"`
         : '-threads 4 -c:v libx264 -preset veryfast -tune zerolatency -profile:v high ' +
-          '-b:v 6000k -maxrate 6000k -bufsize 12000k -pix_fmt yuv420p ' +
+          `-b:v ${compatibleH264BitrateKbps}k -maxrate ${compatibleH264BitrateKbps}k ` +
+          `-bufsize ${compatibleH264BitrateKbps * 2}k -pix_fmt yuv420p ` +
           '-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2';
       const nvencVideoArgs =
         // Nem a GPU: reencodar H.264 em H.264 é caro em qualquer lugar.
         useNvenc && !sanitizeGridSource && !videoJaServe
           ? '-c:v h264_nvenc -preset p4 -tune ll -profile:v main -rc cbr ' +
-            '-b:v 5000k -maxrate 5000k -bufsize 10000k -pix_fmt yuv420p ' +
+            `-b:v ${compatibleH264BitrateKbps}k -maxrate ${compatibleH264BitrateKbps}k ` +
+            `-bufsize ${compatibleH264BitrateKbps * 2}k -pix_fmt yuv420p ` +
             '-g 30 -bf 0'
           : null;
       const audioArgs = transcodeAudioForWebrtc

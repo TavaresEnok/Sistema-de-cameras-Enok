@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { Camera as CameraIcon, Check, ExternalLink, Filter, Layers3, Map, MapPin, Pencil, Search, ShieldCheck, Upload, Video, X } from 'lucide-react';
+import { Camera as CameraIcon, Check, Crosshair, ExternalLink, Filter, Layers3, Map, MapPin, Pencil, Search, ShieldCheck, Upload, Video, X } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
 import { GeographicCameraMap } from '../components/GeographicCameraMap';
+import { CameraLocationDialog, type CameraMapPosition } from '../components/CameraLocationDialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore, type Camera } from '../store/vmsDataStore';
@@ -64,6 +65,9 @@ export default function MapPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [sidebarPosterUrls, setSidebarPosterUrls] = useState<Record<string, string>>({});
   const lastSidebarPosterRetryAtRef = useRef(0);
+  const [locationCameraId, setLocationCameraId] = useState<string | null>(null);
+  const [pickingLocation, setPickingLocation] = useState(false);
+  const [pickedPosition, setPickedPosition] = useState<CameraMapPosition | null>(null);
 
   const accessibleSiteIds = useMemo(() => new Set(cameras.map((c) => c.siteId).filter(Boolean)), [cameras]);
   const visibleSites = useMemo(
@@ -86,6 +90,7 @@ export default function MapPage() {
     [currentMarkers, siteCameras],
   );
   const selected = cameras.find((camera) => camera.id === selectedId) ?? null;
+  const locationCamera = cameras.find((camera) => camera.id === locationCameraId) ?? null;
   const panelCameras = useMemo(
     () => mode === 'geographic'
       ? cameras.filter((camera) => camera.enabled)
@@ -228,6 +233,11 @@ export default function MapPage() {
     setSelectedId(null);
     setLocation('/map', { replace: true });
   };
+  const editCameraLocation = (camera: Camera) => {
+    setLocationCameraId(camera.id);
+    setPickedPosition(null);
+    setPickingLocation(false);
+  };
 
   const placeMarker = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!editing || !placingId || !stageRef.current) return;
@@ -312,7 +322,22 @@ export default function MapPage() {
         {mode === 'geographic' ? (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card">
-              <GeographicCameraMap cameras={cameras.filter((camera) => camera.enabled)} onOpen={openCamera} />
+              <GeographicCameraMap
+                cameras={cameras.filter((camera) => camera.enabled)}
+                onOpen={openCamera}
+                pickMode={pickingLocation}
+                onPickPosition={(position) => {
+                  setPickedPosition(position);
+                  setPickingLocation(false);
+                }}
+              />
+              {pickingLocation && (
+                <div className="absolute left-1/2 top-3 z-[900] flex -translate-x-1/2 items-center gap-3 rounded-lg border border-primary/35 bg-card/95 px-3 py-2 text-xs shadow-xl backdrop-blur">
+                  <Crosshair className="h-4 w-4 text-primary" />
+                  <span>Clique no local exato da câmera.</span>
+                  <button type="button" onClick={() => setPickingLocation(false)} className="rounded px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground">Cancelar</button>
+                </div>
+              )}
             </div>
           </div>
         ) : <div ref={stageRef} onClick={placeMarker} className={`relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card ${editing && placingId ? 'cursor-crosshair' : ''}`}>
@@ -395,15 +420,15 @@ export default function MapPage() {
               ? camera.latitude != null && camera.longitude != null
               : Boolean(currentMarkers[camera.id]);
             return (
-              <button
-                key={camera.id}
-                type="button"
-                className={`group grid w-full grid-cols-[56px_1fr_auto] items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-[hsl(var(--accent)_/_0.7)] ${selectedId === camera.id ? 'bg-[hsl(var(--primary)_/_0.06)]' : ''}`}
-                onClick={() => mode === 'floorplan' && editing && !positionedInView
-                  ? setPlacingId(camera.id)
-                  : openCamera(camera)}
-                title={`Abrir ${camera.name}`}
-              >
+              <div key={camera.id} className={`group flex items-center transition-colors hover:bg-[hsl(var(--accent)_/_0.7)] ${selectedId === camera.id ? 'bg-[hsl(var(--primary)_/_0.06)]' : ''}`}>
+                <button
+                  type="button"
+                  className="grid min-w-0 flex-1 grid-cols-[56px_1fr_auto] items-center gap-2 px-2 py-1.5 text-left"
+                  onClick={() => mode === 'floorplan' && editing && !positionedInView
+                    ? setPlacingId(camera.id)
+                    : openCamera(camera)}
+                  title={`Abrir ${camera.name}`}
+                >
                 <span className="relative block h-9 w-14 overflow-hidden rounded border border-white/10 bg-black">
                   {sidebarPosterUrls[camera.id] ? (
                     <img
@@ -431,7 +456,19 @@ export default function MapPage() {
                     ? 'Posicionar'
                     : STATUS_FILTER_LABEL[camera.status as StatusFilter] ?? camera.status.replace('_', ' ')}
                 </span>
-              </button>
+                </button>
+                {role === 'admin' && mode === 'geographic' && (
+                  <button
+                    type="button"
+                    onClick={() => editCameraLocation(camera)}
+                    className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-primary"
+                    aria-label={`Editar localização de ${camera.name}`}
+                    title="Editar localização no mapa"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             );
           })}
         </div>
@@ -449,11 +486,28 @@ export default function MapPage() {
       {selected && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/45 p-4 backdrop-blur-[2px]" onClick={closeCamera}>
           <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-3 border-b border-border px-4 py-3"><span className={`h-2.5 w-2.5 rounded-full ${selected.isOnline ? 'bg-emerald-500' : 'bg-muted-foreground'}`} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{selected.name}</div><div className="text-[10px] text-muted-foreground">{selected.zone} · {statusLabel(selected)}</div></div>{role !== 'viewer' && <Link href={`/cameras/${selected.id}`} className="hidden h-8 items-center gap-1.5 rounded border border-border px-2.5 text-xs hover:bg-accent sm:flex">Detalhes <ExternalLink className="h-3 w-3" /></Link>}<button onClick={closeCamera} className="flex h-8 w-8 items-center justify-center rounded hover:bg-accent" aria-label="Fechar câmera"><X className="h-4 w-4" /></button></div>
+            <div className="flex items-center gap-3 border-b border-border px-4 py-3"><span className={`h-2.5 w-2.5 rounded-full ${selected.isOnline ? 'bg-emerald-500' : 'bg-muted-foreground'}`} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{selected.name}</div><div className="text-[10px] text-muted-foreground">{selected.zone} · {statusLabel(selected)}</div></div>{role === 'admin' && <button type="button" onClick={() => { closeCamera(); editCameraLocation(selected); }} className="hidden h-8 items-center gap-1.5 rounded border border-border px-2.5 text-xs hover:bg-accent sm:flex"><MapPin className="h-3 w-3" /> Localização</button>}{role !== 'viewer' && <Link href={`/cameras/${selected.id}`} className="hidden h-8 items-center gap-1.5 rounded border border-border px-2.5 text-xs hover:bg-accent sm:flex">Detalhes <ExternalLink className="h-3 w-3" /></Link>}<button onClick={closeCamera} className="flex h-8 w-8 items-center justify-center rounded hover:bg-accent" aria-label="Fechar câmera"><X className="h-4 w-4" /></button></div>
             <div className="relative aspect-video bg-black">{selected.isOnline ? <LiveStreamPlayer cameraId={selected.id} cameraName={selected.name} className="absolute inset-0 h-full w-full" muted showOverlay aiEnabled={selected.aiEnabled} liveViewMode="selected" /> : <div className="flex h-full items-center justify-center text-sm text-white/55">Câmera offline</div>}</div>
           </div>
         </div>
       )}
+
+      <CameraLocationDialog
+        camera={locationCamera}
+        open={Boolean(locationCamera) && !pickingLocation}
+        pickedPosition={pickedPosition}
+        onOpenChange={(open) => {
+          if (!open && !pickingLocation) {
+            setLocationCameraId(null);
+            setPickedPosition(null);
+          }
+        }}
+        onPickMap={() => setPickingLocation(true)}
+        onSaved={() => {
+          setLocationCameraId(null);
+          setPickedPosition(null);
+        }}
+      />
     </div>
   );
 }

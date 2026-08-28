@@ -6,7 +6,8 @@ const read = (path: string) => readFile(new URL(`../${path}`, import.meta.url), 
 
 test('mapa geográfico inclui todas as câmeras e não exige unidade para aparecer', async () => {
   const page = await read('src/pages/MapPage.tsx');
-  assert.match(page, /GeographicCameraMap cameras=\{cameras\.filter/);
+  assert.match(page, /<GeographicCameraMap/);
+  assert.match(page, /cameras=\{cameras\.filter\(\(camera\) => camera\.enabled\)\}/);
   assert.match(page, /Definir endereço/);
   assert.doesNotMatch(page, /Associe uma unidade às câmeras/);
 });
@@ -17,6 +18,20 @@ test('edição da câmera permite endereço, localização automática e coorden
   assert.match(sheet, /location\/geocode/);
   assert.match(sheet, /latitude/);
   assert.match(sheet, /longitude/);
+});
+
+test('mapa edita localização sem mandar o operador para configurações da câmera', async () => {
+  const page = await read('src/pages/MapPage.tsx');
+  const dialog = await read('src/components/CameraLocationDialog.tsx');
+  const map = await read('src/components/GeographicCameraMap.tsx');
+  assert.match(page, /CameraLocationDialog/);
+  assert.match(page, /Editar localização no mapa/);
+  assert.match(dialog, /cameras\/location\/geocode/);
+  assert.match(dialog, /navigator\.geolocation/);
+  assert.match(dialog, /Escolher ponto no mapa/);
+  assert.match(dialog, /latitude: lat, longitude: lng/);
+  assert.match(map, /useMapEvents/);
+  assert.match(map, /pickMode/);
 });
 
 test('coordenada ausente não vira 0,0 no Atlântico', async () => {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera as CameraIcon, LocateFixed } from 'lucide-react';
 import { divIcon, latLngBounds, type Map as LeafletMap } from 'leaflet';
-import { MapContainer, Marker, Popup, TileLayer, Tooltip, useMap } from 'react-leaflet';
+import { MapContainer, Marker, Popup, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Camera } from '../store/vmsDataStore';
 import {
@@ -88,6 +88,27 @@ function OuvinteDeZoom({ aoMudar }: { aoMudar: (zoom: number) => void }) {
   return null;
 }
 
+function SeletorDePosicaoNoMapa({
+  ativo,
+  aoEscolher,
+}: {
+  ativo: boolean;
+  aoEscolher?: (position: Center) => void;
+}) {
+  const map = useMapEvents({
+    click(event) {
+      if (ativo) aoEscolher?.({ latitude: event.latlng.lat, longitude: event.latlng.lng });
+    },
+  });
+  useEffect(() => {
+    const container = map.getContainer();
+    const cursorAnterior = container.style.cursor;
+    if (ativo) container.style.cursor = 'crosshair';
+    return () => { container.style.cursor = cursorAnterior; };
+  }, [ativo, map]);
+  return null;
+}
+
 /**
  * O Leaflet mede o contêiner UMA vez. Se ele muda de tamanho depois — e passou
  * a mudar em 27/08/2026, quando a faixa de aviso entrou ACIMA do mapa — o mapa
@@ -129,7 +150,17 @@ function CameraBounds({ positions, signature }: { positions: PositionedCamera[];
   return null;
 }
 
-export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; onOpen: (camera: Camera) => void }) {
+export function GeographicCameraMap({
+  cameras,
+  onOpen,
+  pickMode = false,
+  onPickPosition,
+}: {
+  cameras: Camera[];
+  onOpen: (camera: Camera) => void;
+  pickMode?: boolean;
+  onPickPosition?: (position: Center) => void;
+}) {
   const mapRef = useRef<LeafletMap | null>(null);
   const positioned = useMemo(
     () => cameras.filter((camera) => Number.isFinite(camera.latitude) && Number.isFinite(camera.longitude)),
@@ -175,6 +206,7 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
         />
         <VigiaDeTamanho />
         <OuvinteDeZoom aoMudar={setZoom} />
+        <SeletorDePosicaoNoMapa ativo={pickMode} aoEscolher={onPickPosition} />
         <CameraBounds positions={positions} signature={signature} />
         {pontos.map((ponto) => {
           const algumaOnline = ponto.cameras.some((c) => (c as Camera).isOnline);
@@ -186,7 +218,8 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
               icon={marcador}
               title={rotuloDoPonto(ponto)}
               alt={rotuloDoPonto(ponto)}
-              eventHandlers={ponto.agrupado ? undefined : { click: () => onOpen(ponto.cameras[0] as Camera) }}
+              bubblingMouseEvents={pickMode}
+              eventHandlers={pickMode || ponto.agrupado ? undefined : { click: () => onOpen(ponto.cameras[0] as Camera) }}
             >
               <Tooltip direction="top" offset={[0, -6]} opacity={0.96}>
                 {rotuloDoPonto(ponto)} · {ponto.estimado ? 'posição estimada' : algumaOnline ? 'online' : 'offline'}
