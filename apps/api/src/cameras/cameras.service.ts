@@ -3866,12 +3866,15 @@ export class CamerasService implements OnApplicationBootstrap {
    * Primeira tentativa para o mapa. Nunca sobrescreve posição já salva: depois
    * que o operador corrige uma câmera, o valor manual sempre vence.
    */
-  async autoDiscoverLocations() {
+  async autoDiscoverLocations(cameraId?: string) {
     const cameras = await this.prisma.camera.findMany({
       // Localização é metadado do cadastro, não uma operação de streaming.
       // Câmera desativada também deve continuar pronta para o mapa quando for
       // reativada; esta consulta não liga nem acessa o equipamento.
-      where: { OR: [{ latitude: null }, { longitude: null }] },
+      where: {
+        ...(cameraId ? { id: cameraId } : {}),
+        OR: [{ latitude: null }, { longitude: null }],
+      },
       select: {
         id: true, ip: true, sourceMode: true, locationAddress: true,
         site: { select: { location: true } },

@@ -9,6 +9,7 @@ import { Separator } from '@/components/ui/separator';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
 import { getApiBaseUrl } from '../lib/api-base';
+import { capturarLocalizacaoDoInstalador } from '../lib/localizacao-do-instalador';
 
 // ── CADASTRO DE CÂMERA QUE PUBLICA ─────────────────────────────────────────
 //
@@ -100,6 +101,7 @@ export function AddPushCameraDialog({
     if (!accessToken || !nome.trim()) return;
     setSalvando(true);
     try {
+      const localizacaoDoInstalador = await capturarLocalizacaoDoInstalador();
       const { data } = await axios.post(
         `${getApiBaseUrl()}/cameras`,
         {
@@ -107,6 +109,7 @@ export function AddPushCameraDialog({
           sourceMode: 'rtmp_push',
           recordingEnabled: true,
           recordingMode: 'continuous',
+          ...(localizacaoDoInstalador ?? {}),
         },
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );

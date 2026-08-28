@@ -44,7 +44,12 @@ export class CamerasController {
   ) {}
 
   private schedulePostCreateProvisioning(cameraId: string) {
-    setTimeout(() => void this.postCreateProvisioning(cameraId), 0);
+    setTimeout(() => {
+      // GPS/endereço enviado no cadastro sempre vence. Se não veio, aplica o
+      // fallback GeoIP imediatamente, sem esperar o ciclo periódico.
+      void this.camerasService.autoDiscoverLocations(cameraId).catch(() => undefined);
+      void this.postCreateProvisioning(cameraId);
+    }, 0);
   }
 
   private async postCreateProvisioning(cameraId: string) {

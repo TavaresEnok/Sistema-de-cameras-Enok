@@ -44,6 +44,7 @@ import { CLASSE_CONEXAO, CLASSE_MODO_GRAVACAO, PONTO_CONEXAO, ROTULO_CONEXAO, es
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 import { rotuloDoGatilhoDeObjeto, podeUsarGatilhoDeObjeto } from '../lib/gatilho-de-objeto';
 import { cameraSourceProtocol, formatStorageBytes } from '../lib/camera-list-metadata';
+import { capturarLocalizacaoDoInstalador } from '../lib/localizacao-do-instalador';
 const STATUSES = ['all', 'online', 'recording', 'motion', 'alarm', 'offline', 'no_signal', 'maintenance'] as const;
 const STATUS_LABEL: Record<(typeof STATUSES)[number], string> = {
   all: 'Todos os status',
@@ -179,6 +180,9 @@ function WizardModal({
   onCreated: (payload: {
     siteId?: string;
     areaId?: string;
+    locationAddress?: string;
+    latitude?: number;
+    longitude?: number;
     name: string;
     ip: string;
     rtspPort: number;
@@ -438,10 +442,12 @@ function WizardModal({
         });
       }
 
+      const localizacaoDoInstalador = await capturarLocalizacaoDoInstalador();
       await onCreated({
         name: form.name.trim(),
         siteId: form.siteId || undefined,
         areaId: form.areaId || undefined,
+        ...(localizacaoDoInstalador ?? {}),
         ip: form.ip.trim(),
         rtspPort: Number(form.port),
         onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : undefined,
@@ -1159,6 +1165,9 @@ export default function CamerasPage() {
     name: string;
     siteId?: string;
     areaId?: string;
+    locationAddress?: string;
+    latitude?: number;
+    longitude?: number;
     ip: string;
     rtspPort: number;
     onvifPort?: number;

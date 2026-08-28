@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { request } from '../services/api';
+import { captureInstallerLocation } from '../services/installer-location';
 import { discoverCameras, scanLocalNetwork, type ScanProgress } from '../services/camera-discovery';
 import { mergeDiscoveredCameras, parseCameraQr, type DiscoveredCamera } from '../services/camera-discovery-core';
 import { useTheme } from '../theme/ThemeProvider';
@@ -311,11 +312,14 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     const operation = ++operationRef.current;
     setSubmitting(true); setError(null);
     try {
+      const installerLocation = await captureInstallerLocation();
+      if (operation !== operationRef.current) return;
       const payload = sourceMode === 'rtmp_push'
-        ? { name: name.trim(), sourceMode }
+        ? { name: name.trim(), sourceMode, ...(installerLocation ?? {}) }
         : {
             name: name.trim(), sourceMode, ip: ip.trim(), rtspPort: Number(rtspPort) || 554,
             username: username.trim(), password,
+            ...(installerLocation ?? {}),
             ...(rtspPath.trim() ? { rtspPath: rtspPath.trim() } : {}),
             ...(onvifPort ? { onvifPort } : {}), ...(onvifPath ? { onvifPath } : {}),
             ...(onvifToken ? { onvifProfileToken: onvifToken } : {}),

@@ -66,6 +66,12 @@
         }
       ],
       [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Permita que o app registre a localização da câmera durante a instalação."
+        }
+      ],
+      [
         "expo-notifications",
         {
           "color": "#EF4444"
