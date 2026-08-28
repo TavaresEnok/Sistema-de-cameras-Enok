@@ -18,8 +18,10 @@
  *
  * A REGRA AQUI
  * ------------
- * Posição estimada NUNCA é espalhada. Ela vira UM ponto com a contagem, dizendo
- * que é estimativa. Preciso é preciso; estimado se apresenta como estimado.
+ * Posição estimada não vira endereço inventado. No zoom distante ela é um
+ * ponto com contagem. No zoom máximo, câmeras sobrepostas são abertas ao redor
+ * do ponto apenas para ficarem individualmente clicáveis; o deslocamento é
+ * marcado como visual e nunca é salvo no banco como localização real.
  *
  * Puro: sem mapa, sem rede, sem React.
  */
@@ -81,6 +83,8 @@ export type PontoNoMapa = {
    * separá-las, porque não existe posição diferente para mostrar.
    */
   mesmoPonto?: boolean;
+  /** Marcador afastado apenas na tela para permitir selecionar uma sobreposição. */
+  separadoVisualmente?: boolean;
 };
 
 /**
@@ -121,6 +125,10 @@ export function rotuloDoPonto(ponto: PontoNoMapa): string {
 
 /** A frase que explica, sem enfeite, o que aquele ponto significa. */
 export function explicacaoDoPonto(ponto: PontoNoMapa): string {
+  if (ponto.separadoVisualmente) {
+    return 'Marcador separado visualmente para permitir a seleção. A posição ainda é aproximada; '
+      + 'o sistema não gravou este deslocamento como endereço da câmera.';
+  }
   if (ponto.estimado && ponto.mesmoPonto) {
     // O caso que o dono viu: aproximar não separa porque a coordenada é a
     // MESMA para todas. Dizer isso evita que ele fique dando zoom em vão.
@@ -181,6 +189,56 @@ export function grausPorPixel(zoom: number): number {
 /** Distância mínima na tela para dois marcadores caberem lado a lado. */
 export const RAIO_DE_AGRUPAMENTO_PX = 44;
 
+/** A sobreposição só é aberta quando o mapa já está no nível de rua. */
+export const ZOOM_PARA_ABRIR_SOBREPOSICOES = 18;
+
+/**
+ * Abre um conjunto de marcadores que possui exatamente a mesma coordenada.
+ *
+ * Isto é o equivalente determinístico ao "spiderfy" usado por mapas: o
+ * operador enxerga e seleciona cada câmera sem que o sistema altere a posição
+ * persistida. Os anéis mantêm pelo menos 56 px entre pinos e continuam legíveis
+ * mesmo com 25 ou mais câmeras sobrepostas.
+ */
+function abrirSobreposicao(ponto: PontoNoMapa, zoom: number): PontoNoMapa[] {
+  if (!ponto.mesmoPonto || ponto.cameras.length < 2 || zoom < ZOOM_PARA_ABRIR_SOBREPOSICOES) {
+    return [ponto];
+  }
+
+  const grauLonPorPixel = grausPorPixel(zoom);
+  const fatorLongitude = Math.max(0.2, Math.cos((ponto.latitude * Math.PI) / 180));
+  const resultado: PontoNoMapa[] = [];
+  let inicio = 0;
+  let anel = 0;
+
+  while (inicio < ponto.cameras.length) {
+    const capacidade = 8 + anel * 4;
+    const camerasDoAnel = ponto.cameras.slice(inicio, inicio + capacidade);
+    const raioPx = 62 + anel * 48;
+
+    camerasDoAnel.forEach((camera, indice) => {
+      const angulo = -Math.PI / 2 + (2 * Math.PI * indice) / camerasDoAnel.length;
+      const deslocamentoX = Math.cos(angulo) * raioPx;
+      const deslocamentoY = Math.sin(angulo) * raioPx;
+      resultado.push({
+        id: `${ponto.id}:aberto:${camera.id}`,
+        latitude: ponto.latitude - deslocamentoY * grauLonPorPixel * fatorLongitude,
+        longitude: ponto.longitude + deslocamentoX * grauLonPorPixel,
+        cameras: [camera],
+        estimado: ehEstimativa(camera),
+        agrupado: false,
+        mesmoPonto: false,
+        separadoVisualmente: true,
+      });
+    });
+
+    inicio += camerasDoAnel.length;
+    anel += 1;
+  }
+
+  return resultado;
+}
+
 /**
  * Agrupa por proximidade NA TELA, no zoom atual.
  *
@@ -208,7 +266,7 @@ export function agruparParaZoom(
     else clusters.push({ lat: ponto.latitude, lon: ponto.longitude, partes: [ponto] });
   }
 
-  return clusters.map((c) => {
+  const pontos = clusters.map((c) => {
     const cameras = c.partes.flatMap((p) => p.cameras);
     return {
       // A chave inclui a composição: sem isso o React reaproveitaria o marcador
@@ -223,4 +281,6 @@ export function agruparParaZoom(
       mesmoPonto: c.partes.length === 1 && cameras.length > 1,
     };
   });
+
+  return pontos.flatMap((ponto) => abrirSobreposicao(ponto, zoom));
 }

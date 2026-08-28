@@ -129,17 +129,22 @@ test('APROXIMAR SEPARA: duas câmeras vizinhas juntam longe e separam perto', ()
   assert.equal(agruparParaZoom(duas, 17).length, 2, 'aproximando, cada uma no seu ponto');
 });
 
-test('MESMA COORDENADA NUNCA SEPARA — e o mapa diz por quê', () => {
-  // O caso real: 25 câmeras no mesmo chute de IP, com sete casas decimais
-  // idênticas. Nenhum zoom inventa rua.
+test('MESMA COORDENADA: agrupa longe e abre cada câmera no zoom de rua', () => {
+  // O caso real: 25 câmeras no mesmo chute de IP. A abertura no zoom alto é
+  // visual e não transforma o deslocamento em endereço persistido.
   const frota = Array.from({ length: 25 }, (_, i) => estimada(String(i), -7.9408333, -34.8731087));
-  for (const zoom of [3, 11, 17, 19, 22]) {
+  for (const zoom of [3, 11, 17]) {
     const pontos = agruparParaZoom(frota, zoom);
-    assert.equal(pontos.length, 1, `zoom ${zoom} não pode separar posições idênticas`);
+    assert.equal(pontos.length, 1, `zoom ${zoom} mantém a contagem compacta`);
     assert.equal(pontos[0].mesmoPonto, true);
   }
-  assert.match(explicacaoDoPonto(agruparParaZoom(frota, 19)[0]), /mesma posição estimada/i);
-  assert.match(explicacaoDoPonto(agruparParaZoom(frota, 19)[0]), /aproximar não as separa/i);
+
+  const abertos = agruparParaZoom(frota, 18);
+  assert.equal(abertos.length, 25);
+  assert.ok(abertos.every((p) => !p.agrupado && p.separadoVisualmente));
+  assert.equal(new Set(abertos.map((p) => `${p.latitude}:${p.longitude}`)).size, 25);
+  assert.match(explicacaoDoPonto(abertos[0]), /separado visualmente/i);
+  assert.match(explicacaoDoPonto(abertos[0]), /não gravou este deslocamento/i);
 });
 
 test('o pixel vale menos grau conforme se aproxima', () => {

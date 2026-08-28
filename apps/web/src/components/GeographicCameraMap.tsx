@@ -128,17 +128,16 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
     () => cameras.filter((camera) => Number.isFinite(camera.latitude) && Number.isFinite(camera.longitude)),
     [cameras],
   );
-  // AGRUPA em vez de espalhar. Ver lib/posicao-no-mapa.ts: até 27/08/2026 os
-  // marcadores empilhados eram abertos num leque de ~130 m "só para ficarem
-  // clicáveis" — e isso fazia 25 estimativas idênticas parecerem 25 medidas.
+  // Agrupa no zoom distante e abre sobreposições apenas no zoom de rua. A
+  // abertura é visual e não altera as coordenadas armazenadas.
   const [zoom, setZoom] = useState(4);
   const pontos = useMemo<PontoNoMapa[]>(() => agruparParaZoom(positioned, zoom), [positioned, zoom]);
   const positions = useMemo<PositionedCamera[]>(
-    () => pontos.map((ponto) => ({
-      camera: ponto.cameras[0] as Camera,
-      position: { latitude: ponto.latitude, longitude: ponto.longitude },
+    () => positioned.map((camera) => ({
+      camera,
+      position: { latitude: Number(camera.latitude), longitude: Number(camera.longitude) },
     })),
-    [pontos],
+    [positioned],
   );
   // A assinatura do enquadramento usa as CÂMERAS, não os agrupamentos: se
   // dependesse dos grupos, cada mudança de zoom reenquadraria o mapa e o
@@ -152,7 +151,7 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
         center={FALLBACK_CENTER}
         zoom={4}
         minZoom={3}
-        maxZoom={19}
+        maxZoom={20}
         maxBounds={WORLD_BOUNDS}
         maxBoundsViscosity={1}
         worldCopyJump={false}
@@ -160,8 +159,10 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
         className="z-0 h-full min-h-[420px] w-full"
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+          subdomains="abcd"
+          maxNativeZoom={20}
           bounds={WORLD_BOUNDS}
           noWrap
         />
@@ -178,16 +179,12 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
               icon={marcador}
               title={rotuloDoPonto(ponto)}
               alt={rotuloDoPonto(ponto)}
-              eventHandlers={
-                ponto.agrupado || ponto.estimado
-                  ? undefined
-                  : { click: () => onOpen(ponto.cameras[0] as Camera) }
-              }
+              eventHandlers={ponto.agrupado ? undefined : { click: () => onOpen(ponto.cameras[0] as Camera) }}
             >
               <Tooltip direction="top" offset={[0, -6]} opacity={0.96}>
                 {rotuloDoPonto(ponto)} · {ponto.estimado ? 'posição estimada' : algumaOnline ? 'online' : 'offline'}
               </Tooltip>
-              {(ponto.agrupado || ponto.estimado) && (
+              {ponto.agrupado && (
                 <Popup>
                   <div className="max-h-56 min-w-[15rem] overflow-y-auto">
                     <p className="m-0 mb-2 text-[11px] leading-relaxed text-muted-foreground">
