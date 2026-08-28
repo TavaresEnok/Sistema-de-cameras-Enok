@@ -48,6 +48,13 @@ test('mapa usa motor geográfico estável e impede salto entre cópias do mundo'
   assert.doesNotMatch(map, /nativeEvent\.offset[XY]/);
 });
 
+test('fundo do mapa não usa provedor que imprime API KEY REQUIRED', async () => {
+  const map = await read('src/components/GeographicCameraMap.tsx');
+  assert.match(map, /tile\.openstreetmap\.fr\/hot/);
+  assert.match(map, /OpenStreetMap/);
+  assert.doesNotMatch(map, /basemaps\.cartocdn\.com/);
+});
+
 test('mapa usa pin de câmera com estado e contador em vez de círculo genérico', async () => {
   const map = await read('src/components/GeographicCameraMap.tsx');
   const css = await read('src/index.css');

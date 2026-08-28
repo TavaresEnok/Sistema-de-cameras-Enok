@@ -16,6 +16,13 @@ type PositionedCamera = { camera: Camera; position: Center };
 
 const FALLBACK_CENTER: [number, number] = [-14.235, -51.9253];
 const WORLD_BOUNDS: [[number, number], [number, number]] = [[-85, -180], [85, 180]];
+// O antigo fundo CARTO passou a devolver ladrilhos com a marca
+// "API KEY REQUIRED". Este fundo nao exige chave e continua usando os dados
+// abertos do OpenStreetMap. As constantes ficam isoladas para que uma futura
+// troca de provedor nao volte a contaminar a logica do mapa.
+const BASE_MAP_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
+const BASE_MAP_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, tiles by <a href="https://www.hotosm.org/">HOT</a> / <a href="https://www.openstreetmap.fr/">OSM France</a>';
 
 const CAMERA_MARKER_SVG = `
   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -159,10 +166,10 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
         className="z-0 h-full min-h-[420px] w-full"
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
-          subdomains="abcd"
-          maxNativeZoom={20}
+          attribution={BASE_MAP_ATTRIBUTION}
+          url={BASE_MAP_URL}
+          subdomains="abc"
+          maxNativeZoom={19}
           bounds={WORLD_BOUNDS}
           noWrap
         />
