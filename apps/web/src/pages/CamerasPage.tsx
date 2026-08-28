@@ -349,7 +349,7 @@ function WizardModal({
     streamHeight: String(GRID_LIVE_MAX_HEIGHT),
     streamFps: String(GRID_LIVE_TARGET_FPS),
     streamBitrateKbps: '',
-    recordingVideoCodec: 'h265' as VideoCodec,
+    recordingVideoCodec: 'original' as VideoCodec,
     recordingWidth: '',
     recordingHeight: '',
     recordingFps: '',

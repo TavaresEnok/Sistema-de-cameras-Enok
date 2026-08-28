@@ -89,6 +89,7 @@ test('RTMP privada criada pelo app ignora continuous e herda 3 dias do grupo', a
   assert.equal(writes[0].dto.aiEnabled, true);
   assert.equal(writes[0].dto.retentionDays, 3);
   assert.equal(writes[0].dto.retentionFollowsGroup, true);
+  assert.equal(writes[0].dto.recordingVideoCodec, 'original');
 });
 
 test('RTMP privada sem grupo recebe retenção própria padrão de 3 dias', async () => {
@@ -122,6 +123,7 @@ test('RTMP privada sem grupo recebe retenção própria padrão de 3 dias', asyn
   assert.equal(written.recordingEnabled, false);
   assert.equal(written.retentionDays, 3);
   assert.equal(written.retentionFollowsGroup, false);
+  assert.equal(written.recordingVideoCodec, 'original');
 });
 
 test('poster de câmera RTMP offline não tenta RTSP direto nem descriptografa marcador', async () => {
@@ -208,6 +210,7 @@ test('edição de câmera RTMP ignora o marcador de rede sem afrouxar câmera RT
   assert.equal(writes.length, 1);
   assert.equal(writes[0].data.ip, undefined);
   assert.equal(writes[0].data.name, 'Portaria atualizada');
+  assert.equal(writes[0].data.recordingVideoCodec, 'h264');
 
   service.getCameraOrThrow = async () => ({ ...existing, sourceMode: 'rtsp_pull', ip: '192.168.1.20' });
   service.assertTestTargetAllowed = (ip: string) => {

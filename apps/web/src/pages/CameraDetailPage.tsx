@@ -221,7 +221,7 @@ const emptyConfig: CameraConfig = {
   streamHeight: String(GRID_LIVE_MAX_HEIGHT),
   streamFps: String(GRID_LIVE_TARGET_FPS),
   streamBitrateKbps: '',
-  recordingVideoCodec: 'h265',
+  recordingVideoCodec: 'original',
   recordingWidth: '',
   recordingHeight: '',
   recordingFps: '',
@@ -1297,7 +1297,7 @@ export default function CameraDetailPage() {
   const originalWidth = cameraMeta?.recordingWidth ?? cameraMeta?.detectedWidth ?? cameraMeta?.streamWidth ?? (resolutionMatch ? Number(resolutionMatch[1]) : null);
   const originalHeight = cameraMeta?.recordingHeight ?? cameraMeta?.detectedHeight ?? cameraMeta?.streamHeight ?? (resolutionMatch ? Number(resolutionMatch[2]) : null);
   const originalFps = cameraMeta?.recordingFps ?? cameraMeta?.detectedFps ?? cam?.fps ?? null;
-  const originalCodecValue = normalizeVideoCodec(cameraMeta?.recordingVideoCodec ?? cameraMeta?.detectedVideoCodec ?? cameraMeta?.streamVideoCodec);
+  const originalCodecValue = normalizeVideoCodec(cameraMeta?.detectedVideoCodec ?? cameraMeta?.streamVideoCodec ?? cameraMeta?.recordingVideoCodec);
   const originalCodec = originalCodecValue.toUpperCase();
   const originalBitrate = cameraMeta?.recordingBitrateKbps ?? cameraMeta?.detectedBitrateKbps ?? cameraMeta?.streamBitrateKbps ?? null;
   const liveSourceMode = resolveLiveSourceMode(form.liveSubtype, form.subtype);

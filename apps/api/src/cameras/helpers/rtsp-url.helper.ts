@@ -108,7 +108,17 @@ export function resolveOriginalRtspProfile(camera: CameraRtspProfileInput) {
 }
 
 export function resolveOriginalVideoCodec(camera: CameraRtspProfileInput) {
-  return String(camera.recordingVideoCodec ?? camera.detectedVideoCodec ?? camera.streamVideoCodec ?? '').trim().toLowerCase() || null;
+  // `recordingVideoCodec` é uma POLÍTICA de saída (original/h264/h265), não a
+  // verdade observada da fonte. Priorize sempre a sonda. O campo de gravação só
+  // permanece como fallback para registros legados que ainda não foram sondados.
+  const detected = String(camera.detectedVideoCodec ?? '').trim().toLowerCase();
+  if (detected) return detected;
+
+  const stream = String(camera.streamVideoCodec ?? '').trim().toLowerCase();
+  if (stream && stream !== 'original') return stream;
+
+  const legacyRecording = String(camera.recordingVideoCodec ?? '').trim().toLowerCase();
+  return legacyRecording && legacyRecording !== 'original' ? legacyRecording : null;
 }
 
 export function resolveDeliveryVideoCodec(camera: CameraRtspProfileInput) {

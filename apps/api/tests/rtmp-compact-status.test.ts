@@ -47,6 +47,11 @@ test('status reconhece publicação pelo alias compacto como ONLINE', async () =
   assert.equal(result.status, CameraStatus.ONLINE);
   assert.deepEqual(checked, [compactPath]);
   assert.equal(updates[0]?.data?.status, CameraStatus.ONLINE);
+  assert.equal(
+    Object.hasOwn(updates[0]?.data ?? {}, 'recordingVideoCodec'),
+    false,
+    'sonda RTMP não pode trocar a política ORIGINAL pelo codec detectado',
+  );
 });
 
 test('status mantém compatibilidade com publicação hexadecimal antiga', async () => {

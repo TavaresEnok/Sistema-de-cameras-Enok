@@ -297,10 +297,10 @@ export class CamerasService implements OnApplicationBootstrap {
         streamHeight: normalizedProfile.streamHeight,
         streamFps: normalizedProfile.streamFps,
         streamBitrateKbps: normalizedProfile.streamBitrateKbps,
-        // Codec de origem: descoberto pelo health-check (probe REAL do stream).
-        // Não cravar aqui — chutar 'h265' rotulava errado câmeras H.264 e
-        // quebrava consumidores que confiavam no rótulo (ex.: clipe).
-        recordingVideoCodec: null,
+        // POLÍTICA de gravação, não telemetria: "original" arquiva exatamente
+        // o bitstream recebido, sem conversão. O codec REAL encontrado pela
+        // sonda pertence exclusivamente a detectedVideoCodec.
+        recordingVideoCodec: dto.recordingVideoCodec ?? 'original',
         recordingWidth: normalizedProfile.recordingWidth,
         recordingHeight: normalizedProfile.recordingHeight,
         recordingFps: normalizedProfile.recordingFps,
@@ -392,6 +392,10 @@ export class CamerasService implements OnApplicationBootstrap {
         aiEnabled: true,
         retentionDays: groupRetentionDays ?? 3,
         retentionFollowsGroup: groupRetentionDays !== null,
+        // Autoatendimento móvel sempre começa em cópia do fluxo recebido. A
+        // câmera pode publicar H.264 hoje e H.265 amanhã sem criar conversão
+        // silenciosa ou perder a economia do codec original.
+        recordingVideoCodec: 'original',
       };
     }
 
@@ -654,8 +658,12 @@ export class CamerasService implements OnApplicationBootstrap {
         streamHeight: normalizedProfile.streamHeight,
         streamFps: normalizedProfile.streamFps,
         streamBitrateKbps: normalizedProfile.streamBitrateKbps,
-        // recordingVideoCodec NÃO é sobrescrito ao editar: o health-check o mantém
-        // sincronizado com o codec REAL. Cravar constante aqui re-corrompia o rótulo.
+        // Política escolhida pelo operador. `undefined` preserva; o health-check
+        // jamais altera este campo, pois o codec observado vive em
+        // detectedVideoCodec.
+        recordingVideoCodec: dto.recordingVideoCodec === undefined
+          ? undefined
+          : this.normalizeVideoCodec(dto.recordingVideoCodec, { allowOriginal: true }),
         recordingWidth: normalizedProfile.recordingWidth,
         recordingHeight: normalizedProfile.recordingHeight,
         recordingFps: normalizedProfile.recordingFps,
@@ -1802,11 +1810,11 @@ export class CamerasService implements OnApplicationBootstrap {
         // Câmera nova nasce seguindo o grupo: herdar a política é o padrão são,
         // e um número próprio que ninguém revisita é como se acumula exceção.
         retentionFollowsGroup: dto.retentionFollowsGroup ?? true,
-        // O codec pertence à publicação, não ao protocolo. Enhanced RTMP pode
-        // transportar H.265; os campos são preenchidos quando o primeiro stream
-        // real chega ao MediaMTX.
+        // Enhanced RTMP pode transportar H.265. A política de gravação nasce em
+        // ORIGINAL; a publicação real é registrada separadamente nos campos de
+        // detecção quando o primeiro stream chega ao MediaMTX.
         streamVideoCodec: null,
-        recordingVideoCodec: null,
+        recordingVideoCodec: dto.recordingVideoCodec ?? 'original',
         detectedVideoCodec: null,
         audioEnabled: dto.audioEnabled ?? false,
         aiEnabled: aiEnabledEfetivo({
@@ -1881,7 +1889,7 @@ export class CamerasService implements OnApplicationBootstrap {
     let stalled = false;
     let metadata: RtmpStreamMetadata = {
       codec: this.normalizeVideoCodec(
-        camera.detectedVideoCodec ?? camera.recordingVideoCodec ?? camera.streamVideoCodec,
+        camera.detectedVideoCodec ?? camera.streamVideoCodec,
       ) ?? null,
       width: camera.detectedWidth ?? null,
       height: camera.detectedHeight ?? null,
@@ -1905,7 +1913,6 @@ export class CamerasService implements OnApplicationBootstrap {
                 where: { id: camera.id },
                 data: {
                   streamVideoCodec: probed.codec ?? metadata.codec,
-                  recordingVideoCodec: probed.codec ?? metadata.codec,
                   detectedVideoCodec: probed.codec ?? metadata.codec,
                   streamWidth: probed.width,
                   streamHeight: probed.height,
@@ -1955,7 +1962,6 @@ export class CamerasService implements OnApplicationBootstrap {
       data: {
         status,
         streamVideoCodec: metadata.codec ?? camera.streamVideoCodec,
-        recordingVideoCodec: metadata.codec ?? camera.recordingVideoCodec,
         detectedVideoCodec: metadata.codec ?? camera.detectedVideoCodec,
         detectedWidth: metadata.width ?? camera.detectedWidth,
         detectedHeight: metadata.height ?? camera.detectedHeight,
@@ -2580,20 +2586,6 @@ export class CamerasService implements OnApplicationBootstrap {
         this.logger.warn(`${camera.name}: ONLINE → OFFLINE — ${veredicto.explicacao}`);
       }
 
-      // O probe acima leu o perfil de LIVE. Se a gravação usa o MESMO stream
-      // (mesmo canal/subtipo), o codec é idêntico — então sincronizamos também o
-      // recordingVideoCodec com o real detectado. Isso AUTO-CURA o rótulo (antes
-      // cravado 'h265' no create/update, errado p/ câmeras H.264). Se os perfis
-      // diferem (ex.: live no sub, gravação no main), não chutamos: preserva.
-      const recProfile = resolveRecordingRtspProfile(camera);
-      const liveProfileForCodec = resolveDeliveryRtspProfile(camera);
-      const recordingCodecSynced =
-        detectedStream?.codec &&
-        recProfile.channel === liveProfileForCodec.channel &&
-        recProfile.subtype === liveProfileForCodec.subtype
-          ? detectedStream.codec
-          : camera.recordingVideoCodec;
-
       await this.prisma.camera.update({
         where: { id },
         data: {
@@ -2605,7 +2597,6 @@ export class CamerasService implements OnApplicationBootstrap {
           // resolução da gravação. Só preenche quando estava vazio.
           rtspPath: camera.rtspPath?.trim() ? camera.rtspPath : detectedRtspPath ?? camera.rtspPath,
           detectedVideoCodec: detectedStream?.codec ?? camera.detectedVideoCodec,
-          recordingVideoCodec: recordingCodecSynced,
           detectedWidth: detectedStream?.width ?? camera.detectedWidth,
           detectedHeight: detectedStream?.height ?? camera.detectedHeight,
           detectedFps: detectedStream?.fps ?? camera.detectedFps,

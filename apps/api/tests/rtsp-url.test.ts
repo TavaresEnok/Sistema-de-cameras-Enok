@@ -8,6 +8,7 @@ import {
   resolveLiveRtspProfile,
   resolveRecordingRtspProfile,
   resolveDeliveryVideoCodec,
+  resolveOriginalVideoCodec,
 } from '../src/cameras/helpers/rtsp-url.helper';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,5 +91,16 @@ test('D1 resolveDeliveryVideoCodec: original HEVC cai para o codec detectado', (
     resolveDeliveryVideoCodec({ streamVideoCodec: 'original', recordingVideoCodec: 'hevc', detectedVideoCodec: 'h264' }),
     'h264',
     'entrega HEVC como original é evitada — usa o detectado',
+  );
+});
+
+test('D1 codec original vem da sonda, não da política de gravação', () => {
+  assert.equal(
+    resolveOriginalVideoCodec({
+      streamVideoCodec: 'original',
+      recordingVideoCodec: 'original',
+      detectedVideoCodec: 'hevc',
+    }),
+    'hevc',
   );
 });
