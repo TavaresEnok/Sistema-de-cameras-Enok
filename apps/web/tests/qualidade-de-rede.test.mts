@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   avaliarQualidadeDeRede,
   classificarFalhaDePlayer,
+  mediana,
+  registrarNoHistoricoDeRtt,
+  type HistoricoDeRtt,
   type SinaisDeRede,
 } from '../src/lib/qualidade-de-rede.ts';
 
@@ -15,6 +18,8 @@ import {
 const base: SinaisDeRede = {
   online: true,
   apiRttMs: 80,
+  bordaRttMs: 60,
+  apiLentidaConfirmada: false,
   apiFalhasSeguidas: 0,
   streamsTotal: 0,
   streamsSemMidia: 0,
@@ -101,11 +106,35 @@ test('sem tela ao vivo aberta, o mosaico não influencia o diagnóstico', () => 
   assert.equal(d.nivel, 'ok');
 });
 
-test('lentidão geral aparece como "conexão lenta", com o número medido', () => {
-  const d = avaliarQualidadeDeRede({ ...base, apiRttMs: 2400 });
-  assert.equal(d.nivel, 'lenta');
-  assert.equal(d.culpaDaRedeLocal, true);
+test('um pico lento isolado não vira alarme', () => {
+  const d = avaliarQualidadeDeRede({ ...base, apiRttMs: 2400, apiLentidaConfirmada: false });
+  assert.equal(d.nivel, 'ok');
+});
+
+test('API lenta confirmada e Nginx rápido aponta para o servidor', () => {
+  const d = avaliarQualidadeDeRede({
+    ...base,
+    apiRttMs: 2400,
+    bordaRttMs: 90,
+    apiLentidaConfirmada: true,
+  });
+  assert.equal(d.nivel, 'servidor');
+  assert.equal(d.culpaDaRedeLocal, false);
   assert.match(d.detalhe, /2400 ms/);
+  assert.match(d.detalhe, /90 ms/);
+});
+
+test('API e acesso básico lentos usam mensagem neutra', () => {
+  const d = avaliarQualidadeDeRede({
+    ...base,
+    apiRttMs: 2400,
+    bordaRttMs: 1800,
+    apiLentidaConfirmada: true,
+  });
+  assert.equal(d.nivel, 'lenta');
+  assert.equal(d.culpaDaRedeLocal, false);
+  assert.match(d.detalhe, /2400 ms/);
+  assert.match(d.detalhe, /rede, o caminho da internet ou o servidor/i);
 });
 
 test('vídeo parado mas API JÁ lenta não vira acusação à última milha', () => {
@@ -114,10 +143,31 @@ test('vídeo parado mas API JÁ lenta não vira acusação à última milha', ()
   const d = avaliarQualidadeDeRede({
     ...base,
     apiRttMs: 1800,
+    bordaRttMs: 1500,
+    apiLentidaConfirmada: true,
     streamsTotal: 12,
     streamsSemMidia: 12,
   });
   assert.equal(d.nivel, 'lenta');
+});
+
+test('histórico usa mediana das cinco amostras e ignora outlier', () => {
+  assert.equal(mediana([80, 82, 4_071, 79, 81]), 81);
+});
+
+test('alerta exige três lentas seguidas e recupera com duas normais', () => {
+  let h: HistoricoDeRtt = {
+    api: [], borda: [], lentasSeguidas: 0, saudaveisSeguidas: 0, lentidaConfirmada: false,
+  };
+  h = registrarNoHistoricoDeRtt(h, { apiRttMs: 1500, bordaRttMs: 80 });
+  h = registrarNoHistoricoDeRtt(h, { apiRttMs: 1600, bordaRttMs: 80 });
+  assert.equal(h.lentidaConfirmada, false);
+  h = registrarNoHistoricoDeRtt(h, { apiRttMs: 1700, bordaRttMs: 80 });
+  assert.equal(h.lentidaConfirmada, true);
+  h = registrarNoHistoricoDeRtt(h, { apiRttMs: 100, bordaRttMs: 70 });
+  assert.equal(h.lentidaConfirmada, true, 'uma boa ainda não apaga o aviso');
+  h = registrarNoHistoricoDeRtt(h, { apiRttMs: 110, bordaRttMs: 70 });
+  assert.equal(h.lentidaConfirmada, false);
 });
 
 // ── CLASSIFICAÇÃO DA FALHA DE CADA PLAYER ───────────────────────────────────
@@ -167,6 +217,8 @@ test('o caminho COMPLETO do pedido do dono: internet ruim vira o aviso certo', (
   const d = avaliarQualidadeDeRede({
     online: true,
     apiRttMs: 85,
+    bordaRttMs: 70,
+    apiLentidaConfirmada: false,
     apiFalhasSeguidas: 0,
     streamsTotal: estados.length,
     streamsSemMidia: estados.filter((e) => e === 'sem-midia').length,

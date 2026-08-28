@@ -40,6 +40,10 @@ export type SinaisDeRede = {
    * É a régua do caminho de CONTROLE.
    */
   apiRttMs: number | null;
+  /** Ida-e-volta até um arquivo estático servido pelo Nginx, sem passar pela API. */
+  bordaRttMs: number | null;
+  /** Só fica true após três sondas lentas consecutivas. */
+  apiLentidaConfirmada: boolean;
   /** Falhas consecutivas de contato com a API (0 = último contato deu certo). */
   apiFalhasSeguidas: number;
   /** Players de vídeo montados agora (0 = nenhuma tela ao vivo aberta). */
@@ -72,6 +76,65 @@ export const RTT_LENTO_MS = 1200;
 export const RTT_SAUDAVEL_MS = 700;
 /** Só acusamos a rede local quando a maioria das telas está sem imagem. */
 export const FRACAO_MINIMA_SEM_MIDIA = 0.5;
+
+export type AmostraDeRtt = {
+  apiRttMs: number;
+  bordaRttMs: number | null;
+};
+
+export type HistoricoDeRtt = {
+  api: number[];
+  borda: number[];
+  lentasSeguidas: number;
+  saudaveisSeguidas: number;
+  lentidaConfirmada: boolean;
+};
+
+export const HISTORICO_RTT_MAXIMO = 5;
+export const AMOSTRAS_LENTAS_PARA_ALERTAR = 3;
+export const AMOSTRAS_SAUDAVEIS_PARA_RECUPERAR = 2;
+
+export function mediana(valores: number[]): number | null {
+  if (!valores.length) return null;
+  const ordenados = [...valores].sort((a, b) => a - b);
+  const meio = Math.floor(ordenados.length / 2);
+  return ordenados.length % 2
+    ? ordenados[meio]
+    : (ordenados[meio - 1] + ordenados[meio]) / 2;
+}
+
+/**
+ * Consolida as sondas sem deixar um pico isolado virar alarme. O alerta entra
+ * com três amostras lentas seguidas e só sai depois de duas saudáveis.
+ */
+export function registrarNoHistoricoDeRtt(
+  historico: HistoricoDeRtt,
+  amostra: AmostraDeRtt | null,
+): HistoricoDeRtt {
+  if (!amostra) {
+    return { ...historico, lentasSeguidas: 0, saudaveisSeguidas: 0 };
+  }
+
+  const lenta = amostra.apiRttMs >= RTT_LENTO_MS;
+  const lentasSeguidas = lenta ? historico.lentasSeguidas + 1 : 0;
+  const saudaveisSeguidas = lenta ? 0 : historico.saudaveisSeguidas + 1;
+  let lentidaConfirmada = historico.lentidaConfirmada;
+  if (!lentidaConfirmada && lentasSeguidas >= AMOSTRAS_LENTAS_PARA_ALERTAR) {
+    lentidaConfirmada = true;
+  } else if (lentidaConfirmada && saudaveisSeguidas >= AMOSTRAS_SAUDAVEIS_PARA_RECUPERAR) {
+    lentidaConfirmada = false;
+  }
+
+  return {
+    api: [...historico.api, amostra.apiRttMs].slice(-HISTORICO_RTT_MAXIMO),
+    borda: amostra.bordaRttMs == null
+      ? historico.borda
+      : [...historico.borda, amostra.bordaRttMs].slice(-HISTORICO_RTT_MAXIMO),
+    lentasSeguidas,
+    saudaveisSeguidas,
+    lentidaConfirmada,
+  };
+}
 
 /** O que um player relata ao diagnóstico. Ver EstadoDoPlayer no redeStore. */
 export type EstadoDePlayer = 'ok' | 'sem-midia' | 'sem-sinalizacao';
@@ -175,12 +238,23 @@ export function avaliarQualidadeDeRede(s: SinaisDeRede): DiagnosticoDeRede {
 
   // 5) Tudo lento, inclusive requisição pequena: a conexão está ruim como um
   //    todo (ou o caminho até o servidor está congestionado).
-  if (s.apiRttMs != null && s.apiRttMs >= RTT_LENTO_MS) {
+  if (s.apiLentidaConfirmada && s.apiRttMs != null && s.apiRttMs >= RTT_LENTO_MS) {
+    // O arquivo estático percorre navegador → rede → Nginx, mas não entra na
+    // API. Se ele está rápido e a API lenta, há evidência de carga no servidor.
+    if (s.bordaRttMs != null && s.bordaRttMs <= RTT_SAUDAVEL_MS) {
+      return {
+        nivel: 'servidor',
+        titulo: 'Servidor respondendo lentamente',
+        detalhe: `A API está levando ${Math.round(s.apiRttMs)} ms, enquanto o acesso básico responde em ${Math.round(s.bordaRttMs)} ms.`,
+        culpaDaRedeLocal: false,
+      };
+    }
+
     return {
       nivel: 'lenta',
-      titulo: 'Conexão lenta',
-      detalhe: `Respostas levando ${Math.round(s.apiRttMs)} ms. O vídeo pode travar ou demorar a abrir.`,
-      culpaDaRedeLocal: true,
+      titulo: 'Latência alta até o servidor',
+      detalhe: `As respostas estão levando cerca de ${Math.round(s.apiRttMs)} ms. A origem pode ser a rede, o caminho da internet ou o servidor.`,
+      culpaDaRedeLocal: false,
     };
   }
 

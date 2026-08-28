@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { WifiOff, Wifi, ServerCrash, X } from 'lucide-react';
 import { useRedeStore, calcularDiagnostico, contarPlayers } from '@/store/redeStore';
 import { getApiBaseUrl } from '@/lib/api-base';
+import type { AmostraDeRtt } from '@/lib/qualidade-de-rede';
 
 const API_URL = getApiBaseUrl();
 
@@ -20,14 +21,14 @@ const TIMEOUT_SONDA_MS = 8_000;
  * Mede a latência do caminho de CONTROLE. Usa /health: é a rota mais barata
  * (não toca banco) — sondar de 15 em 15 s não pode custar nada ao servidor.
  */
-async function medirRtt(): Promise<number | null> {
+async function medirUmaRota(url: string): Promise<number | null> {
   const inicio = performance.now();
   const abort = new AbortController();
   const timer = window.setTimeout(() => abort.abort(), TIMEOUT_SONDA_MS);
   try {
     // cache: 'no-store' — sem isso o navegador serviria do cache e mediríamos
     // 0 ms para uma rede que está morrendo.
-    const r = await fetch(`${API_URL}/health`, { signal: abort.signal, cache: 'no-store' });
+    const r = await fetch(url, { signal: abort.signal, cache: 'no-store' });
     if (!r.ok) return null;
     return performance.now() - inicio;
   } catch {
@@ -35,6 +36,20 @@ async function medirRtt(): Promise<number | null> {
   } finally {
     window.clearTimeout(timer);
   }
+}
+
+/**
+ * Mede em paralelo a API e um arquivo estático do mesmo domínio. O segundo
+ * caminho para no Nginx; ele permite distinguir API sobrecarregada de uma
+ * lentidão que já existe antes de chegar à aplicação.
+ */
+async function medirRtt(): Promise<AmostraDeRtt | null> {
+  const sufixo = `?_rede=${Date.now()}`;
+  const [apiRttMs, bordaRttMs] = await Promise.all([
+    medirUmaRota(`${API_URL}/health${sufixo}`),
+    medirUmaRota(`${window.location.origin}/network-probe.txt${sufixo}`),
+  ]);
+  return apiRttMs == null ? null : { apiRttMs, bordaRttMs };
 }
 
 // Classes com a cor LITERAL — o Tailwind (JIT) só gera o que enxerga como texto
@@ -66,6 +81,8 @@ export function AvisoDeRede() {
   // calcularDiagnostico(). O cálculo fica no useMemo abaixo.
   const players = useRedeStore((s) => s.players);
   const apiRttMs = useRedeStore((s) => s.apiRttMs);
+  const bordaRttMs = useRedeStore((s) => s.bordaRttMs);
+  const apiLentidaConfirmada = useRedeStore((s) => s.apiLentidaConfirmada);
   const apiFalhasSeguidas = useRedeStore((s) => s.apiFalhasSeguidas);
   const online = useRedeStore((s) => s.online);
   const nivelDispensado = useRedeStore((s) => s.nivelDispensado);
@@ -75,10 +92,17 @@ export function AvisoDeRede() {
 
   const diagnostico = useMemo(
     () => calcularDiagnostico(
-      { online, apiRttMs, apiFalhasSeguidas, ...contarPlayers(players) },
+      {
+        online,
+        apiRttMs,
+        bordaRttMs,
+        apiLentidaConfirmada,
+        apiFalhasSeguidas,
+        ...contarPlayers(players),
+      },
       nivelDispensado,
     ),
-    [online, apiRttMs, apiFalhasSeguidas, players, nivelDispensado],
+    [online, apiRttMs, bordaRttMs, apiLentidaConfirmada, apiFalhasSeguidas, players, nivelDispensado],
   );
 
   // Sonda periódica + eventos do navegador.
@@ -93,6 +117,12 @@ export function AvisoDeRede() {
       if (vivo) registrarAmostraApi(rtt);
     };
     void sondar();
+    // Na abertura, três amostras rápidas dão um diagnóstico útil sem esperar
+    // 30 segundos. Depois delas permanece apenas a cadência leve de 15 s.
+    const iniciais = [
+      window.setTimeout(() => void sondar(), 2_000),
+      window.setTimeout(() => void sondar(), 5_000),
+    ];
     const id = window.setInterval(() => void sondar(), INTERVALO_SONDA_MS);
 
     const online = () => { definirOnline(true); void sondar(); };
@@ -102,6 +132,7 @@ export function AvisoDeRede() {
     document.addEventListener('visibilitychange', sondar);
     return () => {
       vivo = false;
+      iniciais.forEach((timer) => window.clearTimeout(timer));
       window.clearInterval(id);
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
@@ -117,11 +148,11 @@ export function AvisoDeRede() {
       ? ServerCrash
       : Wifi;
 
-  // Culpa da rede local = âmbar (o cliente PODE/PRECISA agir). Problema do
-  // servidor = vermelho (é conosco). Cores diferentes evitam que os dois casos,
-  // que pedem ações opostas, virem a mesma faixa genérica.
-  const atencao = diagnostico.culpaDaRedeLocal;
-  const estilo = ESTILO[atencao ? 'status-warning' : 'destructive'];
+  // Problema confirmado no servidor = vermelho (é conosco). Rede ou origem
+  // ainda inconclusiva = âmbar, sem acusar o cliente antes de haver prova.
+  const problemaDoServidor = diagnostico.nivel === 'servidor';
+  const atencao = !problemaDoServidor;
+  const estilo = ESTILO[problemaDoServidor ? 'destructive' : 'status-warning'];
 
   return (
     <div

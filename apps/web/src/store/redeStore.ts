@@ -1,7 +1,11 @@
 import { create } from 'zustand';
 import {
   avaliarQualidadeDeRede,
+  mediana,
+  registrarNoHistoricoDeRtt,
+  type AmostraDeRtt,
   type DiagnosticoDeRede,
+  type HistoricoDeRtt,
   type SinaisDeRede,
 } from '@/lib/qualidade-de-rede';
 
@@ -21,6 +25,8 @@ export type EstadoDoPlayer = 'ok' | 'sem-midia' | 'sem-sinalizacao';
 type RedeState = {
   players: Record<string, EstadoDoPlayer>;
   apiRttMs: number | null;
+  bordaRttMs: number | null;
+  apiLentidaConfirmada: boolean;
   apiFalhasSeguidas: number;
   online: boolean;
   /** Quando o usuário fecha a faixa, some até a situação MUDAR de nível. */
@@ -28,14 +34,26 @@ type RedeState = {
 
   relatarPlayer: (id: string, estado: EstadoDoPlayer) => void;
   esquecerPlayer: (id: string) => void;
-  registrarAmostraApi: (rttMs: number | null) => void;
+  registrarAmostraApi: (amostra: AmostraDeRtt | null) => void;
   definirOnline: (online: boolean) => void;
   dispensarAviso: (nivel: string) => void;
 };
 
+const HISTORICO_INICIAL: HistoricoDeRtt = {
+  api: [],
+  borda: [],
+  lentasSeguidas: 0,
+  saudaveisSeguidas: 0,
+  lentidaConfirmada: false,
+};
+
+let historicoRtt = HISTORICO_INICIAL;
+
 export const useRedeStore = create<RedeState>((set) => ({
   players: {},
   apiRttMs: null,
+  bordaRttMs: null,
+  apiLentidaConfirmada: false,
   apiFalhasSeguidas: 0,
   online: typeof navigator === 'undefined' ? true : navigator.onLine,
   nivelDispensado: null,
@@ -51,13 +69,20 @@ export const useRedeStore = create<RedeState>((set) => ({
       return { players };
     }),
 
-  registrarAmostraApi: (rttMs) =>
-    set((s) => ({
-      apiRttMs: rttMs,
-      // Uma amostra boa zera o contador; só falha SEGUIDA acumula. Assim um
-      // soluço isolado de rede não vira alarme na cara do operador.
-      apiFalhasSeguidas: rttMs == null ? s.apiFalhasSeguidas + 1 : 0,
-    })),
+  registrarAmostraApi: (amostra) =>
+    set((s) => {
+      historicoRtt = registrarNoHistoricoDeRtt(historicoRtt, amostra);
+      return {
+        // Uma falha isolada não apaga a última mediana válida nem parece uma
+        // recuperação. Três falhas seguidas têm diagnóstico próprio.
+        apiRttMs: mediana(historicoRtt.api),
+        bordaRttMs: mediana(historicoRtt.borda),
+        apiLentidaConfirmada: historicoRtt.lentidaConfirmada,
+        // Uma amostra boa zera o contador; só falha SEGUIDA acumula. Assim um
+        // soluço isolado de rede não vira alarme na cara do operador.
+        apiFalhasSeguidas: amostra == null ? s.apiFalhasSeguidas + 1 : 0,
+      };
+    }),
 
   definirOnline: (online) => set({ online }),
 
