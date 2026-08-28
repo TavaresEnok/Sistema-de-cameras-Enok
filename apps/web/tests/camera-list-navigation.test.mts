@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const camerasPage = readFileSync(new URL('../src/pages/CamerasPage.tsx', import.meta.url), 'utf8');
 const livePage = readFileSync(new URL('../src/pages/LiveViewPage.tsx', import.meta.url), 'utf8');
+const mapPage = readFileSync(new URL('../src/pages/MapPage.tsx', import.meta.url), 'utf8');
 const editSheet = readFileSync(new URL('../src/components/CameraEditSheet.tsx', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 
@@ -21,6 +22,15 @@ test('painel lateral do ao vivo usa poster autenticado, lote e carregamento tard
   assert.match(livePage, /loading="lazy"/);
   assert.match(livePage, /if \(!panelOpen\) return/);
   assert.match(livePage, /retrySidebarPoster\(cam\.id\)/);
+});
+
+test('painel lateral do mapa acompanha o ao vivo com busca, filtros e snapshots autenticados', () => {
+  assert.match(mapPage, /camera-stream\/poster-tokens/);
+  assert.match(mapPage, /placeholder="Buscar câmera\.\.\."/);
+  assert.match(mapPage, /STATUS_FILTERS\.map/);
+  assert.match(mapPage, /loading="lazy"/);
+  assert.match(mapPage, /retrySidebarPoster\(camera\.id\)/);
+  assert.match(mapPage, /openCamera\(camera\)/);
 });
 
 test('gaveta de edição descreve o conteúdo para leitores de tela', () => {

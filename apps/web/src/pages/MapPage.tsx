@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { Camera as CameraIcon, Check, ExternalLink, Layers3, Map, MapPin, Pencil, Plus, Upload, X } from 'lucide-react';
+import { Camera as CameraIcon, Check, ExternalLink, Filter, Layers3, Map, MapPin, Pencil, Search, ShieldCheck, Upload, Video, X } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
 import { GeographicCameraMap } from '../components/GeographicCameraMap';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore, type Camera } from '../store/vmsDataStore';
 import { getApiBaseUrl } from '../lib/api-base';
@@ -11,6 +12,21 @@ import { getApiBaseUrl } from '../lib/api-base';
 type Site = { id: string; name: string; location?: string | null; isActive: boolean };
 type Marker = { xPct: number; yPct: number; zoneId?: string };
 type Layout = { id: string; siteId: string; floor: string; svgDataUrl?: string | null; markers: Record<string, Marker> };
+type PosterTokenItem = { cameraId: string; streamToken: string; posterUrl: string };
+const EMPTY_MARKERS: Record<string, Marker> = {};
+
+const STATUS_FILTERS = ['all', 'online', 'recording', 'motion', 'alarm', 'offline', 'no_signal', 'maintenance'] as const;
+type StatusFilter = (typeof STATUS_FILTERS)[number];
+const STATUS_FILTER_LABEL: Record<StatusFilter, string> = {
+  all: 'Todos',
+  online: 'Online',
+  recording: 'Gravando',
+  motion: 'Movimento',
+  alarm: 'Alarme',
+  offline: 'Offline',
+  no_signal: 'Sem sinal',
+  maintenance: 'Manutenção',
+};
 
 const API_URL = getApiBaseUrl();
 
@@ -43,6 +59,11 @@ export default function MapPage() {
   const [mode, setMode] = useState<'geographic' | 'floorplan'>('geographic');
   const [autoLocating, setAutoLocating] = useState(false);
   const [autoLocationDone, setAutoLocationDone] = useState(false);
+  const [search, setSearch] = useState('');
+  const [zoneFilter, setZoneFilter] = useState('__all__');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [sidebarPosterUrls, setSidebarPosterUrls] = useState<Record<string, string>>({});
+  const lastSidebarPosterRetryAtRef = useRef(0);
 
   const accessibleSiteIds = useMemo(() => new Set(cameras.map((c) => c.siteId).filter(Boolean)), [cameras]);
   const visibleSites = useMemo(
@@ -51,11 +72,109 @@ export default function MapPage() {
   );
   const currentLayouts = layouts.filter((layout) => layout.siteId === siteId);
   const activeLayout = currentLayouts.find((layout) => layout.floor === floor) ?? currentLayouts[0] ?? null;
-  const currentMarkers = editing ? draftMarkers : (activeLayout?.markers ?? {});
-  const siteCameras = cameras.filter((camera) => camera.siteId === siteId && camera.enabled);
-  const mappedCameras = siteCameras.filter((camera) => currentMarkers[camera.id]);
-  const unmappedCameras = siteCameras.filter((camera) => !currentMarkers[camera.id]);
+  const currentMarkers = editing ? draftMarkers : (activeLayout?.markers ?? EMPTY_MARKERS);
+  const siteCameras = useMemo(
+    () => cameras.filter((camera) => camera.siteId === siteId && camera.enabled),
+    [cameras, siteId],
+  );
+  const mappedCameras = useMemo(
+    () => siteCameras.filter((camera) => currentMarkers[camera.id]),
+    [currentMarkers, siteCameras],
+  );
+  const unmappedCameras = useMemo(
+    () => siteCameras.filter((camera) => !currentMarkers[camera.id]),
+    [currentMarkers, siteCameras],
+  );
   const selected = cameras.find((camera) => camera.id === selectedId) ?? null;
+  const panelCameras = useMemo(
+    () => mode === 'geographic'
+      ? cameras.filter((camera) => camera.enabled)
+      : [...mappedCameras, ...unmappedCameras],
+    [cameras, mappedCameras, mode, unmappedCameras],
+  );
+  const zoneFilters = useMemo(
+    () => ['__all__', ...Array.from(new Set(panelCameras.map((camera) => camera.zone)))],
+    [panelCameras],
+  );
+  const filteredPanelCameras = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return panelCameras.filter((camera) => {
+      const matchesSearch = !query
+        || camera.name.toLowerCase().includes(query)
+        || camera.code.toLowerCase().includes(query)
+        || camera.ipAddress.includes(query)
+        || (camera.locationAddress ?? '').toLowerCase().includes(query);
+      const matchesZone = zoneFilter === '__all__' || camera.zone === zoneFilter;
+      const matchesStatus = statusFilter === 'all' || camera.status === statusFilter;
+      return matchesSearch && matchesZone && matchesStatus;
+    });
+  }, [panelCameras, search, statusFilter, zoneFilter]);
+  const posterCameraIdsKey = useMemo(
+    () => panelCameras
+      .filter((camera) => camera.canViewContent !== false)
+      .map((camera) => camera.id)
+      .sort()
+      .join(','),
+    [panelCameras],
+  );
+
+  const loadSidebarPosters = useCallback(async () => {
+    if (!token) return;
+    const cameraIds = panelCameras
+      .filter((camera) => camera.canViewContent !== false)
+      .map((camera) => camera.id);
+    if (!cameraIds.length) {
+      setSidebarPosterUrls({});
+      return;
+    }
+    try {
+      const { data } = await api(token).post<{ items: PosterTokenItem[] }>(
+        '/camera-stream/poster-tokens',
+        { cameraIds },
+      );
+      const version = Date.now();
+      const next: Record<string, string> = {};
+      for (const item of Array.isArray(data.items) ? data.items : []) {
+        const separator = item.posterUrl.includes('?') ? '&' : '?';
+        next[item.cameraId] = `${item.posterUrl}${separator}token=${encodeURIComponent(item.streamToken)}&v=${version}`;
+      }
+      setSidebarPosterUrls(next);
+    } catch {
+      // Preserva o último snapshot válido durante uma oscilação da API/câmera.
+    }
+  }, [panelCameras, token]);
+
+  useEffect(() => {
+    // O painel só existe visualmente no desktop largo; não emite tokens nem
+    // baixa snapshots quando o CSS mantém a lateral escondida.
+    const desktop = window.matchMedia('(min-width: 1280px)');
+    if (!desktop.matches) return;
+    void loadSidebarPosters();
+    const renew = () => {
+      if (document.visibilityState === 'visible') void loadSidebarPosters();
+    };
+    const timer = window.setInterval(renew, 4 * 60 * 1000);
+    window.addEventListener('focus', renew);
+    document.addEventListener('visibilitychange', renew);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', renew);
+      document.removeEventListener('visibilitychange', renew);
+    };
+  }, [loadSidebarPosters, posterCameraIdsKey]);
+
+  const retrySidebarPoster = useCallback((cameraId: string) => {
+    setSidebarPosterUrls((current) => {
+      if (!current[cameraId]) return current;
+      const next = { ...current };
+      delete next[cameraId];
+      return next;
+    });
+    const now = Date.now();
+    if (now - lastSidebarPosterRetryAtRef.current < 5_000) return;
+    lastSidebarPosterRetryAtRef.current = now;
+    void loadSidebarPosters();
+  }, [loadSidebarPosters]);
 
   useEffect(() => {
     if (!token) return;
@@ -214,12 +333,116 @@ export default function MapPage() {
         </div>}
       </section>
 
-      <aside className="hidden w-64 shrink-0 border-l border-border bg-card/50 p-3 xl:block">
-        <div className="mb-3 flex items-center justify-between"><span className="text-xs font-semibold">{mode === 'geographic' ? 'Todas as câmeras' : 'Câmeras da unidade'}</span><span className="text-[10px] text-muted-foreground">{mode === 'geographic' ? `${cameras.filter((camera) => camera.latitude != null && camera.longitude != null).length}/${cameras.length}` : `${mappedCameras.length}/${siteCameras.length}`}</span></div>
-        <div className="space-y-1 overflow-y-auto">
-          {(mode === 'geographic' ? cameras.filter((camera) => camera.enabled) : [...mappedCameras, ...unmappedCameras]).map((camera) => <button key={camera.id} onClick={() => mode === 'geographic' ? (camera.latitude != null && camera.longitude != null ? openCamera(camera) : setLocation(`/cameras?edit=${encodeURIComponent(camera.id)}`)) : (currentMarkers[camera.id] ? openCamera(camera) : (editing && setPlacingId(camera.id)))} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-accent">
-            <span className={`h-2 w-2 rounded-full ${camera.isOnline ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`} /><span className="min-w-0 flex-1"><span className="block truncate text-xs">{camera.name}</span>{mode === 'geographic' && <span className="block truncate text-[9px] text-muted-foreground">{camera.locationAddress || 'Definir endereço'}</span>}</span>{mode === 'geographic' ? (camera.latitude != null && camera.longitude != null ? <MapPin className="h-3 w-3 text-primary" /> : <Pencil className="h-3 w-3 text-muted-foreground" />) : currentMarkers[camera.id] ? <MapPin className="h-3 w-3 text-primary" /> : <Plus className="h-3 w-3 text-muted-foreground" />}
-          </button>)}
+      <aside className="hidden w-56 shrink-0 flex-col overflow-hidden border-l border-border bg-card xl:flex">
+        <div className="shrink-0 space-y-2.5 border-b border-border px-2 py-2.5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-[12px] font-semibold">Câmeras</h2>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                {mode === 'geographic' ? 'Abrir no mapa' : 'Câmeras da unidade'}
+              </p>
+            </div>
+            <ShieldCheck className="h-4 w-4 text-[hsl(var(--status-online))]" />
+          </div>
+
+          <div className="input-wrap">
+            <span className="input-icon"><Search className="h-3 w-3" /></span>
+            <input
+              className="input"
+              style={{ height: 30, fontSize: 11 }}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar câmera..."
+              aria-label="Buscar câmera no mapa"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-1.5">
+            <Select value={zoneFilter} onValueChange={setZoneFilter}>
+              <SelectTrigger className="h-8 min-w-0 px-2 text-[10px]">
+                <Filter className="mr-1.5 h-3 w-3 shrink-0 text-muted-foreground" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {zoneFilters.map((zone) => (
+                  <SelectItem key={zone} value={zone} className="text-xs">
+                    {zone === '__all__' ? 'Todas as zonas' : zone}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as StatusFilter)}>
+              <SelectTrigger className="h-8 min-w-0 px-2 text-[10px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {STATUS_FILTERS.map((status) => (
+                  <SelectItem key={status} value={status} className="text-xs">
+                    {STATUS_FILTER_LABEL[status]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="flex-1 divide-y divide-border/80 overflow-y-auto">
+          {filteredPanelCameras.map((camera) => {
+            const statusClass = camera.status === 'alarm'
+              ? 'status-alarm rec-pulse'
+              : camera.status === 'motion'
+                ? 'status-motion'
+                : camera.isOnline ? 'status-online' : 'status-offline';
+            const positionedInView = mode === 'geographic'
+              ? camera.latitude != null && camera.longitude != null
+              : Boolean(currentMarkers[camera.id]);
+            return (
+              <button
+                key={camera.id}
+                type="button"
+                className={`group grid w-full grid-cols-[56px_1fr_auto] items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-[hsl(var(--accent)_/_0.7)] ${selectedId === camera.id ? 'bg-[hsl(var(--primary)_/_0.06)]' : ''}`}
+                onClick={() => mode === 'floorplan' && editing && !positionedInView
+                  ? setPlacingId(camera.id)
+                  : openCamera(camera)}
+                title={`Abrir ${camera.name}`}
+              >
+                <span className="relative block h-9 w-14 overflow-hidden rounded border border-white/10 bg-black">
+                  {sidebarPosterUrls[camera.id] ? (
+                    <img
+                      src={sidebarPosterUrls[camera.id]}
+                      alt=""
+                      loading="lazy"
+                      onError={() => retrySidebarPoster(camera.id)}
+                      className="h-full w-full object-contain"
+                    />
+                  ) : (
+                    <Video className="absolute inset-0 m-auto h-3.5 w-3.5 text-white/25" aria-hidden="true" />
+                  )}
+                  <span className={`absolute bottom-1 left-1 h-2 w-2 rounded-full ring-2 ring-black/70 ${statusClass}`} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-[12px] font-medium">{camera.name}</span>
+                  <span className="block truncate text-[9px] text-muted-foreground">
+                    {camera.code !== camera.name
+                      ? camera.code
+                      : camera.locationAddress || (mode === 'geographic' ? 'Definir endereço' : `${camera.zone} · ${camera.ipAddress}`)}
+                  </span>
+                </span>
+                <span className={`max-w-[42px] shrink-0 truncate text-[9px] ${positionedInView ? 'text-[hsl(var(--primary))]' : 'text-[hsl(var(--muted-foreground)_/_0.55)]'}`}>
+                  {mode === 'floorplan' && editing && !positionedInView
+                    ? 'Posicionar'
+                    : STATUS_FILTER_LABEL[camera.status as StatusFilter] ?? camera.status.replace('_', ' ')}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex shrink-0 items-center justify-between border-t border-border px-2.5 py-2">
+          <span className="text-[10px] text-muted-foreground">{filteredPanelCameras.length} câmeras</span>
+          <span className="text-[10px] text-muted-foreground">
+            {mode === 'geographic'
+              ? `${panelCameras.filter((camera) => camera.latitude != null && camera.longitude != null).length} no mapa`
+              : `${mappedCameras.length} na planta`}
+          </span>
         </div>
       </aside>
 
