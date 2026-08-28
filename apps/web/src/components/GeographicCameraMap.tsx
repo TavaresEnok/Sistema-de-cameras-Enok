@@ -229,7 +229,7 @@ export function GeographicCameraMap({ cameras, onOpen }: { cameras: Camera[]; on
           <div className="max-w-sm rounded-xl border border-border bg-card/95 p-5 text-center shadow-xl">
             <CameraIcon className="mx-auto h-7 w-7 text-primary" />
             <div className="mt-3 text-sm font-semibold">{cameras.length} câmera{cameras.length === 1 ? '' : 's'} cadastrada{cameras.length === 1 ? '' : 's'}</div>
-            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">Nenhuma tem endereço cadastrado ainda. O sistema <strong>não adivinha</strong> a posição: chutar pela rede colocaria todas no mesmo ponto, no lugar errado. Informe o endereço em <strong>Editar → Localização no mapa</strong> e a câmera aparece aqui.</div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">O sistema está tentando localizar as câmeras automaticamente pela rede. Verifique a localização e, se necessário, corrija em <strong>Editar → Localização no mapa</strong>.</div>
           </div>
         </div>
       )}
