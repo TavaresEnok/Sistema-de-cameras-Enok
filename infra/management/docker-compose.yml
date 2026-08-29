@@ -124,6 +124,7 @@ services:
     logging: *default-logging
     networks:
       - central-net
+      - access-net
 
   central-backup:
     image: ${CENTRAL_POSTGRES_IMAGE:?CENTRAL_POSTGRES_IMAGE is required}
@@ -196,6 +197,7 @@ services:
     logging: *default-logging
     networks:
       - monitoring-net
+      - access-net
 
   node-exporter:
     image: ${NODE_EXPORTER_IMAGE:?NODE_EXPORTER_IMAGE is required}
@@ -260,3 +262,5 @@ networks:
     internal: true
   egress-net:
     name: ajustcam-management-egress
+  access-net:
+    name: ajustcam-management-access
