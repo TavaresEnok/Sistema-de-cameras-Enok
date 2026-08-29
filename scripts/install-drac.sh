@@ -684,6 +684,21 @@ prepare_env() {
   run_sudo chown "$DRAC_OPERATING_USER:$DRAC_OPERATING_USER" "$env_file"
 }
 
+# O bind mount `infra/storage` precisa existir ANTES do primeiro `compose up`.
+# Se o Docker o cria, ele nasce root:root; a API roda deliberadamente como
+# `node` (UID/GID 1000) e o readiness falha com EACCES ao provar escrita em
+# /storage. Isso só aparecia em máquina virgem porque na matriz a pasta antiga
+# já pertencia ao UID 1000.
+prepare_runtime_directories() {
+  local storage_dir="$DRAC_INSTALL_DIR/infra/storage"
+  run_sudo mkdir -p "$storage_dir"
+  # O UID 1000 não é uma suposição sobre o usuário do host: ele é fixado pela
+  # imagem node:22-alpine usada em apps/api/Dockerfile (USER node). Não fazemos
+  # chown recursivo para não tocar milhões de gravações numa atualização.
+  run_sudo chown 1000:1000 "$storage_dir"
+  run_sudo chmod 0755 "$storage_dir"
+}
+
 compose_files() {
   local files
   if [ "$DRAC_ENVIRONMENT" = "dev" ]; then
@@ -762,7 +777,7 @@ seed_admin() {
   # senha inicial significa reinstalar.
   local cred_file="$DRAC_INSTALL_DIR/infra/.credenciais-iniciais"
   {
-    printf 'painel=%s\n' "http://${DRAC_SERVER_IP}:5173"
+    printf 'painel=%s\n' "${DRAC_PUBLIC_ORIGIN:-http://${DRAC_SERVER_IP}:5173}"
     printf 'usuario=%s\n' "$DRAC_ADMIN_EMAIL"
     printf 'senha=%s\n' "$DRAC_ADMIN_PASSWORD"
     printf '# Troque esta senha no primeiro acesso e apague este arquivo.\n'
@@ -1115,6 +1130,7 @@ main() {
   install_host_dependencies
   sync_repository
   prepare_env
+  prepare_runtime_directories
   start_stack
   run_migrations
   # A instalação só é "concluída" depois que dá para ENTRAR nela e depois que o

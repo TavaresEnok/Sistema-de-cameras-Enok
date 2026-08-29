@@ -167,6 +167,14 @@ else
   nok 'MediaMTX recebe credenciais TURN temporárias' 'overlay WebRTC incompleto'
 fi
 
+printf '\n\033[1mStorage de instalação limpa\033[0m\n'
+if grep -qF 'prepare_runtime_directories' "$INSTALADOR" \
+  && grep -qF 'run_sudo chown 1000:1000 "$storage_dir"' "$INSTALADOR"; then
+  ok 'storage nasce gravável pela API não-root antes do compose up'
+else
+  nok 'storage nasce gravável pela API não-root' 'máquina virgem voltará a falhar o /health/ready com EACCES'
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os testes do instalador passaram.\033[0m\n\n'
