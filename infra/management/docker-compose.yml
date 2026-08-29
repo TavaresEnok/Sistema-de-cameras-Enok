@@ -115,6 +115,7 @@ services:
     tmpfs:
       - /var/cache/nginx:rw,noexec,nosuid,nodev,size=32m
       - /var/run:rw,noexec,nosuid,nodev,size=4m
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     ports:
       - "${MANAGEMENT_PRIVATE_IP:-10.10.0.11}:8080:8080"
     depends_on:
