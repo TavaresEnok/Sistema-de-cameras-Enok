@@ -1,0 +1,261 @@
+name: ajustcam-management
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  central-postgres:
+    image: ${CENTRAL_POSTGRES_IMAGE:?CENTRAL_POSTGRES_IMAGE is required}
+    container_name: ajustcam-central-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${CENTRAL_POSTGRES_USER:-drac_central}
+      POSTGRES_PASSWORD: ${CENTRAL_POSTGRES_PASSWORD:?CENTRAL_POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${CENTRAL_POSTGRES_DB:-drac_central}
+    volumes:
+      - central_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - central-net
+
+  central:
+    build:
+      context: ../..
+      dockerfile: apps/central/Dockerfile
+    image: ajustcam-central:${DRAC_CENTRAL_IMAGE_TAG:-local}
+    container_name: ajustcam-central
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      NODE_ENV: production
+      DRAC_CENTRAL_HOST: 0.0.0.0
+      DRAC_CENTRAL_PORT: 9765
+      DRAC_CENTRAL_DATA_FILE: /app/data/installations.json
+      DRAC_CENTRAL_BACKUP_DIR: /app/data/backups
+      DRAC_CENTRAL_ARCHIVE_DIR: /app/data/reactivation-archives
+      DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS: ${DRAC_CENTRAL_ARCHIVE_RETENTION_MONTHS:-24}
+      DRAC_CENTRAL_DATABASE_URL: postgres://${CENTRAL_POSTGRES_USER:-drac_central}:${CENTRAL_POSTGRES_PASSWORD}@central-postgres:5432/${CENTRAL_POSTGRES_DB:-drac_central}
+      DRAC_CENTRAL_STORE_MODE: ${DRAC_CENTRAL_STORE_MODE:-dual}
+      DRAC_CENTRAL_ENROLLMENT_TOKEN: ${DRAC_CENTRAL_ENROLLMENT_TOKEN:?DRAC_CENTRAL_ENROLLMENT_TOKEN is required}
+      DRAC_CENTRAL_SECRET_KEY: ${DRAC_CENTRAL_SECRET_KEY:?DRAC_CENTRAL_SECRET_KEY is required}
+      DRAC_CENTRAL_ARCHIVE_KEY: ${DRAC_CENTRAL_ARCHIVE_KEY:?DRAC_CENTRAL_ARCHIVE_KEY is required}
+      CENTRAL_STORAGE_SECRET: ${CENTRAL_STORAGE_SECRET:?CENTRAL_STORAGE_SECRET is required}
+      DRAC_CENTRAL_ADMIN_EMAIL: ${DRAC_CENTRAL_ADMIN_EMAIL:-admin@drac.local}
+      DRAC_CENTRAL_ADMIN_PASSWORD_HASH: ${DRAC_CENTRAL_ADMIN_PASSWORD_HASH:?DRAC_CENTRAL_ADMIN_PASSWORD_HASH is required}
+      DRAC_CENTRAL_ADMIN_TOKEN: ${DRAC_CENTRAL_ADMIN_TOKEN:-}
+      DRAC_CENTRAL_SESSION_HOURS: ${DRAC_CENTRAL_SESSION_HOURS:-8}
+      DRAC_CENTRAL_ALLOWED_ORIGINS: ${DRAC_CENTRAL_ALLOWED_ORIGINS:?DRAC_CENTRAL_ALLOWED_ORIGINS is required}
+      DRAC_CENTRAL_TRUSTED_PROXIES: ${DRAC_CENTRAL_TRUSTED_PROXIES:-172.16.0.0/12}
+      DRAC_CENTRAL_COOKIE_SECURE: "true"
+      DRAC_CENTRAL_PUBLIC_URL: ${DRAC_CENTRAL_PUBLIC_URL:?DRAC_CENTRAL_PUBLIC_URL is required}
+      DRAC_CENTRAL_INSTALLER_COMMIT: ${DRAC_CENTRAL_INSTALLER_COMMIT:?DRAC_CENTRAL_INSTALLER_COMMIT is required}
+      DRAC_CENTRAL_INSTALLER_SHA256: ${DRAC_CENTRAL_INSTALLER_SHA256:?DRAC_CENTRAL_INSTALLER_SHA256 is required}
+      DRAC_CENTRAL_INSTALLER_URL_TEMPLATE: ${DRAC_CENTRAL_INSTALLER_URL_TEMPLATE:-https://raw.githubusercontent.com/TavaresEnok/Sistema-de-cameras-Enok/{commit}/scripts/install-drac.sh}
+      DRAC_CENTRAL_REPOSITORY_URL: ${DRAC_CENTRAL_REPOSITORY_URL:-https://github.com/TavaresEnok/Sistema-de-cameras-Enok.git}
+      DRAC_CENTRAL_INSTALLER_TOKEN_TTL_SECONDS: ${DRAC_CENTRAL_INSTALLER_TOKEN_TTL_SECONDS:-900}
+      DRAC_CENTRAL_INSTALLER_TOKEN_MAX_DOWNLOADS: ${DRAC_CENTRAL_INSTALLER_TOKEN_MAX_DOWNLOADS:-3}
+      APP_BUILDER_AGENT_URL: ${APP_BUILDER_AGENT_URL:-}
+      APP_BUILDER_AGENT_TOKEN: ${APP_BUILDER_AGENT_TOKEN:-}
+      APP_BUILDER_AGENT_TIMEOUT_MS: ${APP_BUILDER_AGENT_TIMEOUT_MS:-15000}
+      APK_SOURCE_BASE: ${APK_SOURCE_BASE:-http://central-ingress:8080}
+      CENTRAL_SMTP_HOST: ${CENTRAL_SMTP_HOST:-}
+      CENTRAL_SMTP_PORT: ${CENTRAL_SMTP_PORT:-587}
+      CENTRAL_SMTP_SECURE: ${CENTRAL_SMTP_SECURE:-false}
+      CENTRAL_SMTP_USER: ${CENTRAL_SMTP_USER:-}
+      CENTRAL_SMTP_PASS: ${CENTRAL_SMTP_PASS:-}
+      CENTRAL_SMTP_FROM: ${CENTRAL_SMTP_FROM:-}
+    volumes:
+      - ${CENTRAL_DATA_DIR:-./data/central}:/app/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    depends_on:
+      central-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9765/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+    networks:
+      - central-net
+      - egress-net
+
+  central-ingress:
+    image: ${MANAGEMENT_NGINX_IMAGE:?MANAGEMENT_NGINX_IMAGE is required}
+    container_name: ajustcam-central-ingress
+    restart: unless-stopped
+    user: "101:101"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - ./nginx/central.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./logs/nginx:/var/log/nginx
+      - ./apk:/srv/apk:ro
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,nodev,size=32m
+      - /var/run:rw,noexec,nosuid,nodev,size=4m
+    ports:
+      - "${MANAGEMENT_PRIVATE_IP:-10.10.0.11}:8080:8080"
+    depends_on:
+      central:
+        condition: service_healthy
+    logging: *default-logging
+    networks:
+      - central-net
+
+  central-backup:
+    image: ${CENTRAL_POSTGRES_IMAGE:?CENTRAL_POSTGRES_IMAGE is required}
+    container_name: ajustcam-central-backup
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: central-postgres
+      POSTGRES_USER: ${CENTRAL_POSTGRES_USER:-drac_central}
+      POSTGRES_PASSWORD: ${CENTRAL_POSTGRES_PASSWORD:?CENTRAL_POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${CENTRAL_POSTGRES_DB:-drac_central}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - ${CENTRAL_DATA_DIR:-./data/central}:/central-data:ro
+      - ./backups:/backups
+      - ./scripts/backup-central.sh:/scripts/backup-central.sh:ro
+    command: ["/bin/sh", "/scripts/backup-central.sh"]
+    depends_on:
+      central-postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - central-net
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:?PROMETHEUS_IMAGE is required}
+    container_name: ajustcam-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-7d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-2GB}
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - node-exporter
+      - cadvisor
+      - blackbox-exporter
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - monitoring-net
+      - central-net
+
+  grafana:
+    image: ${GRAFANA_IMAGE:?GRAFANA_IMAGE is required}
+    container_name: ajustcam-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_DOMAIN: ${MANAGEMENT_PRIVATE_IP:-10.10.0.11}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "${MANAGEMENT_PRIVATE_IP:-10.10.0.11}:3001:3000"
+    depends_on:
+      - prometheus
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - monitoring-net
+
+  node-exporter:
+    image: ${NODE_EXPORTER_IMAGE:?NODE_EXPORTER_IMAGE is required}
+    container_name: ajustcam-node-exporter
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=${MANAGEMENT_PRIVATE_IP:-10.10.0.11}:9100
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /:/host:ro,rslave
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  cadvisor:
+    image: ${CADVISOR_IMAGE:?CADVISOR_IMAGE is required}
+    container_name: ajustcam-cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - monitoring-net
+
+  blackbox-exporter:
+    image: ${BLACKBOX_EXPORTER_IMAGE:?BLACKBOX_EXPORTER_IMAGE is required}
+    container_name: ajustcam-blackbox-exporter
+    restart: unless-stopped
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes:
+      - ./monitoring/prometheus/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - monitoring-net
+      - central-net
+
+volumes:
+  central_postgres_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  central-net:
+    name: ajustcam-central-net
+    internal: true
+  monitoring-net:
+    name: ajustcam-monitoring-net
+    internal: true
+  egress-net:
+    name: ajustcam-management-egress
