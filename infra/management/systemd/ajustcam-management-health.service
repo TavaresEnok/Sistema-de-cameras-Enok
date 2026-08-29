@@ -5,4 +5,4 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/opt/ajustcam-management/repo/infra/management/scripts/health-check.sh
+ExecStart=/bin/sh /opt/ajustcam-management/repo/infra/management/scripts/health-check.sh

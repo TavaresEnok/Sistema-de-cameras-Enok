@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: AjustCam Management
+    orgId: 1
+    folder: AjustCam
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 60
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
