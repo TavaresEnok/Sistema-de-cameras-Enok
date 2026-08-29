@@ -80,7 +80,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      systemd systemd-sysv dbus sudo curl ca-certificates gnupg iproute2 openssl \
+      systemd systemd-sysv dbus sudo curl ca-certificates gnupg iproute2 openssl python3 \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 RUN printf '%%sudo ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-teste \
  && chmod 440 /etc/sudoers.d/90-teste
@@ -112,12 +112,59 @@ log "systemd: $estado"
 
 docker exec "$MAQUINA" bash -c 'id operador >/dev/null 2>&1 || (useradd -m -s /bin/bash operador && usermod -aG sudo operador)'
 
+# A instalação limpa precisa provar o contrato com a Central sem cadastrar um
+# cliente fictício na Central de produção e sem depender de segredo do CI. O
+# mock só aceita o heartbeat exigido pelo instalador; qualquer outro caminho
+# devolve 404. Antes disto o gate começou a reprovar com 403 assim que o
+# instalador passou corretamente a exigir matrícula válida — o teste estava
+# usando uma licença inventada contra a Central real.
+docker exec -i "$MAQUINA" bash -c 'cat > /root/mock-central.py' <<'PY'
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass
+
+    def _json(self, status, body):
+        payload = body.encode()
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_GET(self):
+        if self.path in ("/", "/api/health"):
+            self._json(200, '{"status":"ok"}')
+        else:
+            self._json(404, '{"error":"not_found"}')
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length", "0"))
+        if length:
+            self.rfile.read(length)
+        if self.path == "/api/agent/heartbeat":
+            self._json(200, '{"license":{"status":"ACTIVE"},"commands":[]}')
+        else:
+            self._json(404, '{"error":"not_found"}')
+
+ThreadingHTTPServer(("127.0.0.1", 9765), Handler).serve_forever()
+PY
+docker exec "$MAQUINA" bash -c 'nohup python3 /root/mock-central.py >/tmp/mock-central.log 2>&1 &'
+for _ in $(seq 1 20); do
+  docker exec "$MAQUINA" curl -fsS http://127.0.0.1:9765/api/health >/dev/null 2>&1 && break
+  sleep 0.2
+done
+docker exec "$MAQUINA" curl -fsS http://127.0.0.1:9765/api/health >/dev/null \
+  || { erro "mock isolado da Central nao subiu"; exit 1; }
+
 # ── Arquivo de respostas ────────────────────────────────────────────────────
 titulo "Arquivo de respostas"
 docker exec -i "$MAQUINA" bash -c 'cat > /root/cliente.env && chmod 600 /root/cliente.env' <<EOF
 DRAC_INSTALLER_COMMIT=$COMMIT
 DRAC_CUSTOMER_NAME=Cliente de Teste
 DRAC_INSTALLATION_ID=teste-instalacao-limpa
+DRAC_CENTRAL_URL=http://127.0.0.1:9765
 DRAC_CAMERA_ALLOWED_CIDRS=192.168.99.0/24
 DRAC_SERVER_IP=127.0.0.1
 DRAC_OPERATING_USER=operador
