@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Guarde quais valores vieram REALMENTE do ambiente antes de aplicar padrões.
+# Sem isto, `load_config_file` não distinguia "o operador exportou" de "o
+# próprio script preencheu": como DRAC_CENTRAL_URL já nascia com um default, a
+# linha correspondente no arquivo era ignorada para sempre. A precedência real
+# é: ambiente explícito > arquivo de respostas > padrão do produto.
+DRAC_EXPLICIT_ENV_KEYS=' '
+for drac_key in \
+  DRAC_REPO_URL DRAC_INSTALLER_COMMIT DRAC_INSTALL_DIR DRAC_OPERATING_USER \
+  DRAC_CENTRAL_URL DRAC_ENVIRONMENT DRAC_AUTO_YES \
+  DRAC_WATCHDOG_ENABLED DRAC_WATCHDOG_INTERVAL_MINUTES DRAC_BUILD_AGENT_EXPECTED DRAC_ENROLLMENT_TOKEN \
+  DRAC_CAMERA_ALLOWED_CIDRS DRAC_CUSTOMER_NAME DRAC_INSTALLATION_ID \
+  DRAC_LICENSE_KEY DRAC_SERVER_IP DRAC_RTMP_SHORT_HOST \
+  DRAC_GATEWAY_MODE DRAC_PUBLIC_ORIGIN DRAC_PRIVATE_BIND_IP DRAC_TURN_URL DRAC_TURN_SECRET \
+  DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME; do
+  if [[ -v $drac_key ]] && [ -n "${!drac_key}" ]; then
+    DRAC_EXPLICIT_ENV_KEYS+="$drac_key "
+  fi
+done
+unset drac_key
+
 # O repositório PRINCIPAL do produto, desde 26/08/2026:
 # `TavaresEnok/Sistema-de-cameras-Enok`.
 #
@@ -237,8 +257,9 @@ load_config_file() {
     if [[ " $(printf '%s' "$DRAC_CHAVES_VALIDAS" | tr '\n' ' ') " != *" $chave "* ]]; then
       fail "$DRAC_CONFIG_FILE linha $numero: chave desconhecida '$chave'. Veja scripts/instalacao-cliente.exemplo.env."
     fi
-    # O ambiente tem precedência: quem exporta na hora manda mais que o arquivo.
-    if [ -z "${!chave:-}" ]; then
+    # O ambiente EXPLICITAMENTE recebido tem precedência. Um padrão aplicado
+    # pelo próprio script não conta como decisão do operador.
+    if [[ "$DRAC_EXPLICIT_ENV_KEYS" != *" $chave "* ]]; then
       printf -v "$chave" '%s' "$valor"
     fi
   done < "$DRAC_CONFIG_FILE"

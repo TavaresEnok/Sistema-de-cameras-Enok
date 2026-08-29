@@ -63,6 +63,41 @@ else
   nok 'lê aspas, espaços, comentários e CRLF' "veio: $saida"
 fi
 
+# Valores que possuem padrão no topo do instalador também precisam aceitar o
+# arquivo. Este era o motivo de DRAC_CENTRAL_URL continuar apontando para a
+# produção durante o gate, apesar de o cliente.env dizer loopback.
+printf 'DRAC_CENTRAL_URL=http://127.0.0.1:9765\n' > "$TMP/bom-default.env"
+saida="$(
+  env -u DRAC_CENTRAL_URL bash -c '
+    source "$1" >/dev/null 2>&1
+    trap - ERR
+    DRAC_CONFIG_FILE="$2"
+    load_config_file >/dev/null 2>&1
+    printf "%s" "$DRAC_CENTRAL_URL"
+  ' _ "$INSTALADOR" "$TMP/bom-default.env"
+)" 2>/dev/null || true
+if [ "$saida" = 'http://127.0.0.1:9765' ]; then
+  ok 'arquivo substitui o padrão interno da URL da Central'
+else
+  nok 'arquivo substitui o padrão interno da URL da Central' "veio: $saida"
+fi
+
+saida="$(
+  DRAC_CENTRAL_URL='https://central.explicitamente.local' bash -c '
+    source "$1" >/dev/null 2>&1
+    trap - ERR
+    DRAC_CONFIG_FILE="$2"
+    load_config_file >/dev/null 2>&1
+    printf "%s" "$DRAC_CENTRAL_URL"
+  ' _ "$INSTALADOR" "$TMP/bom-default.env"
+)" 2>/dev/null || true
+if [ "$saida" = 'https://central.explicitamente.local' ]; then
+  ok 'ambiente explicitamente exportado continua vencendo o arquivo'
+else
+  nok 'ambiente explicitamente exportado vence o arquivo' "veio: $saida"
+fi
+
+
 printf '\n\033[1mNunca perguntar no vazio\033[0m\n'
 
 # O defeito: sem terminal, `read` retorna EOF, a resposta fica vazia, o laço
