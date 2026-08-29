@@ -204,17 +204,16 @@ services:
     image: ${NODE_EXPORTER_IMAGE:?NODE_EXPORTER_IMAGE is required}
     container_name: ajustcam-node-exporter
     restart: unless-stopped
-    network_mode: host
-    pid: host
     command:
       - --path.rootfs=/host
-      - --web.listen-address=${MANAGEMENT_PRIVATE_IP:-10.10.0.11}:9100
       - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
     volumes:
       - /:/host:ro,rslave
     security_opt:
       - no-new-privileges:true
     logging: *default-logging
+    networks:
+      - monitoring-net
 
   cadvisor:
     image: ${CADVISOR_IMAGE:?CADVISOR_IMAGE is required}
