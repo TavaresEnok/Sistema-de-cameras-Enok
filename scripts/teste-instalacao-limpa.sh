@@ -150,7 +150,22 @@ class Handler(BaseHTTPRequestHandler):
 
 ThreadingHTTPServer(("127.0.0.1", 9765), Handler).serve_forever()
 PY
-docker exec "$MAQUINA" bash -c 'nohup python3 /root/mock-central.py >/tmp/mock-central.log 2>&1 &'
+docker exec "$MAQUINA" bash -c 'cat > /etc/systemd/system/drac-mock-central.service <<"UNIT"
+[Unit]
+Description=Central isolada do gate de instalação limpa
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /root/mock-central.py
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now drac-mock-central.service'
 for _ in $(seq 1 20); do
   docker exec "$MAQUINA" curl -fsS http://127.0.0.1:9765/api/health >/dev/null 2>&1 && break
   sleep 0.2
