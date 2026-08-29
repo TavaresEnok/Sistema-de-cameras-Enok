@@ -220,6 +220,8 @@ saida="$(
   DRAC_ADMIN_PASSWORD_GERADA=''
   DRAC_ADMIN_EMAIL='admin@teste.local'
   DRAC_INSTALL_DIR="$TMP/instalacao"
+  mkdir -p "$DRAC_INSTALL_DIR/infra"
+  : > "$DRAC_INSTALL_DIR/infra/.env"
   DRAC_GATEWAY_MODE=true
   DRAC_PRIVATE_BIND_IP='10.10.0.20'
   DRAC_PUBLIC_ORIGIN='https://cliente.exemplo.test'
