@@ -1098,6 +1098,8 @@ print_summary() {
 Instalacao DRAC concluida.
 
 ${bloco_acesso}
+EOF
+
 # O compose de produção publica em 127.0.0.1 por padrão (bom: não expõe o
 # painel do cliente à internet sem TLS). Mas o resumo abaixo anunciava o IP do
 # servidor mesmo assim — um endereço que NUNCA responderia, e o operador
@@ -1115,7 +1117,7 @@ elif [ "$DRAC_GATEWAY_MODE" = "true" ]; then
     ^ publicado somente no IP privado ${DRAC_PRIVATE_BIND_IP}; acesso externo pela Gateway TLS."
 fi
 
-
+  cat <<EOF
 Painel local:
   ${DRAC_PUBLIC_ORIGIN:-http://${DRAC_SERVER_IP}:5173}${DRAC_AVISO_BIND}
 

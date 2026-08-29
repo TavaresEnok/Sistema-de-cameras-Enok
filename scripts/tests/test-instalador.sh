@@ -210,6 +210,34 @@ else
   nok 'storage nasce gravável pela API não-root' 'máquina virgem voltará a falhar o /health/ready com EACCES'
 fi
 
+printf '\n\033[1mResumo final executável\033[0m\n'
+saida="$(
+  set +e
+  # shellcheck disable=SC1090
+  source "$INSTALADOR" >/dev/null 2>&1
+  trap - ERR
+  run_sudo() { "$@"; }
+  DRAC_ADMIN_PASSWORD_GERADA=''
+  DRAC_ADMIN_EMAIL='admin@teste.local'
+  DRAC_INSTALL_DIR="$TMP/instalacao"
+  DRAC_GATEWAY_MODE=true
+  DRAC_PRIVATE_BIND_IP='10.10.0.20'
+  DRAC_PUBLIC_ORIGIN='https://cliente.exemplo.test'
+  DRAC_SERVER_IP='10.10.0.20'
+  DRAC_CENTRAL_URL='https://central.exemplo.test'
+  DRAC_INSTALLATION_ID='cliente-teste'
+  DRAC_CUSTOMER_NAME='Cliente Teste'
+  DRAC_INSTALLER_COMMIT='abc123'
+  print_summary
+)"
+if printf '%s' "$saida" | grep -qF 'Painel local:' \
+  && printf '%s' "$saida" | grep -qF 'publicado somente no IP privado 10.10.0.20' \
+  && ! printf '%s' "$saida" | grep -qF 'DRAC_AVISO_BIND='; then
+  ok 'resumo executa a lógica e não imprime o próprio código-fonte'
+else
+  nok 'resumo executa a lógica' "saída inválida: $(printf '%s' "$saida" | tail -8 | tr '\n' ' ')"
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os testes do instalador passaram.\033[0m\n\n'
