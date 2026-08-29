@@ -136,6 +136,37 @@ else
   nok 'preserva o CLOUD_*' "esperava 2 linhas CLOUD_, veio: ${saida##*$'\n'}"
 fi
 
+printf '\n\033[1mModo Gateway compartilhada\033[0m\n'
+
+saida="$(
+  set +e
+  # shellcheck disable=SC1090
+  source "$INSTALADOR" >/dev/null 2>&1
+  trap - ERR
+  DRAC_ENVIRONMENT=prod
+  DRAC_GATEWAY_MODE=true
+  compose_files
+)"
+if printf '%s' "$saida" | grep -qF -- '-f infra/docker-compose.gateway.yml'; then
+  ok 'modo Gateway inclui o overlay de TURN'
+else
+  nok 'modo Gateway inclui o overlay de TURN' "veio: $saida"
+fi
+
+if grep -qF 'env_set "$env_file" DRAC_WEB_BIND "$private_bind"' "$INSTALADOR" \
+  && grep -qF 'env_set "$env_file" API_PUBLIC_URL "${public_origin}/api"' "$INSTALADOR"; then
+  ok 'painel liga no IP privado e anuncia a origem HTTPS pública'
+else
+  nok 'separa bind privado de origem pública' 'o instalador voltou a confundir IP interno e URL externa'
+fi
+
+if grep -qF 'MTX_WEBRTCICESERVERS2_0_USERNAME=AUTH_SECRET' "$RAIZ/infra/docker-compose.gateway.yml" \
+  && grep -qF 'MTX_WEBRTCICESERVERS2_0_CLIENTONLY=true' "$RAIZ/infra/docker-compose.gateway.yml"; then
+  ok 'MediaMTX recebe credenciais TURN temporárias no navegador'
+else
+  nok 'MediaMTX recebe credenciais TURN temporárias' 'overlay WebRTC incompleto'
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os testes do instalador passaram.\033[0m\n\n'

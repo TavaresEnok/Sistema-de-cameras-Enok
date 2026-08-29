@@ -28,6 +28,11 @@ DRAC_AUTO_YES="${DRAC_AUTO_YES:-false}"
 DRAC_WATCHDOG_ENABLED="${DRAC_WATCHDOG_ENABLED:-true}"
 DRAC_WATCHDOG_INTERVAL_MINUTES="${DRAC_WATCHDOG_INTERVAL_MINUTES:-5}"
 DRAC_CAMERA_ALLOWED_CIDRS="${DRAC_CAMERA_ALLOWED_CIDRS:-}"
+DRAC_GATEWAY_MODE="${DRAC_GATEWAY_MODE:-false}"
+DRAC_PUBLIC_ORIGIN="${DRAC_PUBLIC_ORIGIN:-}"
+DRAC_PRIVATE_BIND_IP="${DRAC_PRIVATE_BIND_IP:-}"
+DRAC_TURN_URL="${DRAC_TURN_URL:-}"
+DRAC_TURN_SECRET="${DRAC_TURN_SECRET:-}"
 # Senha de matricula na Central. Sem ela, o cliente precisa ter sido
 # provisionado pelo painel antes da instalacao.
 DRAC_ENROLLMENT_TOKEN="${DRAC_ENROLLMENT_TOKEN:-}"
@@ -162,6 +167,7 @@ DRAC_CENTRAL_URL DRAC_ENVIRONMENT DRAC_AUTO_YES
 DRAC_WATCHDOG_ENABLED DRAC_WATCHDOG_INTERVAL_MINUTES DRAC_BUILD_AGENT_EXPECTED DRAC_ENROLLMENT_TOKEN
 DRAC_CAMERA_ALLOWED_CIDRS DRAC_CUSTOMER_NAME DRAC_INSTALLATION_ID
 DRAC_LICENSE_KEY DRAC_SERVER_IP DRAC_RTMP_SHORT_HOST
+DRAC_GATEWAY_MODE DRAC_PUBLIC_ORIGIN DRAC_PRIVATE_BIND_IP DRAC_TURN_URL DRAC_TURN_SECRET
 DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME
 "
 
@@ -354,6 +360,21 @@ preflight() {
 
   if ! command -v curl >/dev/null 2>&1; then
     fail "curl e obrigatorio para a instalacao automatica."
+  fi
+
+  if [ "$DRAC_GATEWAY_MODE" = "true" ]; then
+    if [[ ! "$DRAC_PUBLIC_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+      fail "DRAC_PUBLIC_ORIGIN deve ser uma origem HTTPS sem caminho no modo Gateway."
+    fi
+    if [[ ! "$DRAC_PRIVATE_BIND_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      fail "DRAC_PRIVATE_BIND_IP deve ser o IPv4 privado desta VM no modo Gateway."
+    fi
+    if [[ ! "$DRAC_TURN_URL" =~ ^turns?:[^[:space:]]+:[0-9]+(\?transport=(udp|tcp))?$ ]]; then
+      fail "DRAC_TURN_URL deve informar turn:host:porta ou turns:host:porta no modo Gateway."
+    fi
+    if [ ${#DRAC_TURN_SECRET} -lt 32 ]; then
+      fail "DRAC_TURN_SECRET deve ter pelo menos 32 caracteres no modo Gateway."
+    fi
   fi
 
   if ! command -v openssl >/dev/null 2>&1; then
@@ -551,6 +572,7 @@ prepare_env() {
   local server_ip="${DRAC_SERVER_IP:-$(detect_ip)}"
   local rtmp_short_host="${DRAC_RTMP_SHORT_HOST:-}"
   local install_slug
+  local public_origin private_bind public_host public_scheme
 
   prompt DRAC_CUSTOMER_NAME "Nome do cliente"
   install_slug="$(slugify "${DRAC_CUSTOMER_NAME:-$(hostname)}")"
@@ -566,6 +588,16 @@ prepare_env() {
   prompt DRAC_CENTRAL_URL "URL da DRAC Central" "$DRAC_CENTRAL_URL"
   prompt DRAC_CAMERA_ALLOWED_CIDRS \
     "CIDRs exclusivos das redes de cameras (separados por virgula; ex.: 192.168.10.0/24)"
+
+  if [ "$DRAC_GATEWAY_MODE" = "true" ]; then
+    public_origin="${DRAC_PUBLIC_ORIGIN%/}"
+    private_bind="$DRAC_PRIVATE_BIND_IP"
+  else
+    public_origin="http://${DRAC_SERVER_IP}:5173"
+    private_bind="127.0.0.1"
+  fi
+  public_host="$(host_from_url "$public_origin")"
+  public_scheme="${public_origin%%://*}"
 
   if [ ! -f "$env_file" ]; then
     log "Criando infra/.env"
@@ -599,13 +631,13 @@ prepare_env() {
   env_set "$env_file" MEDIAMTX_API_USER "drac_media"
   env_set "$env_file" MEDIAMTX_API_PASS "$(random_hex 18)"
   env_set "$env_file" MEDIAMTX_AUTH_CALLBACK_TOKEN "$(random_hex 24)"
-  env_set "$env_file" CORS_ALLOWED_ORIGINS "http://${DRAC_SERVER_IP}:5173,http://${DRAC_SERVER_IP}:3002"
-  env_set "$env_file" PUBLIC_APP_URL "http://${DRAC_SERVER_IP}:5173"
+  env_set "$env_file" CORS_ALLOWED_ORIGINS "$public_origin"
+  env_set "$env_file" PUBLIC_APP_URL "$public_origin"
   # A API crua fica deliberadamente em loopback. O único endereço público é o
   # gateway do web, que encaminha /api pela mesma origem do painel. Anunciar
   # :3000 aqui criava URLs inalcançáveis e levava o operador a expor a API sem
   # TLS para fazer o aplicativo funcionar.
-  env_set "$env_file" API_PUBLIC_URL "http://${DRAC_SERVER_IP}:5173/api"
+  env_set "$env_file" API_PUBLIC_URL "${public_origin}/api"
   env_set "$env_file" VITE_API_URL ""
   env_set "$env_file" CLOUD_CONNECTOR_ENABLED "true"
   env_set "$env_file" CLOUD_API_URL "$DRAC_CENTRAL_URL"
@@ -631,31 +663,38 @@ prepare_env() {
   # Todo o resto (API, web, HLS, sinalização, RTSP) fica em loopback e é
   # servido pelo nginx do host, com HTTPS.
   env_set "$env_file" DRAC_API_BIND "127.0.0.1"
-  env_set "$env_file" DRAC_WEB_BIND "127.0.0.1"
+  env_set "$env_file" DRAC_WEB_BIND "$private_bind"
   env_set "$env_file" DRAC_POSTGRES_BIND "127.0.0.1"
   env_set "$env_file" DRAC_REDIS_BIND "127.0.0.1"
   env_set "$env_file" DRAC_MEDIAMTX_RTSP_BIND "127.0.0.1"
   env_set "$env_file" DRAC_MEDIAMTX_HLS_BIND "127.0.0.1"
   env_set "$env_file" DRAC_MEDIAMTX_WEBRTC_HTTP_BIND "127.0.0.1"
-  env_set "$env_file" DRAC_MEDIAMTX_WEBRTC_UDP_BIND "0.0.0.0"
-  env_set "$env_file" MEDIAMTX_WEBRTC_ADDITIONAL_HOST "$DRAC_SERVER_IP"
-  env_set "$env_file" MEDIAMTX_PUBLIC_HOST "$DRAC_SERVER_IP"
+  env_set "$env_file" DRAC_MEDIAMTX_WEBRTC_UDP_BIND "${private_bind}"
+  env_set "$env_file" MEDIAMTX_WEBRTC_ADDITIONAL_HOST "${private_bind}"
+  env_set "$env_file" MEDIAMTX_PUBLIC_HOST "$public_host"
   env_set "$env_file" MEDIAMTX_RTMP_SHORT_HOST "$rtmp_short_host"
-  env_set "$env_file" MEDIAMTX_PUBLIC_SCHEME "http"
-  env_set "$env_file" MEDIAMTX_PUBLIC_WEBRTC_URL ""
-  env_set "$env_file" MEDIAMTX_PUBLIC_HLS_URL ""
-  env_set "$env_file" MEDIAMTX_HLS_ALLOW_ORIGIN "*"
-  env_set "$env_file" MEDIAMTX_WEBRTC_ALLOW_ORIGIN "*"
+  env_set "$env_file" MEDIAMTX_PUBLIC_SCHEME "$public_scheme"
+  env_set "$env_file" MEDIAMTX_PUBLIC_WEBRTC_URL "${public_origin}/webrtc"
+  env_set "$env_file" MEDIAMTX_PUBLIC_HLS_URL "${public_origin}/hls"
+  env_set "$env_file" MEDIAMTX_HLS_ALLOW_ORIGIN "$public_origin"
+  env_set "$env_file" MEDIAMTX_WEBRTC_ALLOW_ORIGIN "$public_origin"
+  env_set "$env_file" MEDIAMTX_TURN_URL "$DRAC_TURN_URL"
+  env_set "$env_file" MEDIAMTX_TURN_SECRET "$DRAC_TURN_SECRET"
 
   run_sudo chown "$DRAC_OPERATING_USER:$DRAC_OPERATING_USER" "$env_file"
 }
 
 compose_files() {
+  local files
   if [ "$DRAC_ENVIRONMENT" = "dev" ]; then
-    printf -- '-f infra/docker-compose.yml -f infra/docker-compose.dev.yml'
+    files='-f infra/docker-compose.yml -f infra/docker-compose.dev.yml'
   else
-    printf -- '-f infra/docker-compose.yml -f infra/docker-compose.prod.yml'
+    files='-f infra/docker-compose.yml -f infra/docker-compose.prod.yml'
   fi
+  if [ "$DRAC_GATEWAY_MODE" = "true" ]; then
+    files="$files -f infra/docker-compose.gateway.yml"
+  fi
+  printf '%s' "$files"
 }
 
 start_stack() {
@@ -1029,20 +1068,23 @@ ${bloco_acesso}
 # concluía que a instalação falhou. Aconteceu na instalação da Vibe
 # (19/08/2026). Dizer a verdade sobre o que foi publicado é o mínimo.
 DRAC_AVISO_BIND=""
-if [ "$(env_get "$DRAC_INSTALL_DIR/infra/.env" DRAC_WEB_BIND)" != "0.0.0.0" ]; then
+if [ "$(env_get "$DRAC_INSTALL_DIR/infra/.env" DRAC_WEB_BIND)" = "127.0.0.1" ]; then
   DRAC_AVISO_BIND="
     ^ acessível SOMENTE deste servidor (publicado em 127.0.0.1).
       Para um teste por IP, altere somente DRAC_WEB_BIND=0.0.0.0 em infra/.env
       e suba o web de novo. Nunca exponha DRAC_API_BIND: use /api pelo painel.
       Em produção, mantenha loopback e coloque um proxy HTTPS na frente."
+elif [ "$DRAC_GATEWAY_MODE" = "true" ]; then
+  DRAC_AVISO_BIND="
+    ^ publicado somente no IP privado ${DRAC_PRIVATE_BIND_IP}; acesso externo pela Gateway TLS."
 fi
 
 
 Painel local:
-  http://${DRAC_SERVER_IP}:5173${DRAC_AVISO_BIND}
+  ${DRAC_PUBLIC_ORIGIN:-http://${DRAC_SERVER_IP}:5173}${DRAC_AVISO_BIND}
 
 API pelo mesmo gateway do painel:
-  http://${DRAC_SERVER_IP}:5173/api/health${DRAC_AVISO_BIND}
+  ${DRAC_PUBLIC_ORIGIN:-http://${DRAC_SERVER_IP}:5173}/api/health${DRAC_AVISO_BIND}
 
 Central configurada:
   ${DRAC_CENTRAL_URL}
