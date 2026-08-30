@@ -573,6 +573,20 @@ env_set() {
   fi
 }
 
+# Reexecutar o instalador é uma operação de reparo/atualização, não uma rotação
+# de chaves. Trocar CAMERA_SECRET_KEY torna todas as senhas de câmera
+# indecifráveis; trocar POSTGRES_PASSWORD sem ALTER ROLE derruba a API. Em uma
+# instalação já existente preservamos o segredo atual. Na primeira instalação,
+# ou se a chave estiver vazia, geramos um valor forte.
+env_set_secret() {
+  local file="$1" key="$2" generated="$3" current
+  current="$(env_get "$file" "$key")"
+  if [ "${DRAC_ENV_WAS_PRESENT:-false}" = "true" ] && [ -n "$current" ]; then
+    return 0
+  fi
+  env_set "$file" "$key" "$generated"
+}
+
 # As chaves que configuram uma máquina a SER um painel Central. Um cliente
 # nunca é central; estas linhas não têm o que fazer no .env dele. `CLOUD_*`
 # NÃO entra aqui — é o canal do cliente REPORTANDO à central, e é legítimo.
@@ -620,11 +634,13 @@ prepare_env() {
   public_host="$(host_from_url "$public_origin")"
   public_scheme="${public_origin%%://*}"
 
+  DRAC_ENV_WAS_PRESENT=false
   if [ ! -f "$env_file" ]; then
     log "Criando infra/.env"
     run_sudo cp "$example_file" "$env_file"
     run_sudo chmod 600 "$env_file"
   else
+    DRAC_ENV_WAS_PRESENT=true
     warn "infra/.env ja existe; atualizando somente chaves controladas pelo instalador."
     run_sudo cp "$env_file" "$env_file.bak.$(date -u +%Y%m%dT%H%M%SZ)"
   fi
@@ -643,15 +659,15 @@ prepare_env() {
   # compose (verificado: sem `:?`), então removê-las não quebra nada.
   strip_central_only_keys "$env_file"
 
-  env_set "$env_file" POSTGRES_PASSWORD "$(random_hex 24)"
-  env_set "$env_file" JWT_SECRET "$(random_hex 32)"
-  env_set "$env_file" CAMERA_SECRET_KEY "$(random_hex 32)"
+  env_set_secret "$env_file" POSTGRES_PASSWORD "$(random_hex 24)"
+  env_set_secret "$env_file" JWT_SECRET "$(random_hex 32)"
+  env_set_secret "$env_file" CAMERA_SECRET_KEY "$(random_hex 32)"
   env_set "$env_file" CAMERA_ALLOWED_CIDRS "$DRAC_CAMERA_ALLOWED_CIDRS"
-  env_set "$env_file" INTERNAL_SERVICE_TOKEN "$(random_hex 24)"
-  env_set "$env_file" EVIDENCE_HMAC_SECRET "$(random_hex 32)"
+  env_set_secret "$env_file" INTERNAL_SERVICE_TOKEN "$(random_hex 24)"
+  env_set_secret "$env_file" EVIDENCE_HMAC_SECRET "$(random_hex 32)"
   env_set "$env_file" MEDIAMTX_API_USER "drac_media"
-  env_set "$env_file" MEDIAMTX_API_PASS "$(random_hex 18)"
-  env_set "$env_file" MEDIAMTX_AUTH_CALLBACK_TOKEN "$(random_hex 24)"
+  env_set_secret "$env_file" MEDIAMTX_API_PASS "$(random_hex 18)"
+  env_set_secret "$env_file" MEDIAMTX_AUTH_CALLBACK_TOKEN "$(random_hex 24)"
   env_set "$env_file" CORS_ALLOWED_ORIGINS "$public_origin"
   env_set "$env_file" PUBLIC_APP_URL "$public_origin"
   # A API crua fica deliberadamente em loopback. O único endereço público é o
@@ -669,6 +685,9 @@ prepare_env() {
   env_set "$env_file" CLOUD_CONNECTOR_TIMEOUT_MS "8000"
   env_set "$env_file" DRAC_VERSION "$DRAC_INSTALLER_COMMIT"
   env_set "$env_file" DRAC_LAUNCH_PROFILE "standard"
+  env_set "$env_file" DRAC_GATEWAY_MODE "$DRAC_GATEWAY_MODE"
+  env_set "$env_file" DRAC_PUBLIC_ORIGIN "$public_origin"
+  env_set "$env_file" DRAC_PRIVATE_BIND_IP "$private_bind"
   # ── O QUE FICA EXPOSTO À INTERNET ─────────────────────────────────────────
   #
   # ATENÇÃO: publicar em 0.0.0.0 aqui EXPÕE DE VERDADE, mesmo com ufw ativo —

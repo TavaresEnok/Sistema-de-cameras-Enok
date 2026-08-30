@@ -49,6 +49,15 @@ esac
 issues=()      # problemas ativos (viram status degraded)
 actions=()     # auto-curas executadas neste ciclo (para o log/alerta)
 
+COMPOSE_MEDIAMTX=(docker compose --env-file "$INFRA_DIR/.env" -f "$INFRA_DIR/docker-compose.yml" -f "$INFRA_DIR/docker-compose.prod.yml")
+if { [ "$(load_env_var DRAC_GATEWAY_MODE)" = "true" ] || [ -n "$(load_env_var MEDIAMTX_TURN_URL)" ]; } \
+   && [ -f "$INFRA_DIR/docker-compose.gateway.yml" ]; then
+  COMPOSE_MEDIAMTX+=(-f "$INFRA_DIR/docker-compose.gateway.yml")
+fi
+if [ "$(load_env_var DRAC_GPU_ENABLED)" = "true" ] && [ -f "$INFRA_DIR/docker-compose.gpu.yml" ]; then
+  COMPOSE_MEDIAMTX+=(-f "$INFRA_DIR/docker-compose.gpu.yml")
+fi
+
 # ── 1) CONTAINERS ────────────────────────────────────────────────────────────
 for container in vms-postgres vms-redis vms-mediamtx vms-api vms-web vms-ai-service; do
   state="$(docker inspect -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || true)"
@@ -87,12 +96,12 @@ if docker inspect vms-mediamtx >/dev/null 2>&1; then
   fi
   if ! mediamtx_ports_ok; then
     # AUTO-CURA: recria o mediamtx pelo compose base (que agora carrega as portas).
-    (cd "$INFRA_DIR" && docker compose -f docker-compose.yml up -d mediamtx >/dev/null 2>&1) && sleep 3
+    "${COMPOSE_MEDIAMTX[@]}" up -d mediamtx >/dev/null 2>&1 && sleep 3
     # Fallback: se ainda sem portas (ex.: container órfão/fora do compose segurando o
     # nome), força remoção e recria limpo pelo compose.
     if ! mediamtx_ports_ok; then
       docker rm -f vms-mediamtx >/dev/null 2>&1
-      (cd "$INFRA_DIR" && docker compose -f docker-compose.yml up -d mediamtx >/dev/null 2>&1) && sleep 3
+      "${COMPOSE_MEDIAMTX[@]}" up -d mediamtx >/dev/null 2>&1 && sleep 3
     fi
     if mediamtx_ports_ok; then
       actions+=("religou-portas-mediamtx")

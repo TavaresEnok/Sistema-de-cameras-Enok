@@ -108,6 +108,14 @@ fi
 BACKUP="$DIR_BACKUP/pre-atualizacao-$CARIMBO.sql"
 PG_USER="$(env_get POSTGRES_USER)"; PG_DB="$(env_get POSTGRES_DB)"
 COMPOSE=(docker compose --env-file "$RAIZ/infra/.env" -f "$RAIZ/infra/docker-compose.yml" -f "$RAIZ/infra/docker-compose.prod.yml")
+# Tenant atrás da Gateway depende deste overlay para anunciar o TURN com
+# credenciais temporárias. O atualizador antigo esquecia o arquivo e removia a
+# política ICE no primeiro upgrade, embora o painel continuasse saudável.
+if { [ "$(env_get DRAC_GATEWAY_MODE)" = "true" ] || [ -n "$(env_get MEDIAMTX_TURN_URL)" ]; } \
+   && [ -f "$RAIZ/infra/docker-compose.gateway.yml" ]; then
+  COMPOSE+=(-f "$RAIZ/infra/docker-compose.gateway.yml")
+  log "Gateway/TURN habilitada: overlay preservado na atualização."
+fi
 # Host com GPU: soma o overlay de transcode SEMPRE, senão um rebuild/up desta
 # atualização reverteria o MediaMTX para a imagem sem NVENC. `-f` explícito
 # ignora o COMPOSE_FILE do .env, então a decisão precisa ser tomada aqui também.

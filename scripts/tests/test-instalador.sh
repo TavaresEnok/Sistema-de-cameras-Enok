@@ -210,6 +210,23 @@ else
   nok 'storage nasce gravável pela API não-root' 'máquina virgem voltará a falhar o /health/ready com EACCES'
 fi
 
+saida="$(
+  set +e
+  # shellcheck disable=SC1090
+  source "$INSTALADOR" >/dev/null 2>&1
+  trap - ERR
+  run_sudo() { "$@"; }
+  printf 'CAMERA_SECRET_KEY=segredo-antigo\n' > "$TMP/segredos.env"
+  DRAC_ENV_WAS_PRESENT=true
+  env_set_secret "$TMP/segredos.env" CAMERA_SECRET_KEY segredo-novo
+  env_get "$TMP/segredos.env" CAMERA_SECRET_KEY
+)"
+if [ "${saida##*$'\n'}" = 'segredo-antigo' ]; then
+  ok 'reexecução preserva a chave que cifra as credenciais das câmeras'
+else
+  nok 'reexecução preserva segredos' "CAMERA_SECRET_KEY mudou para ${saida##*$'\n'}"
+fi
+
 printf '\n\033[1mResumo final executável\033[0m\n'
 saida="$(
   set +e
@@ -246,6 +263,13 @@ if grep -qF 'web_health_url="http://${web_bind}:5173/"' "$INSTALADOR" \
   ok 'instalador, watchdog e verificador respeitam o bind privado da Gateway'
 else
   nok 'saúde web respeita o bind privado' 'algum dos três voltou a testar somente 127.0.0.1'
+fi
+
+if grep -qF 'docker-compose.gateway.yml' "$RAIZ/scripts/atualizar-instalacao.sh" \
+  && grep -qF 'COMPOSE_MEDIAMTX+=(-f "$INFRA_DIR/docker-compose.gateway.yml")' "$RAIZ/scripts/runtime-watchdog.sh"; then
+  ok 'atualização e auto-cura preservam o overlay TURN da Gateway'
+else
+  nok 'atualização preserva TURN' 'atualizador ou watchdog voltou a subir somente o compose base'
 fi
 
 printf '\n'
