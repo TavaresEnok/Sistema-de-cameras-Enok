@@ -13,7 +13,6 @@ INFRA_DIR="$ROOT_DIR/infra"
 STATE_DIR="$INFRA_DIR/storage/.monitor"
 STATUS_FILE="$STATE_DIR/runtime-status.json"
 HASH_FILE="$STATE_DIR/runtime-status.sha256"
-LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/drac-runtime-watchdog.lock"
 # `storage` costuma pertencer ao root (os containers o criam), enquanto o
 # watchdog roda como usuário operador. Sem isto, o mkdir falha em silêncio e o
 # serviço morre em "No such file or directory" no primeiro disparo — foi o que
@@ -23,6 +22,11 @@ if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
   sudo -n chown "$(id -u):$(id -g)" "$STATE_DIR" 2>/dev/null || true
 fi
 [ -w "$STATE_DIR" ] || { echo "drac-watchdog: sem permissão de escrita em $STATE_DIR" >&2; exit 1; }
+# O lock antigo ficava em /tmp. Em hosts com fs.protected_regular=2, uma
+# execução administrativa como root não pode reabrir o arquivo criado pelo
+# usuário do serviço dentro do diretório sticky, resultando em "Permission
+# denied". Mantê-lo junto ao estado também evita colisão entre instalações.
+LOCK_FILE="$STATE_DIR/runtime-watchdog.lock"
 exec 9>"$LOCK_FILE"
 flock -n 9 || exit 0
 

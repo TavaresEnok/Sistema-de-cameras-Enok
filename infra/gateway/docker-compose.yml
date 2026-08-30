@@ -35,6 +35,9 @@ services:
     image: ossrs/srs:5
     container_name: ajustcam-gateway-srs
     restart: unless-stopped
+    # A imagem inicia `conf/docker.conf` por padrão. Sem indicar o arquivo, o
+    # bind mount abaixo existe mas é ignorado e o forward nunca é aplicado.
+    command: ["./objs/srs", "-c", "conf/srs.conf"]
     ports:
       - "1935:1935"
       - "127.0.0.1:1985:1985"
@@ -49,5 +52,6 @@ networks:
     name: ajustcam-gateway-net
     driver: bridge
     ipam:
+      driver: default
       config:
         - subnet: 172.28.0.0/16

@@ -25,3 +25,6 @@ O SRS público não decide o tenant por NAT. Enquanto houver somente a
 IBtelecom, ele pode encaminhar estaticamente para `10.10.0.20:1935`. Antes de
 adicionar o segundo tenant RTMP, esse encaminhamento deve ser substituído pelo
 roteador autenticado por stream key; nunca crie dois DNATs públicos para 1935.
+O arquivo versionado dessa fase é `srs/srs.conf`; a autenticação final continua
+no SRS/API da IBtelecom, portanto o Gateway não transforma chave inválida em
+stream autorizado.

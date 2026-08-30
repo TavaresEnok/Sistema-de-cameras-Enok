@@ -272,6 +272,13 @@ else
   nok 'atualização preserva TURN' 'atualizador ou watchdog voltou a subir somente o compose base'
 fi
 
+if grep -qF 'LOCK_FILE="$STATE_DIR/runtime-watchdog.lock"' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && ! grep -qF 'LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}' "$RAIZ/scripts/runtime-watchdog.sh"; then
+  ok 'watchdog usa lock privado por instalação'
+else
+  nok 'watchdog usa lock privado por instalação' 'lock em /tmp falha com fs.protected_regular=2 e colide entre instalações'
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os testes do instalador passaram.\033[0m\n\n'
