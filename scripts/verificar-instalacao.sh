@@ -41,6 +41,17 @@ aviso() { printf '  \033[1;33maviso\033[0m   %s\n          %s\n' "$1" "$2"; avis
 
 env_get() { sed -nE "s/^$2=(.*)$/\1/p" "$1" 2>/dev/null | tail -n 1; }
 
+# Em tenants atrás da Gateway o painel é publicado no IP privado da VM, não
+# em loopback. Verificar sempre 127.0.0.1 fazia uma instalação saudável ser
+# declarada quebrada e mantinha o watchdog em alerta permanente.
+if [ -z "${DRAC_WEB_URL:-}" ] && [ "$WEB" = "http://127.0.0.1:5173" ]; then
+  web_bind="$(env_get "$ENV_FILE" DRAC_WEB_BIND)"
+  case "$web_bind" in
+    ''|0.0.0.0|127.0.0.1) ;;
+    *) WEB="http://${web_bind}:5173" ;;
+  esac
+fi
+
 compose() {
   local f="-f $DIR/infra/docker-compose.yml -f $DIR/infra/docker-compose.prod.yml"
   # shellcheck disable=SC2086

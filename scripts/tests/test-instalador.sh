@@ -240,6 +240,14 @@ else
   nok 'resumo executa a lógica' "saída inválida: $(printf '%s' "$saida" | tail -8 | tr '\n' ' ')"
 fi
 
+if grep -qF 'web_health_url="http://${web_bind}:5173/"' "$INSTALADOR" \
+  && grep -qF 'WEB_HEALTH_URL="http://${WEB_BIND}:5173/"' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && grep -qF 'WEB="http://${web_bind}:5173"' "$RAIZ/scripts/verificar-instalacao.sh"; then
+  ok 'instalador, watchdog e verificador respeitam o bind privado da Gateway'
+else
+  nok 'saúde web respeita o bind privado' 'algum dos três voltou a testar somente 127.0.0.1'
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os testes do instalador passaram.\033[0m\n\n'

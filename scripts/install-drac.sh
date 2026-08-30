@@ -1058,11 +1058,17 @@ register_central_now() {
 }
 
 validate_installation() {
+  local web_bind web_health_url
   log "Validando instalacao"
   docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | sed -n '1,20p'
 
   wait_for_http "API local" "http://127.0.0.1:3000/health" 30 3 || true
-  wait_for_http "Painel local" "http://127.0.0.1:5173/" 20 3 || true
+  web_bind="$(env_get "$DRAC_INSTALL_DIR/infra/.env" DRAC_WEB_BIND)"
+  case "$web_bind" in
+    ''|0.0.0.0|127.0.0.1) web_health_url="http://127.0.0.1:5173/" ;;
+    *) web_health_url="http://${web_bind}:5173/" ;;
+  esac
+  wait_for_http "Painel local" "$web_health_url" 20 3 || true
 
   if curl -fsS "${DRAC_CENTRAL_URL%/}/api/health" >/dev/null; then
     log "Central respondeu em ${DRAC_CENTRAL_URL%/}/api/health"

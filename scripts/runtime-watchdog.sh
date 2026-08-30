@@ -40,6 +40,11 @@ TG_TOKEN="$(load_env_var ALERT_TELEGRAM_BOT_TOKEN)"
 TG_CHAT="$(load_env_var ALERT_TELEGRAM_CHAT_ID)"
 ALERT_WEBHOOK="$(load_env_var ALERT_WEBHOOK_URL)"
 INSTANCE_NAME="$(load_env_var DRAC_INSTANCE_NAME)"; INSTANCE_NAME="${INSTANCE_NAME:-$(hostname)}"
+WEB_BIND="$(load_env_var DRAC_WEB_BIND)"
+case "$WEB_BIND" in
+  ''|0.0.0.0|127.0.0.1) WEB_HEALTH_URL="http://127.0.0.1:5173/" ;;
+  *) WEB_HEALTH_URL="http://${WEB_BIND}:5173/" ;;
+esac
 
 issues=()      # problemas ativos (viram status degraded)
 actions=()     # auto-curas executadas neste ciclo (para o log/alerta)
@@ -55,7 +60,7 @@ done
 
 # ── 2) SERVIÇOS HTTP internos ────────────────────────────────────────────────
 curl -fsS --max-time 8 http://127.0.0.1:3000/health/ready >/dev/null 2>&1 || issues+=("api:not-ready")
-curl -fsS --max-time 5 http://127.0.0.1:5173/ >/dev/null 2>&1 || issues+=("web:unreachable")
+curl -fsS --max-time 5 "$WEB_HEALTH_URL" >/dev/null 2>&1 || issues+=("web:unreachable")
 # O build-agent (geração de APK) só existe no servidor MESTRE. Cobrá-lo numa
 # instalação de cliente deixava o watchdog em "degraded" PARA SEMPRE, por um
 # serviço que não deveria estar lá — e um alerta que nunca apaga é um alerta
