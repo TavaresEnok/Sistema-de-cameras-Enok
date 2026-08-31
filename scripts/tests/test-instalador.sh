@@ -203,6 +203,14 @@ if grep -qF 'local web_bind="${DRAC_WEB_BIND:-127.0.0.1}"' "$READINESS" \
 else
   nok 'readiness respeita o bind privado do painel' 'instalações atrás da Gateway seriam marcadas como bloqueadas mesmo saudáveis'
 fi
+if grep -qF 'where enabled = true and status =' "$READINESS" \
+  && grep -qF 'lower(coalesce("recordingVideoCodec"' "$READINESS" \
+  && grep -qF 'Todas as cameras ativas preservam o codec original' "$READINESS" \
+  && ! grep -qF 'Todas as cameras preferem H.265/HEVC' "$READINESS"; then
+  ok 'readiness ignora cameras desativadas e valida gravacao no codec original'
+else
+  nok 'readiness aplica a politica atual das cameras' 'cadastro desativado ou codec original voltaria a produzir alerta falso'
+fi
 
 if grep -qF 'MTX_WEBRTCICESERVERS2_0_USERNAME=AUTH_SECRET' "$RAIZ/infra/docker-compose.gateway.yml" \
   && grep -qF 'MTX_WEBRTCICESERVERS2_0_CLIENTONLY=true' "$RAIZ/infra/docker-compose.gateway.yml"; then

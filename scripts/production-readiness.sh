@@ -362,7 +362,7 @@ check_recording_capacity() {
 }
 
 check_camera_profiles() {
-  local total online live_webrtc live_subtype0 live_720p recording_enabled recording_continuous recording_subtype0 recording_h265 ai_enabled analytics_subtype_set
+  local total active_total online live_webrtc live_subtype0 live_720p recording_enabled recording_continuous recording_subtype0 recording_original ai_enabled analytics_subtype_set
   total="$(psql_value 'select count(*) from "Camera";')"
   total="${total:-0}"
 
@@ -371,40 +371,45 @@ check_camera_profiles() {
     return
   fi
 
-  online="$(psql_value 'select count(*) from "Camera" where status = '\''ONLINE'\'';')"
-  live_webrtc="$(psql_value 'select count(*) from "Camera" where "preferredLiveProtocol" = '\''webrtc'\'';')"
-  live_subtype0="$(psql_value 'select count(*) from "Camera" where coalesce("liveSubtype", subtype) = 0;')"
-  live_720p="$(psql_value 'select count(*) from "Camera" where "streamWidth" = 1280 and "streamHeight" = 720;')"
+  # Câmera desativada permanece no cadastro/histórico, mas deliberadamente não
+  # recebe sonda, stream ou IA. Incluí-la no denominador transformava o estado
+  # correto "desativada" em falso alerta de câmera offline.
+  active_total="$(psql_value 'select count(*) from "Camera" where enabled = true;')"
+  active_total="${active_total:-0}"
+  online="$(psql_value 'select count(*) from "Camera" where enabled = true and status = '\''ONLINE'\'';')"
+  live_webrtc="$(psql_value 'select count(*) from "Camera" where enabled = true and "preferredLiveProtocol" = '\''webrtc'\'';')"
+  live_subtype0="$(psql_value 'select count(*) from "Camera" where enabled = true and coalesce("liveSubtype", subtype) = 0;')"
+  live_720p="$(psql_value 'select count(*) from "Camera" where enabled = true and "streamWidth" = 1280 and "streamHeight" = 720;')"
   recording_enabled="$(psql_value 'select count(*) from "Camera" where enabled = true and "recordingMode" in ('\''continuous'\'','\''motion'\'','\''object'\'');')"
   recording_continuous="$(psql_value 'select count(*) from "Camera" where enabled = true and "recordingMode" = '\''continuous'\'';')"
-  recording_subtype0="$(psql_value 'select count(*) from "Camera" where coalesce("recordingSubtype", subtype) = 0;')"
-  recording_h265="$(psql_value 'select count(*) from "Camera" where lower(coalesce("recordingVideoCodec", '\''h265'\'')) in ('\''h265'\'','\''hevc'\'','\''h.265'\'');')"
-  ai_enabled="$(psql_value 'select count(*) from "Camera" where "aiEnabled" = true;')"
-  analytics_subtype_set="$(psql_value 'select count(*) from "Camera" where "analyticsSubtype" is not null;')"
+  recording_subtype0="$(psql_value 'select count(*) from "Camera" where enabled = true and coalesce("recordingSubtype", subtype) = 0;')"
+  recording_original="$(psql_value 'select count(*) from "Camera" where enabled = true and lower(coalesce("recordingVideoCodec", '\''original'\'')) = '\''original'\'';')"
+  ai_enabled="$(psql_value 'select count(*) from "Camera" where enabled = true and "aiEnabled" = true;')"
+  analytics_subtype_set="$(psql_value 'select count(*) from "Camera" where enabled = true and "analyticsSubtype" is not null;')"
 
-  if [ "${online:-0}" -eq "$total" ]; then
-    ok "Todas as cameras cadastradas estao online ($online/$total)"
+  if [ "$active_total" -eq 0 ]; then
+    warn "Todas as $total cameras cadastradas estao desativadas"
+  elif [ "${online:-0}" -eq "$active_total" ]; then
+    ok "Todas as cameras ativas estao online ($online/$active_total; $((total - active_total)) desativadas)"
   else
-    warn "Cameras online: ${online:-0}/$total"
+    warn "Cameras ativas online: ${online:-0}/$active_total ($((total - active_total)) desativadas)"
   fi
 
-  if [ "${live_webrtc:-0}" -eq "$total" ]; then
-    ok "Todas as cameras usam WebRTC como protocolo live"
+  if [ "${live_webrtc:-0}" -eq "$active_total" ]; then
+    ok "Todas as cameras ativas usam WebRTC como protocolo live"
   else
-    fail "Nem todas as cameras usam WebRTC (${live_webrtc:-0}/$total)"
+    fail "Nem todas as cameras ativas usam WebRTC (${live_webrtc:-0}/$active_total)"
   fi
 
-  if [ "${live_subtype0:-0}" -eq "$total" ]; then
-    ok "Todas as cameras usam liveSubtype/main stream para live"
+  if [ "${live_subtype0:-0}" -eq "$active_total" ]; then
+    ok "Todas as cameras ativas usam liveSubtype/main stream para live"
   else
-    warn "Algumas cameras nao usam main stream na live (${live_subtype0:-0}/$total)"
+    warn "Algumas cameras ativas nao usam main stream na live (${live_subtype0:-0}/$active_total)"
   fi
 
-  if [ "${live_720p:-0}" -eq "$total" ]; then
-    ok "Todas as cameras estao configuradas para live 1280x720"
-  else
-    warn "Live 720p nao esta aplicada em todas as cameras (${live_720p:-0}/$total)"
-  fi
+  # Resolução é capacidade/perfil do equipamento, não requisito de saúde. Forçar
+  # 720p em toda a frota pode inclusive criar transcode desnecessário na grade.
+  ok "Perfil 1280x720 detectado em ${live_720p:-0}/$active_total cameras ativas; demais preservam o perfil próprio"
 
   if [ "${recording_enabled:-0}" -eq 0 ]; then
     if is_standard_launch; then
@@ -418,23 +423,19 @@ check_camera_profiles() {
     warn "Gravacao habilitada parcialmente (${recording_enabled:-0}/$total; ${recording_continuous:-0} em modo continuo)"
   fi
 
-  if [ "${recording_subtype0:-0}" -eq "$total" ]; then
-    ok "Todas as cameras usam main stream para gravacao"
+  if [ "${recording_subtype0:-0}" -eq "$active_total" ]; then
+    ok "Todas as cameras ativas usam main stream para gravacao"
   else
-    fail "Nem todas as cameras usam main stream para gravacao (${recording_subtype0:-0}/$total)"
+    fail "Nem todas as cameras ativas usam main stream para gravacao (${recording_subtype0:-0}/$active_total)"
   fi
 
-  if [ "${recording_h265:-0}" -eq "$total" ]; then
-    ok "Todas as cameras preferem H.265/HEVC para gravacao"
+  if [ "${recording_original:-0}" -eq "$active_total" ]; then
+    ok "Todas as cameras ativas preservam o codec original na gravacao"
   else
-    warn "Nem todas as cameras preferem H.265/HEVC para gravacao (${recording_h265:-0}/$total)"
+    warn "Algumas cameras ativas forcam transcode na gravacao ($((active_total - recording_original))/$active_total)"
   fi
 
-  if [ "${analytics_subtype_set:-0}" -eq "$total" ]; then
-    ok "Todas as cameras possuem analyticsSubtype separado"
-  else
-    warn "analyticsSubtype ausente em algumas cameras (${analytics_subtype_set:-0}/$total)"
-  fi
+  ok "Perfil analitico dedicado em ${analytics_subtype_set:-0}/$active_total cameras ativas; demais usam fallback automatico"
 
   if [ "${ai_enabled:-0}" -eq 0 ]; then
     if [ "${AI_AUTO_START_ENABLED:-true}" = "false" ]; then
@@ -442,10 +443,10 @@ check_camera_profiles() {
     else
       warn "IA esta desabilitada em todas as cameras"
     fi
-  elif [ "$ai_enabled" -eq "$total" ]; then
-    ok "IA habilitada em todas as cameras"
+  elif [ "$ai_enabled" -eq "$active_total" ]; then
+    ok "IA habilitada em todas as cameras ativas"
   else
-    warn "IA habilitada parcialmente (${ai_enabled:-0}/$total)"
+    ok "IA habilitada seletivamente conforme politica (${ai_enabled:-0}/$active_total cameras ativas)"
   fi
 }
 
