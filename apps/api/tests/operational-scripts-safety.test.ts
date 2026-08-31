@@ -10,6 +10,7 @@ const apiDockerfile = readFileSync(resolve(repositoryRoot, 'apps/api/Dockerfile'
 const apiEntrypoint = readFileSync(resolve(repositoryRoot, 'apps/api/docker-entrypoint.sh'), 'utf8');
 const compose = readFileSync(resolve(repositoryRoot, 'infra/docker-compose.yml'), 'utf8');
 const readinessScript = readFileSync(resolve(repositoryRoot, 'scripts/production-readiness.sh'), 'utf8');
+const promoteScript = readFileSync(resolve(repositoryRoot, 'scripts/promover-release.sh'), 'utf8');
 
 test('API aplica migrações antes de iniciar mesmo fora do script oficial', () => {
   assert.match(apiDockerfile, /docker-entrypoint\.sh/);
@@ -72,4 +73,10 @@ test('restore recusa traversal/links e preserva banco e storage para rollback', 
   assert.match(restoreScript, /storage-before/);
   assert.match(restoreScript, /ROLLBACK INCOMPLETO/);
   assert.match(restoreScript, /api web drac-central ai-service camera-worker/);
+});
+
+test('promoção vincula o hash do instalador ao mesmo artefato aprovado', () => {
+  assert.match(promoteScript, /DRAC_CENTRAL_INSTALLER_SHA256/);
+  assert.match(promoteScript, /\^\[0-9a-fA-F\]\{64\}\$/);
+  assert.match(promoteScript, /"installerSha256": installer_sha256/);
 });

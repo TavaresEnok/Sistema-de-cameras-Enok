@@ -49,6 +49,7 @@ done
 # Lê a configuração do infra/.env sem executá-lo.
 env_get() { sed -nE "s/^$1=(.*)$/\1/p" "$RAIZ/infra/.env" 2>/dev/null | tail -n 1; }
 ADMIN_TOKEN="${DRAC_CENTRAL_ADMIN_TOKEN:-$(env_get DRAC_CENTRAL_ADMIN_TOKEN)}"
+INSTALLER_SHA256="${DRAC_CENTRAL_INSTALLER_SHA256:-$(env_get DRAC_CENTRAL_INSTALLER_SHA256)}"
 
 # `CLOUD_API_URL` é o endereço que os CONTAINERES usam (ex.: http://drac-central:9765,
 # nome da rede Docker). Este script roda no HOST, onde esse nome não resolve.
@@ -70,6 +71,12 @@ fi
 # puro — e foi o que aconteceu na primeira execução real deste script.
 titulo "Conferindo o acesso à Central"
 [ -n "$ADMIN_TOKEN" ] || { erro "Sem DRAC_CENTRAL_ADMIN_TOKEN — é o token administrativo da Central."; exit 1; }
+if ! printf '%s' "$INSTALLER_SHA256" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+  erro "Sem DRAC_CENTRAL_INSTALLER_SHA256 válido (64 caracteres hexadecimais)."
+  erro "A release precisa provar exatamente qual script de instalação foi aprovado."
+  exit 1
+fi
+INSTALLER_SHA256="$(printf '%s' "$INSTALLER_SHA256" | tr '[:upper:]' '[:lower:]')"
 log "Central: $CENTRAL_URL"
 if ! curl -fsS --max-time 10 -H "Authorization: Bearer $ADMIN_TOKEN" \
      "${CENTRAL_URL%/}/api/admin/releases" >/dev/null 2>&1; then
@@ -142,12 +149,13 @@ REPO_URL="$(git -C "$RAIZ" remote get-url origin 2>/dev/null | sed -E 's#^git@([
 AGORA="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # `python3` só para montar JSON com escape correto — notas têm aspas e acentos.
-CORPO="$(python3 - "$COMMIT" "$REPO_URL" "$NOTAS" "$AGORA" "$GATE_LIMPA" "$GATE_MATRIZ" <<'PY'
+CORPO="$(python3 - "$COMMIT" "$REPO_URL" "$INSTALLER_SHA256" "$NOTAS" "$AGORA" "$GATE_LIMPA" "$GATE_MATRIZ" <<'PY'
 import json, sys
-commit, repo, notas, agora, limpa, matriz = sys.argv[1:7]
+commit, repo, installer_sha256, notas, agora, limpa, matriz = sys.argv[1:8]
 print(json.dumps({
     "commit": commit,
     "repositoryUrl": repo or None,
+    "installerSha256": installer_sha256,
     "notas": notas or None,
     "gate": {
         "instalacaoLimpa": limpa == "true",
