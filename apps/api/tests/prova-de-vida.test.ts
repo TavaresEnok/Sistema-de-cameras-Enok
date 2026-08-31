@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decidirEstadoDaCamera, devoSondarRtsp } from '../src/cameras/helpers/prova-de-vida.helper';
+import {
+  decidirEstadoDaCamera,
+  deveManterOnlineDuranteFalhaTransitoria,
+  devoSondarRtsp,
+} from '../src/cameras/helpers/prova-de-vida.helper';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Relatado em 14/08/2026, com print: imagem na tela e rótulo "Offline".
@@ -86,8 +90,37 @@ test('ONVIF fechado explica que o vídeo respondeu — não some com a informaç
   const v = decidirEstadoDaCamera({
     transmitindoAgora: false, rtspAlcancavel: true, autenticacaoRtspOk: true, temCredencial: true, onvifAlcancavel: false,
   });
+  assert.equal(v.status, 'ONLINE', 'ONVIF controla recursos; RTSP autenticado prova que o vídeo está online');
   assert.equal(v.motivo, 'sem-onvif');
   assert.match(v.explicacao, /respondeu no vídeo/i);
+});
+
+test('uma recusa RTSP transitória preserva ONLINE sem esconder falha persistente', () => {
+  const agora = Date.parse('2026-08-31T14:00:00Z');
+  const base = {
+    motivo: 'credencial-recusada' as const,
+    statusAnterior: 'ONLINE' as const,
+    toleranciaMs: 15 * 60_000,
+    agoraMs: agora,
+  };
+  assert.equal(deveManterOnlineDuranteFalhaTransitoria({
+    ...base,
+    lastSeenAt: new Date(agora - 6 * 60_000),
+  }), true, 'a primeira oscilação ganha reteste');
+  assert.equal(deveManterOnlineDuranteFalhaTransitoria({
+    ...base,
+    lastSeenAt: new Date(agora - 16 * 60_000),
+  }), false, 'falha sustentada ultrapassa a janela e vira offline');
+  assert.equal(deveManterOnlineDuranteFalhaTransitoria({
+    ...base,
+    motivo: 'sem-rtsp',
+    lastSeenAt: new Date(agora - 60_000),
+  }), false, 'porta fechada é queda real, sem tolerância');
+  assert.equal(deveManterOnlineDuranteFalhaTransitoria({
+    ...base,
+    statusAnterior: 'OFFLINE',
+    lastSeenAt: new Date(agora - 60_000),
+  }), false, 'uma câmera já offline precisa de prova positiva para voltar');
 });
 
 test('não sondar quem já está transmitindo — a sonda é a segunda sessão', () => {

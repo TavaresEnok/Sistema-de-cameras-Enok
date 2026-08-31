@@ -71,7 +71,11 @@ import {
   GRID_LIVE_TARGET_FPS,
   resolveGridLiveProfile,
 } from '../camera-stream/helpers/live-delivery-profile.helper';
-import { decidirEstadoDaCamera, devoSondarRtsp } from './helpers/prova-de-vida.helper';
+import {
+  decidirEstadoDaCamera,
+  deveManterOnlineDuranteFalhaTransitoria,
+  devoSondarRtsp,
+} from './helpers/prova-de-vida.helper';
 import { retencaoEfetiva } from '../recordings/helpers/retencao-efetiva.helper';
  
 
@@ -2580,9 +2584,23 @@ export class CamerasService implements OnApplicationBootstrap {
         autenticacaoRtspOk: rtspAuthOk,
         temCredencial: Boolean(camera.username),
       });
-      const status: CameraStatus =
-        veredicto.status === 'ONLINE' ? CameraStatus.ONLINE : CameraStatus.OFFLINE;
-      if (veredicto.status === 'OFFLINE' && previousStatus === CameraStatus.ONLINE) {
+      const provaConfirmouOnline = veredicto.status === 'ONLINE';
+      const toleranciaAuthMs = envNumber('HEALTH_RTSP_AUTH_FAILURE_GRACE_MINUTES', 15, {
+        min: 0,
+        max: 120,
+      }) * 60_000;
+      const mantendoDuranteFalhaTransitoria = deveManterOnlineDuranteFalhaTransitoria({
+        motivo: veredicto.motivo,
+        statusAnterior: previousStatus === CameraStatus.ONLINE ? 'ONLINE' : 'OFFLINE',
+        lastSeenAt: camera.lastSeenAt,
+        toleranciaMs: toleranciaAuthMs,
+      });
+      const status: CameraStatus = provaConfirmouOnline || mantendoDuranteFalhaTransitoria
+        ? CameraStatus.ONLINE
+        : CameraStatus.OFFLINE;
+      if (mantendoDuranteFalhaTransitoria) {
+        this.logger.debug(`${camera.name}: recusa RTSP transitória; mantendo ONLINE até o próximo reteste.`);
+      } else if (veredicto.status === 'OFFLINE' && previousStatus === CameraStatus.ONLINE) {
         this.logger.warn(`${camera.name}: ONLINE → OFFLINE — ${veredicto.explicacao}`);
       }
 
@@ -2602,7 +2620,10 @@ export class CamerasService implements OnApplicationBootstrap {
           detectedFps: detectedStream?.fps ?? camera.detectedFps,
           detectedBitrateKbps: detectedStream?.bitrateKbps ?? camera.detectedBitrateKbps,
           status,
-          lastSeenAt: status === CameraStatus.ONLINE ? new Date() : undefined,
+          // Preservar ONLINE durante a tolerância não pode renovar a prova de
+          // vida, ou a janela nunca venceria se a senha estivesse realmente
+          // errada. Só uma prova positiva move o relógio.
+          lastSeenAt: provaConfirmouOnline ? new Date() : undefined,
         },
       });
 

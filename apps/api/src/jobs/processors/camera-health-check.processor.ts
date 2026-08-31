@@ -101,7 +101,10 @@ export class CameraHealthCheckProcessor extends WorkerHost {
         try {
           const result = await this.camerasService.getStatus(cam.id);
           if (result.status === CameraStatus.ONLINE) {
-            this.logger.debug(`Heartbeat renovado por reteste ativo: ${cam.name} (${cam.id})`);
+            // O reteste pode preservar ONLINE durante uma falha transitória sem
+            // renovar lastSeenAt. A mensagem não deve afirmar uma prova de vida
+            // que o equipamento ainda não forneceu.
+            this.logger.debug(`Reteste ativo concluído: ${cam.name} (${cam.id})`);
             return;
           }
         } catch (error) {

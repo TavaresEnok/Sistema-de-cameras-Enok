@@ -58,6 +58,14 @@ export type VeredictoDeVida = {
   explicacao: string;
 };
 
+export type ToleranciaFalhaTransitoria = {
+  motivo: VeredictoDeVida['motivo'];
+  statusAnterior: CameraStatusSimples;
+  lastSeenAt?: Date | string | null;
+  agoraMs?: number;
+  toleranciaMs: number;
+};
+
 /**
  * Decide o estado a partir das provas disponíveis.
  *
@@ -94,7 +102,10 @@ export function decidirEstadoDaCamera(provas: ProvasDeVida): VeredictoDeVida {
 
   if (provas.onvifAlcancavel !== true) {
     return {
-      status: 'OFFLINE',
+      // ONVIF é controle/descoberta. Se a autenticação RTSP entregou metadados
+      // de vídeo, a câmera está online; perder PTZ/eventos não pode apagar o
+      // estado do vídeo ao vivo.
+      status: provas.autenticacaoRtspOk === true ? 'ONLINE' : 'OFFLINE',
       motivo: 'sem-onvif',
       explicacao: 'A câmera respondeu no vídeo, mas não na porta de controle (ONVIF).',
     };
@@ -105,6 +116,28 @@ export function decidirEstadoDaCamera(provas: ProvasDeVida): VeredictoDeVida {
     motivo: 'sondas-ok',
     explicacao: 'A câmera respondeu a todas as verificações.',
   };
+}
+
+/**
+ * Uma única recusa de autenticação não derruba imediatamente uma câmera que
+ * estava saudável. DVRs/NVRs frequentemente devolvem 401/503 quando o limite
+ * de sessões está momentaneamente ocupado; o reteste seguinte costuma passar.
+ *
+ * A tolerância NÃO renova `lastSeenAt`: falha persistente ultrapassa a janela
+ * e vira OFFLINE normalmente. Porta RTSP fechada também nunca ganha tolerância.
+ */
+export function deveManterOnlineDuranteFalhaTransitoria(input: ToleranciaFalhaTransitoria): boolean {
+  if (input.motivo !== 'credencial-recusada' || input.statusAnterior !== 'ONLINE') return false;
+  const visto = input.lastSeenAt instanceof Date
+    ? input.lastSeenAt.getTime()
+    : Date.parse(String(input.lastSeenAt ?? ''));
+  const agora = input.agoraMs ?? Date.now();
+  const tolerancia = Number(input.toleranciaMs);
+  if (!Number.isFinite(visto) || !Number.isFinite(agora) || !Number.isFinite(tolerancia) || tolerancia <= 0) {
+    return false;
+  }
+  const idade = agora - visto;
+  return idade >= 0 && idade <= tolerancia;
 }
 
 /**
