@@ -180,6 +180,42 @@ else
   falha "segredo TURN pode ser versionado" "mantenha apenas turnserver.conf.example e ignore o arquivo real"
 fi
 
+# ─── 6. Central aceita agentes privados sem abrir o painel aos tenants ──────
+secao '6. Fronteira privada da Central'
+
+CENTRAL_NGINX="$INFRA/management/nginx/central.conf"
+antes_do_primeiro_location="$(awk '/^[[:space:]]*location[[:space:]]/ { exit } { print }' "$CENTRAL_NGINX")"
+if printf '%s\n' "$antes_do_primeiro_location" | grep -q 'deny all'; then
+  falha "regra global bloqueia também os agentes" "controle de acesso deve ficar em cada location; o tenant precisa alcançar /api/agent/"
+else
+  ok "nenhum deny global intercepta os endpoints de agente"
+fi
+
+bloco_agente="$(awk '
+  /location \^~ \/api\/agent\// { dentro=1 }
+  dentro { print }
+  dentro && /^[[:space:]]*}/ { exit }
+' "$CENTRAL_NGINX")"
+if printf '%s\n' "$bloco_agente" | grep -q 'allow 10\.10\.0\.0/24;' \
+   && printf '%s\n' "$bloco_agente" | grep -q 'deny all;'; then
+  ok "agentes da rede privada entram somente no endpoint autenticado"
+else
+  falha "location de agente sem ACL explícita" "permita 10.10.0.0/24 apenas em /api/agent/ e mantenha deny all"
+fi
+
+bloco_painel="$(awk '
+  /^[[:space:]]*location \/ \{/ { dentro=1 }
+  dentro { print }
+  dentro && /^[[:space:]]*}/ { exit }
+' "$CENTRAL_NGINX")"
+if printf '%s\n' "$bloco_painel" | grep -q 'allow 10\.10\.0\.10;' \
+   && printf '%s\n' "$bloco_painel" | grep -q 'allow 10\.10\.0\.11;' \
+   && printf '%s\n' "$bloco_painel" | grep -q 'deny all;'; then
+  ok "painel administrativo continua restrito à Gateway/Management"
+else
+  falha "painel da Central sem ACL fechada" "o location / não pode ficar acessível diretamente aos tenants"
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mChecks estáticos de infraestrutura: todos passaram.\033[0m\n\n'
