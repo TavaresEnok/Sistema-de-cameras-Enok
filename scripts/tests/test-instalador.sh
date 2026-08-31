@@ -195,6 +195,15 @@ else
   nok 'separa bind privado de origem pública' 'o instalador voltou a confundir IP interno e URL externa'
 fi
 
+READINESS="$RAIZ/scripts/production-readiness.sh"
+if grep -qF 'local web_bind="${DRAC_WEB_BIND:-127.0.0.1}"' "$READINESS" \
+  && grep -qF 'check_http "Web local" "$web_url"' "$READINESS" \
+  && ! grep -qF 'check_http "Web local" "http://127.0.0.1:5173/"' "$READINESS"; then
+  ok 'readiness testa o bind real do painel em vez de acusar falso bloqueio no loopback'
+else
+  nok 'readiness respeita o bind privado do painel' 'instalações atrás da Gateway seriam marcadas como bloqueadas mesmo saudáveis'
+fi
+
 if grep -qF 'MTX_WEBRTCICESERVERS2_0_USERNAME=AUTH_SECRET' "$RAIZ/infra/docker-compose.gateway.yml" \
   && grep -qF 'MTX_WEBRTCICESERVERS2_0_CLIENTONLY=true' "$RAIZ/infra/docker-compose.gateway.yml"; then
   ok 'MediaMTX recebe credenciais TURN temporárias no navegador'
