@@ -62,6 +62,10 @@ export class CameraHealthCheckProcessor extends WorkerHost {
 
     const staleCameras = await this.prisma.camera.findMany({
       where: {
+        // Câmera desativada não participa da operação. Sondá-la desperdiçava
+        // uma sessão do DVR e podia até marcá-la ONLINE novamente, embora a
+        // interface corretamente não a exibisse.
+        enabled: true,
         status: CameraStatus.ONLINE,
         lastSeenAt: {
           lt: staleThreshold,
@@ -150,6 +154,10 @@ export class CameraHealthCheckProcessor extends WorkerHost {
     const maxPerRun = Math.max(1, this.configService.get<number>('healthAutoRemediationMaxPerRun') ?? 5);
     const degraded = await this.prisma.camera.findMany({
       where: {
+        // Não consumir a cota de auto-remediação com ativos deliberadamente
+        // desativados. Na instalação Grupo Flash, 3 câmeras desativadas
+        // ocupavam 3 das 5 tentativas de cada ciclo.
+        enabled: true,
         status: {
           in: [CameraStatus.OFFLINE, CameraStatus.ERROR, CameraStatus.UNKNOWN],
         },

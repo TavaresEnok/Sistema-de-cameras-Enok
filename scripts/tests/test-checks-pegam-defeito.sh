@@ -25,6 +25,7 @@ copia_limpa() {
   local t="$1"
   mkdir -p "$t/scripts/tests" "$t/infra" "$t/apps/api/prisma"
   cp "$RAIZ/infra/docker-compose.yml" "$RAIZ/infra/docker-compose.prod.yml" "$RAIZ/infra/.env.example" "$t/infra/"
+  cp -r "$RAIZ/infra/gateway" "$t/infra/"
   cp "$RAIZ/scripts/install-drac.sh" "$t/scripts/"
   cp "$RAIZ/scripts/tests/test-compose-estatico.sh" "$t/scripts/tests/"
   cp "$RAIZ/apps/api/prisma/schema.prisma" "$t/apps/api/prisma/"
@@ -92,6 +93,12 @@ exige_reprovacao 'bind 0.0.0.0 indevido no instalador é pego' \
 exige_reprovacao 'model sem migração é pego' \
   'sem migração que crie a tabela' \
   "printf '\nmodel TabelaFantasma {\n  id String @id\n}\n' >> apps/api/prisma/schema.prisma"
+
+# 5) Tag móvel em serviço da borda: `up -d` pode trocar o binário público sem
+#    qualquer mudança no Git. O defeito só aparece na próxima recriação.
+exige_reprovacao 'imagem móvel na Gateway é pega' \
+  'Gateway usa tag móvel' \
+  "sed -i 's|nginx:1.27-alpine@sha256:[a-f0-9]*|nginx:1.27-alpine|' infra/gateway/docker-compose.yml"
 
 printf '\n'
 if [ "$falhas" -eq 0 ]; then

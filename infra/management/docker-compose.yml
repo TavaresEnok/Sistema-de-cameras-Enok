@@ -151,6 +151,39 @@ services:
     networks:
       - central-net
 
+  central-backup-verify:
+    image: ${CENTRAL_POSTGRES_IMAGE:?CENTRAL_POSTGRES_IMAGE is required}
+    container_name: ajustcam-central-backup-verify
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: central-postgres
+      POSTGRES_USER: ${CENTRAL_POSTGRES_USER:-drac_central}
+      POSTGRES_PASSWORD: ${CENTRAL_POSTGRES_PASSWORD:?CENTRAL_POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${CENTRAL_POSTGRES_DB:-drac_central}
+      BACKUP_VERIFY_INTERVAL_SECONDS: ${BACKUP_VERIFY_INTERVAL_SECONDS:-86400}
+      BACKUP_VERIFY_RETRY_SECONDS: ${BACKUP_VERIFY_RETRY_SECONDS:-300}
+      BACKUP_VERIFY_INITIAL_DELAY_SECONDS: ${BACKUP_VERIFY_INITIAL_DELAY_SECONDS:-900}
+    volumes:
+      - ./backups/postgres:/backups:ro
+      - ./scripts/verify-central-backup.sh:/scripts/verify-central-backup.sh:ro
+    command: ["/bin/sh", "/scripts/verify-central-backup.sh"]
+    depends_on:
+      central-postgres:
+        condition: service_healthy
+      central-backup:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/last-ok && { test ! -f /tmp/last-failed || test /tmp/last-ok -nt /tmp/last-failed; }"]
+      interval: 5m
+      timeout: 5s
+      retries: 3
+      start_period: 20m
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - central-net
+
   prometheus:
     image: ${PROMETHEUS_IMAGE:?PROMETHEUS_IMAGE is required}
     container_name: ajustcam-prometheus

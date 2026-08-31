@@ -1,0 +1,8 @@
+# Contém o segredo HMAC usado para emitir credenciais TURN temporárias.
+coturn/turnserver.conf
+
+# Certificados e chaves são provisionados na VM, nunca no repositório.
+nginx/ssl/
+
+# Dados de execução.
+logs/

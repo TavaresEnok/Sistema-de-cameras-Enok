@@ -2,7 +2,9 @@ name: ajustcam-gateway
 
 services:
   nginx:
-    image: nginx:1.27-alpine
+    # Digest validado na Gateway em 31/08/2026. Evita uma atualização
+    # silenciosa do registry alterar a borda pública durante um simples `up`.
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     container_name: ajustcam-gateway-nginx
     restart: unless-stopped
     ulimits:
@@ -21,7 +23,7 @@ services:
       - gateway-net
 
   coturn:
-    image: coturn/coturn:latest
+    image: coturn/coturn:latest@sha256:aa68aab64a3b929d57fc2924c98ea447bf996cf8dade2508e7b71eaf23f1f14e
     container_name: ajustcam-gateway-coturn
     restart: unless-stopped
     network_mode: host
@@ -32,7 +34,7 @@ services:
     command: ["-c", "/etc/coturn/turnserver.conf"]
 
   srs:
-    image: ossrs/srs:5
+    image: ossrs/srs:5@sha256:b429bdb565f0a533e60634856760a500a1b673f8cadce072b2a2eb2674cd7b31
     container_name: ajustcam-gateway-srs
     restart: unless-stopped
     # A imagem inicia `conf/docker.conf` por padrão. Sem indicar o arquivo, o

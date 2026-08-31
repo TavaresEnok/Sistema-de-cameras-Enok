@@ -147,6 +147,39 @@ if [ -f "$SCHEMA" ] && [ -d "$MIGRACOES" ]; then
   fi
 fi
 
+# ─── 5. A Gateway pública é reproduzível e falha fechada ───────────────────
+secao '5. Gateway pública reproduzível e fechada'
+
+GATEWAY="$INFRA/gateway"
+gateway_saida="$(docker compose -f "$GATEWAY/docker-compose.yml" config 2>&1)"
+if [ $? -ne 0 ] || printf '%s' "$gateway_saida" | grep -qi 'error'; then
+  falha "compose da Gateway inválido" "$(printf '%s' "$gateway_saida" | head -3)"
+else
+  ok "compose da Gateway validou"
+fi
+
+imagens_moveis="$(awk '/^[[:space:]]+image:/ { print $2 }' "$GATEWAY/docker-compose.yml" | grep -v '@sha256:' || true)"
+if [ -z "$imagens_moveis" ]; then
+  ok "imagens públicas fixadas por digest"
+else
+  falha "Gateway usa tag móvel" "uma recriação poderia trocar o binário sem revisão: $imagens_moveis"
+fi
+
+if [ -f "$GATEWAY/nginx/conf.d/gateway.conf" ] \
+   && ! grep -Rqs 'tenant_backend\|proxy_pass[[:space:]]\+http://\$' "$GATEWAY/nginx"; then
+  ok "tenant só é roteado por server_name explícito"
+else
+  falha "roteamento dinâmico ou configuração fora de conf.d" "Host desconhecido deve falhar fechado, sem escolher backend por variável"
+fi
+
+if [ ! -e "$GATEWAY/coturn/turnserver.conf" ] \
+   && [ -f "$GATEWAY/coturn/turnserver.conf.example" ] \
+   && grep -q '^coturn/turnserver.conf$' "$GATEWAY/.gitignore"; then
+  ok "segredo TURN não está na árvore versionável"
+else
+  falha "segredo TURN pode ser versionado" "mantenha apenas turnserver.conf.example e ignore o arquivo real"
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mChecks estáticos de infraestrutura: todos passaram.\033[0m\n\n'

@@ -9,7 +9,8 @@ Serviços:
 - Portainer separado em `10.10.0.11:9443`;
 - Prometheus, Grafana (`10.10.0.11:3001`), node-exporter, cAdvisor e blackbox-exporter;
 - dashboard provisionado com CPU, memória, disco, containers e disponibilidade;
-- backup diário verificado do banco e dos arquivos da Central;
+- backup diário do banco e dos arquivos da Central, com restauração real do
+  dump em banco temporário e conferência das tabelas críticas;
 - health-check por timer do systemd.
 
 Nenhum banco, socket Docker, Prometheus ou API interna deve receber DNAT público.

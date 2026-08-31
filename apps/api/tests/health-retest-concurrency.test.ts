@@ -59,3 +59,19 @@ test('o teto tem limite superior — paralelismo livre derruba o DVR', () => {
   assert.ok(m, 'o teto precisa de um máximo');
   assert.ok(Number(m[1]) <= 16, 'teto alto demais reintroduz a tempestade de sondas contra o equipamento do cliente');
 });
+
+test('câmera desativada não abre sessão de reteste no DVR', () => {
+  const staleQuery = FONTE.slice(
+    FONTE.indexOf('const staleCameras ='),
+    FONTE.indexOf('if (staleCameras.length'),
+  );
+  assert.match(staleQuery, /where:\s*\{[\s\S]*?enabled:\s*true/);
+});
+
+test('câmera desativada não consome a cota limitada de auto-remediação', () => {
+  const degradedQuery = FONTE.slice(
+    FONTE.indexOf('const degraded ='),
+    FONTE.indexOf('if (degraded.length'),
+  );
+  assert.match(degradedQuery, /where:\s*\{[\s\S]*?enabled:\s*true/);
+});

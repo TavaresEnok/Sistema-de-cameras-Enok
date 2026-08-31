@@ -1,0 +1,43 @@
+# Copie para turnserver.conf, substitua CHANGE_ME por um segredo aleatório
+# forte e mantenha o arquivo em 0640 (proprietário da implantação, grupo
+# nogroup/GID 65534). Nunca versione o arquivo real.
+listening-port=3478
+tls-listening-port=5349
+listening-ip=10.10.0.10
+relay-ip=10.10.0.10
+external-ip=177.104.156.25/10.10.0.10
+min-port=49152
+max-port=49252
+
+fingerprint
+use-auth-secret
+static-auth-secret=CHANGE_ME_GENERATE_AT_INSTALL_TIME
+realm=ajustcam.ajustconsulting.com.br
+stale-nonce=600
+
+cert=/etc/coturn/ssl/default.crt
+pkey=/etc/coturn/ssl/default.key
+no-tlsv1
+no-tlsv1_1
+
+# 1.500.000 bytes/s = aproximadamente 12 Mbit/s por sessão TURN.
+max-bps=1500000
+total-quota=200
+user-quota=20
+
+# Impede o Coturn de virar um pivô para redes privadas. O único destino
+# privado permitido é a rede das instalações AjustCam.
+denied-peer-ip=0.0.0.0-9.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+allowed-peer-ip=10.10.0.0-10.10.0.255
+
+no-cli
+no-multicast-peers
+no-loopback-peers
+log-file=stdout
+simple-log
