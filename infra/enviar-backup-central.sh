@@ -1,7 +1,7 @@
 #!/bin/sh
 # ── ENVIA A CÓPIA DE SEGURANÇA PARA A CENTRAL ───────────────────────────────
 #
-# O buraco que isto fecha (25/08/2026): cada instalação fazia backup diário do
+# O buraco que isto fecha (25/08/2026): cada instalação fazia backup local do
 # banco e guardava no MESMO disco dos dados. Isso protege contra apagar uma
 # tabela por engano e NÃO protege contra o disco falhar — que é o que de fato
 # acontece em servidor rodando 24 horas. Nenhuma instalação mandava cópia para
@@ -19,7 +19,7 @@ set -eu
 CENTRAL="${CLOUD_API_URL:-}"
 ID="${CLOUD_INSTALLATION_ID:-}"
 CHAVE="${CLOUD_LICENSE_KEY:-}"
-INTERVALO="${BACKUP_UPLOAD_INTERVAL_SECONDS:-86400}"
+INTERVALO="${BACKUP_UPLOAD_INTERVAL_SECONDS:-604800}"
 PASTA="${BACKUP_DIR:-/backups}"
 
 if [ -z "$CENTRAL" ] || [ -z "$ID" ] || [ -z "$CHAVE" ]; then
@@ -56,7 +56,7 @@ enviar() {
 }
 
 echo "envio de backup para a Central a cada ${INTERVALO}s (instalação: $ID)"
-# Primeira tentativa com atraso: dá tempo de o backup do dia existir.
+# Primeira tentativa com atraso: dá tempo de o backup mais recente existir.
 sleep 120
 while true; do
   enviar || true

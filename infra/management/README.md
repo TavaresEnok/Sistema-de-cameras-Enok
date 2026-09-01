@@ -9,7 +9,7 @@ Serviços:
 - Portainer separado em `10.10.0.11:9443`;
 - Prometheus, Grafana (`10.10.0.11:3001`), node-exporter, cAdvisor e blackbox-exporter;
 - dashboard provisionado com CPU, memória, disco, containers e disponibilidade;
-- backup diário do banco e dos arquivos da Central, com restauração real do
+- backup semanal do banco e dos arquivos da Central, com restauração real do
   dump em banco temporário e conferência das tabelas críticas;
 - health-check por timer do systemd.
 

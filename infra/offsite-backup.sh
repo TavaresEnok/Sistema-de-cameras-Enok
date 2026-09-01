@@ -2,7 +2,7 @@
 set -eu
 
 remote="${OFFSITE_BACKUP_REMOTE:-}"
-interval="${OFFSITE_BACKUP_INTERVAL_SECONDS:-86400}"
+interval="${OFFSITE_BACKUP_INTERVAL_SECONDS:-604800}"
 retention_days="${OFFSITE_BACKUP_RETENTION_DAYS:-90}"
 include_recordings="${OFFSITE_INCLUDE_RECORDINGS:-false}"
 

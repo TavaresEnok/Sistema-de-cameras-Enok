@@ -5189,7 +5189,7 @@
           ? `<table class="tbl"><thead><tr><th>arquivo</th><th>tamanho</th><th>recebida</th><th></th></tr></thead><tbody>${linhas}</tbody></table>
              <p class="panel-subtitle" style="margin-top:10px">Guarda as ${d.manter} mais recentes. Contém a configuração e os registros — não o vídeo.</p>`
           : `<p>Esta instalação ainda não enviou nenhuma cópia.</p>
-             <p class="panel-subtitle" style="margin-top:8px">O envio é diário e automático. Se continuar vazio, confira o container <code>vms-backup-upload</code> na máquina dela.</p>`;
+             <p class="panel-subtitle" style="margin-top:8px">O envio é semanal e automático. Se continuar vazio, confira o container <code>vms-backup-upload</code> na máquina dela.</p>`;
         document.querySelector('#confirm-title').textContent = `Cópias de segurança — ${id}`;
         document.querySelector('#confirm-copy').innerHTML = corpo;
         const btn = document.querySelector('#confirm-apply');

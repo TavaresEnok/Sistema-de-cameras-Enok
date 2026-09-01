@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-interval="${CENTRAL_BACKUP_INTERVAL_SECONDS:-86400}"
+interval="${CENTRAL_BACKUP_INTERVAL_SECONDS:-604800}"
 retention_days="${CENTRAL_BACKUP_RETENTION_DAYS:-30}"
 mkdir -p /backups
 

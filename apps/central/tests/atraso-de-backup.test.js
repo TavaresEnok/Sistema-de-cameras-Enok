@@ -4,8 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { avaliarAtrasoDeBackup, explicarAtraso } = require('../src/atraso-de-backup');
 
-// A Vibe ficou de 19/08 a 23/08 sem nenhuma cópia — quatro dias — e ninguém
-// soube. Backup que falha em silêncio é o mesmo que não ter backup.
+// A política é semanal: sete dias sem nova cópia ainda estão dentro do ciclo;
+// o oitavo dia indica que uma execução foi perdida.
 
 const DIA = 86400000;
 const AGORA = Date.parse('2026-08-25T12:00:00Z');
@@ -13,18 +13,18 @@ const haDias = (d) => new Date(AGORA - d * DIA).toISOString();
 
 test('em dia não alarma', () => {
   assert.equal(avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(0), agoraMs: AGORA }).nivel, 'ok');
-  assert.equal(avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(1), agoraMs: AGORA }).nivel, 'ok');
+  assert.equal(avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(7), agoraMs: AGORA }).nivel, 'ok');
 });
 
-test('O CASO REAL: 4 dias sem cópia vira alerta', () => {
-  const a = avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(4), agoraMs: AGORA });
+test('oitavo dia sem cópia vira alerta', () => {
+  const a = avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(8), agoraMs: AGORA });
   assert.equal(a.nivel, 'atencao');
-  assert.equal(a.dias, 4);
+  assert.equal(a.dias, 8);
 });
 
 test('dois degraus, porque as causas são diferentes', () => {
-  assert.equal(avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(2), agoraMs: AGORA }).nivel, 'atencao');
-  assert.equal(avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(5), agoraMs: AGORA }).nivel, 'grave');
+  assert.equal(avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(8), agoraMs: AGORA }).nivel, 'atencao');
+  assert.equal(avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(15), agoraMs: AGORA }).nivel, 'grave');
   assert.equal(avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(30), agoraMs: AGORA }).nivel, 'grave');
 });
 
@@ -53,7 +53,7 @@ test('data ilegível é tratada como ausente, não como recente', () => {
 });
 
 test('a mensagem diz o número de dias', () => {
-  const a = avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(4), agoraMs: AGORA });
-  assert.match(explicarAtraso(a, 'vibe'), /4 dias/);
+  const a = avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(8), agoraMs: AGORA });
+  assert.match(explicarAtraso(a, 'vibe'), /8 dias/);
   assert.equal(explicarAtraso(avaliarAtrasoDeBackup({ ultimoBackupEm: haDias(0), agoraMs: AGORA }), 'x'), null);
 });

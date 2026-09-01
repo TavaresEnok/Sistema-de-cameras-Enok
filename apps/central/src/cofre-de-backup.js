@@ -7,7 +7,7 @@ const crypto = require('crypto');
 /**
  * COFRE DE BACKUP: as cópias das instalações, guardadas FORA delas.
  *
- * O buraco que isto fecha (25/08/2026): as instalações fazem backup diário do
+ * O buraco que isto fecha (25/08/2026): as instalações fazem backup semanal do
  * banco, e guardam em `/opt/drac/infra/backups` — o MESMO disco dos dados. Isso
  * protege contra apagar uma tabela por engano e NÃO protege contra o disco
  * falhar, que é justamente o que acontece em servidor rodando 24 horas. Nenhuma

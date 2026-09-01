@@ -216,6 +216,19 @@ else
   falha "painel da Central sem ACL fechada" "o location / não pode ficar acessível diretamente aos tenants"
 fi
 
+# ─── 7. Backup automático segue a política semanal ─────────────────────────
+secao '7. Backup automático é semanal'
+
+if grep -q '^POSTGRES_BACKUP_INTERVAL_SECONDS=604800$' "$ENV_EXEMPLO" \
+   && grep -q '^CENTRAL_BACKUP_INTERVAL_SECONDS=604800$' "$ENV_EXEMPLO" \
+   && grep -q '^OFFSITE_BACKUP_INTERVAL_SECONDS=604800$' "$ENV_EXEMPLO" \
+   && grep -q 'BACKUP_UPLOAD_INTERVAL_SECONDS:-604800' "$INFRA/docker-compose.yml" \
+   && grep -q 'BACKUP_INTERVAL_SECONDS:-604800' "$INFRA/management/docker-compose.yml"; then
+  ok "banco local, Central, envio e cópia externa usam 604800s (7 dias)"
+else
+  falha "algum backup automático não usa a cadência semanal" "o padrão único deve ser 604800 segundos"
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mChecks estáticos de infraestrutura: todos passaram.\033[0m\n\n'

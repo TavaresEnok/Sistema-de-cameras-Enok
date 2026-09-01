@@ -2,9 +2,9 @@
 
 ## Cliente ativo
 
-- PostgreSQL local em formato custom, diariamente, com verificação de leitura e teste de restauração.
+- PostgreSQL local em formato custom, semanalmente, com verificação de leitura e teste de restauração.
 - Retenção local rotativa: 30 dias.
-- Envio externo: diário, sem gravações, com retenção rotativa de 90 dias.
+- Envio externo: semanal, sem gravações, com retenção rotativa de 90 dias.
 - O remote do rclone deve ser do tipo `crypt` ou apontar para armazenamento que cifre os objetos com chave gerenciada pela empresa.
 - Falha local não pode remover o remoto: o processo usa `copy`; a exclusão remota ocorre apenas pelo corte explícito de 90 dias.
 

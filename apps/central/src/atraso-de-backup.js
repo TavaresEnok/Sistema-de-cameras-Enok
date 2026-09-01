@@ -3,25 +3,23 @@
 /**
  * BACKUP ATRASADO precisa AVISAR.
  *
- * A instalação Vibe ficou de 19/08 a 23/08 sem nenhuma cópia — quatro dias — e
- * ninguém soube. O backup não falhou com estrondo: simplesmente não aconteceu,
- * e um backup que falha em silêncio é o mesmo que não ter backup.
+ * A política normal é uma cópia por semana. O alerta só pode disparar depois
+ * da janela semanal, senão uma cópia perfeitamente em dia apareceria como
+ * atrasada durante cinco dos sete dias do ciclo.
  *
  * A régua é por CONTAGEM DE DIAS desde a última cópia recebida, e o alerta tem
  * dois degraus porque as causas são diferentes:
  *
- *   · 2 dias  → ATENÇÃO. Um dia perdido é falha de rede, coisa comum. Dois já
- *     é padrão, e vale olhar antes de virar semana.
- *   · 5 dias  → GRAVE. Aqui já não é soluço: alguma coisa está quebrada, e a
- *     instalação está sem rede de proteção há quase uma semana.
+ *   · 8 dias  → ATENÇÃO. O ciclo semanal venceu sem nova cópia.
+ *   · 15 dias → GRAVE. Dois ciclos consecutivos foram perdidos.
  *
  * Instalação que NUNCA enviou é caso à parte: pode ser recém-instalada (o
- * primeiro envio leva até um dia) ou pode estar com o envio desligado. Só vira
+ * primeiro envio ocorre após a preparação inicial) ou pode estar com o envio desligado. Só vira
  * alerta depois da janela do primeiro envio.
  */
 
-const DIAS_ATENCAO = 2;
-const DIAS_GRAVE = 5;
+const DIAS_ATENCAO = 8;
+const DIAS_GRAVE = 15;
 /** Antes disso, uma instalação nova ainda não deveria ter enviado nada. */
 const DIAS_DE_CARENCIA_DA_PRIMEIRA = 2;
 

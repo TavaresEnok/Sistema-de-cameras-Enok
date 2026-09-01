@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-interval="${BACKUP_INTERVAL_SECONDS:-86400}"
+interval="${BACKUP_INTERVAL_SECONDS:-604800}"
 retention_days="${BACKUP_RETENTION_DAYS:-30}"
 export PGPASSWORD="${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
 
