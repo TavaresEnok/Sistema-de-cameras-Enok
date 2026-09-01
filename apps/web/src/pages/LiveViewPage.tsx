@@ -911,9 +911,18 @@ export default function LiveViewPage() {
           </Tooltip>
         </div>
 
+        {/* No mural, a grade é travada na proporção (colunas·16):(linhas·9) e
+            CENTRALIZADA. Assim cada célula fica exatamente 16:9, o vídeo
+            (object-contain) a preenche sem tarja lateral, e os quadros se
+            encostam — sem a "coluna preta imensa no meio". A sobra vai só para
+            as bordas externas do telão. Fora do mural, o wrapper é `contents`
+            (invisível ao layout): a grade normal segue idêntica. */}
+        <div className={wallMode ? 'flex-1 min-h-0 grid place-items-center bg-black p-0.5' : 'contents'}>
         <div
-          className={wallMode ? 'flex-1 grid gap-0.5 bg-black p-0.5 min-h-0' : 'cam-grid-bg flex-1 p-1 grid gap-1 min-h-0'}
-          style={{ gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gridTemplateRows: `repeat(${gridRows}, 1fr)` }}
+          className={wallMode ? 'grid gap-0.5 max-w-full max-h-full' : 'cam-grid-bg flex-1 p-1 grid gap-1 min-h-0'}
+          style={wallMode
+            ? { gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gridTemplateRows: `repeat(${gridRows}, 1fr)`, aspectRatio: `${gridCols * 16} / ${gridRows * 9}`, width: '100%', maxWidth: '100%', maxHeight: '100%' }
+            : { gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gridTemplateRows: `repeat(${gridRows}, 1fr)` }}
         >
           {displayedCams.map((cam, i) => (
             <div
@@ -993,6 +1002,7 @@ export default function LiveViewPage() {
               )}
             </div>
           ))}
+        </div>
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Clock, LoaderCircle, Pause, Play, Plus, Trash2, X } from 'lucide-react';
+import { useAutoHideControls } from '../hooks/use-auto-hide-controls';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
@@ -502,42 +503,70 @@ function MuralDaRonda({
   cameras: { id: string; name: string }[];
   onSair: () => void;
 }) {
+  // PARADAS COM CONTEÚDO — uma parada cujo mosaico foi APAGADO (layout não
+  // existe mais) ou que está VAZIA (nenhuma câmera nas posições) não tem o que
+  // exibir e viraria tela preta. A ronda PULA essas: o rodízio percorre só as
+  // paradas válidas, e a numeração ("parada X de Y") reflete essa lista.
+  const paradasValidas = useMemo(() => {
+    return ronda.paradas.filter((p) => {
+      const l = layouts.find((x) => x.id === p.layoutId);
+      return !!l && (l.cameraIds?.some((id) => !!id) ?? false);
+    });
+  }, [ronda.paradas, layouts]);
+
   const [indice, setIndice] = useState(0);
   const [pausado, setPausado] = useState(false);
-  const [restante, setRestante] = useState(ronda.paradas[0]?.segundos ?? 30);
+  const [restante, setRestante] = useState(paradasValidas[0]?.segundos ?? 30);
   const inicioRef = useRef<number>(Date.now());
+  // Controles (cabeçalho/rodapé) somem sozinhos, como no Modo Mural: a ronda
+  // fica horas numa TV e barras fixas roubam área das câmeras.
+  const { visivel, propsDoControle } = useAutoHideControls(true);
 
   // A posição é calculada pelo TEMPO DECORRIDO, não por contagem de trocas.
   // Assim a aba que ficou em segundo plano — onde o navegador estrangula o
   // temporizador — volta na parada certa em vez de ficar para trás.
   useEffect(() => {
-    if (pausado) return;
+    if (pausado || paradasValidas.length === 0) return;
     const t = setInterval(() => {
       const decorrido = (Date.now() - inicioRef.current) / 1000;
-      const pos = paradaNoInstante(ronda.paradas, decorrido);
+      const pos = paradaNoInstante(paradasValidas, decorrido);
       setIndice(pos.indice);
-      setRestante(Math.max(0, Math.ceil((ronda.paradas[pos.indice]?.segundos ?? 0) - pos.segundosNaParada)));
+      setRestante(Math.max(0, Math.ceil((paradasValidas[pos.indice]?.segundos ?? 0) - pos.segundosNaParada)));
     }, 500);
     return () => clearInterval(t);
-  }, [pausado, ronda.paradas]);
+  }, [pausado, paradasValidas]);
 
   useEffect(() => {
     const aoTeclar = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onSair();
       if (e.key === ' ') { e.preventDefault(); setPausado((p) => !p); }
-      if (e.key === 'ArrowRight') {
-        const proximo = proximaParada(indice, ronda.paradas.length);
+      if (e.key === 'ArrowRight' && paradasValidas.length > 0) {
+        const proximo = proximaParada(indice, paradasValidas.length);
         setIndice(proximo);
         // Reposiciona o relógio para a parada escolhida continuar do começo.
-        const antes = ronda.paradas.slice(0, proximo).reduce((s, p) => s + p.segundos, 0);
+        const antes = paradasValidas.slice(0, proximo).reduce((s, p) => s + p.segundos, 0);
         inicioRef.current = Date.now() - antes * 1000;
       }
     };
     window.addEventListener('keydown', aoTeclar);
     return () => window.removeEventListener('keydown', aoTeclar);
-  }, [indice, onSair, ronda.paradas]);
+  }, [indice, onSair, paradasValidas]);
 
-  const parada = ronda.paradas[indice];
+  // Nenhuma parada tem conteúdo (todos os mosaicos apagados/vazios): aviso
+  // honesto em vez de tela preta muda, com saída à mão.
+  if (paradasValidas.length === 0) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black text-white">
+        <p className="text-sm text-white/70">Esta ronda não tem nenhum mosaico com câmeras.</p>
+        <p className="text-xs text-white/45">Os mosaicos podem ter sido apagados ou estão vazios.</p>
+        <button type="button" onClick={onSair} className="mt-2 rounded-lg border border-white/20 px-4 py-1.5 text-sm hover:bg-white/10">
+          Sair
+        </button>
+      </div>
+    );
+  }
+
+  const parada = paradasValidas[Math.min(indice, paradasValidas.length - 1)];
   const layout = layouts.find((l) => l.id === parada?.layoutId);
 
   // ── A GRADE É A QUE FOI SALVA, NÃO UMA CALCULADA AQUI ────────────────────
@@ -559,22 +588,14 @@ function MuralDaRonda({
   const idsDaTela = posicoes.filter(Boolean) as string[];
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black">
-      <div className="flex shrink-0 items-center gap-3 bg-black/80 px-4 py-2 text-white">
-        <span className="text-sm font-semibold">{ronda.name}</span>
-        <span className="text-xs opacity-70">
-          {layout?.name ?? '(mosaico apagado)'} · parada {indice + 1} de {ronda.paradas.length}
-        </span>
-        <span className="ml-auto font-mono text-xs tabular-nums opacity-80">{restante}s</span>
-        <button type="button" onClick={() => setPausado((p) => !p)} aria-label={pausado ? 'Retomar' : 'Pausar'} className="rounded p-1 hover:bg-white/10">
-          {pausado ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-        </button>
-        <button type="button" onClick={onSair} aria-label="Sair da ronda" className="rounded p-1 hover:bg-white/10">
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="grid min-h-0 flex-1 gap-0.5 p-0.5" style={{ gridTemplateColumns: `repeat(${colunas}, minmax(0, 1fr))` }}>
+    <div className="fixed inset-0 z-50 bg-black">
+      {/* TELA CHEIA como o Modo Mural: a grade ocupa TODA a viewport, travada na
+          proporção (colunas·16):(linhas·9) e centralizada — quadros encostados,
+          sem coluna preta no meio, sobra só nas bordas do telão. O cabeçalho e o
+          rodapé FLUTUAM por cima e somem sozinhos (auto-hide), para não roubar
+          área das câmeras. */}
+      <div className="absolute inset-0 grid place-items-center p-0.5">
+      <div className="grid gap-0.5 max-w-full max-h-full" style={{ gridTemplateColumns: `repeat(${colunas}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${linhas}, minmax(0, 1fr))`, aspectRatio: `${colunas * 16} / ${linhas * 9}`, width: '100%', maxWidth: '100%', maxHeight: '100%' }}>
         {idsDaTela.length === 0 ? (
           <div className="flex items-center justify-center text-sm text-white/60">
             Este mosaico não tem câmeras.
@@ -587,14 +608,33 @@ function MuralDaRonda({
                   cameraId={id}
                   cameraName={cameras.find((c) => c.id === id)?.name ?? ''}
                   liveViewMode="grid"
+                  className="absolute inset-0 h-full w-full"
+                  showOverlay={false}
                 />
               ) : null}
             </div>
           ))
         )}
       </div>
+      </div>
 
-      <p className="shrink-0 bg-black/80 px-4 py-1 text-[10.5px] text-white/50">
+      {/* Cabeçalho flutuante (auto-hide), sobre a grade em tela cheia. */}
+      <div {...propsDoControle} className={`absolute inset-x-0 top-0 z-10 flex items-center gap-3 bg-black/55 px-4 py-2 text-white backdrop-blur-sm transition-opacity duration-300 ${visivel ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
+        <span className="text-sm font-semibold">{ronda.name}</span>
+        <span className="text-xs opacity-70">
+          {layout?.name ?? '(mosaico apagado)'} · parada {Math.min(indice, paradasValidas.length - 1) + 1} de {paradasValidas.length}
+        </span>
+        <span className="ml-auto font-mono text-xs tabular-nums opacity-80">{restante}s</span>
+        <button type="button" onClick={() => setPausado((p) => !p)} aria-label={pausado ? 'Retomar' : 'Pausar'} className="rounded p-1 hover:bg-white/10">
+          {pausado ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+        </button>
+        <button type="button" onClick={onSair} aria-label="Sair da ronda" className="rounded p-1 hover:bg-white/10">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Rodapé flutuante (auto-hide). */}
+      <p className={`absolute inset-x-0 bottom-0 z-10 bg-black/55 px-4 py-1 text-[10.5px] text-white/60 backdrop-blur-sm transition-opacity duration-300 ${visivel ? 'opacity-100' : 'opacity-0'}`}>
         Espaço pausa · seta direita pula para a próxima · Esc sai
       </p>
     </div>
