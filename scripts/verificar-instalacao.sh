@@ -81,6 +81,22 @@ secao '2. Exposição à internet (ligações dos containers)'
 # Só é público o que NÃO PODE passar pelo nginx.
 PUBLICO_PERMITIDO="1935/tcp 8189/udp"
 exposto=""
+# Uma VM pode hospedar outros produtos. Auditar `docker ps` inteiro fazia o
+# AjustCam reprovar por uma porta pública do ViralForge (projeto independente),
+# embora nenhum container desta instalação estivesse exposto. O label do
+# Compose delimita exatamente a stack à qual o vms-api pertence.
+COMPOSE_PROJECT="$(docker inspect vms-api \
+  --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+docker_ps_da_instalacao() {
+  if [ -n "$COMPOSE_PROJECT" ]; then
+    docker ps --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+      --format '{{.Names}} {{.Ports}}' 2>/dev/null
+  else
+    # Compatibilidade com uma instalação antiga sem labels Compose: os nomes
+    # vms-* são reservados ao AjustCam neste host.
+    docker ps --filter 'name=^/vms-' --format '{{.Names}} {{.Ports}}' 2>/dev/null
+  fi
+}
 while read -r linha; do
   [ -n "$linha" ] || continue
   nome="${linha%% *}"
@@ -101,10 +117,10 @@ while read -r linha; do
   # o corpo para a última porta. Justamente a publicação 0.0.0.0 costuma ser a
   # última depois de "80/tcp," e desaparecia da auditoria.
   done < <(printf '%s\n' "$portas" | tr ',' '\n' | sed 's/^ *//')
-done < <(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null)
+done < <(docker_ps_da_instalacao)
 
 if [ -z "$exposto" ]; then
-  ok "nada em 0.0.0.0 além de $PUBLICO_PERMITIDO"
+  ok "nenhum container desta instalação expõe 0.0.0.0 além de $PUBLICO_PERMITIDO"
 else
   falha "porta(s) publicadas na internet indevidamente" "$(printf '%b' "$exposto")"
 fi

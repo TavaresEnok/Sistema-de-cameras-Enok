@@ -301,6 +301,13 @@ else
   nok 'watchdog usa lock privado por instalação' 'lock em /tmp falha com fs.protected_regular=2 e colide entre instalações'
 fi
 
+if grep -qF 'com.docker.compose.project' "$RAIZ/scripts/verificar-instalacao.sh" \
+  && grep -qF 'docker_ps_da_instalacao' "$RAIZ/scripts/verificar-instalacao.sh"; then
+  ok 'verificador de portas não culpa o AjustCam por outro produto da mesma VM'
+else
+  nok 'verificador de portas isola a stack' 'voltou a auditar indiscriminadamente todos os containers do host'
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os testes do instalador passaram.\033[0m\n\n'
