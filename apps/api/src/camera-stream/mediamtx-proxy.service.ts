@@ -2307,8 +2307,17 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const runOnDemandCloseAfter = this.configService.get<string>('mediaMtxRunOnDemandCloseAfter') ?? '5m';
     const selectedRunOnDemandCloseAfter =
       this.configService.get<string>('mediaMtxSelectedRunOnDemandCloseAfter') ?? runOnDemandCloseAfter;
-    const effectiveRunOnDemandCloseAfter =
-      deliveryMode === 'selected' ? selectedRunOnDemandCloseAfter : runOnDemandCloseAfter;
+    // A contingência H.264 da grade pode abrir dezenas de encoders de uma vez.
+    // Mantê-los por 5 minutos depois que o navegador voltou ao WebRTC/HEVC
+    // consome CPU sem nenhum leitor (medido: 15 FFmpegs = ~2,8 núcleos). Um
+    // prazo curto ainda absorve remontagens rápidas do tile, mas devolve os
+    // núcleos logo depois do fallback. Os demais perfis preservam a retenção
+    // configurável existente.
+    const effectiveRunOnDemandCloseAfter = deliveryMode === 'grid'
+      ? '20s'
+      : deliveryMode === 'selected'
+        ? selectedRunOnDemandCloseAfter
+        : runOnDemandCloseAfter;
     const rtspTransport = pushSourced
       ? 'tcp'
       : camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp';

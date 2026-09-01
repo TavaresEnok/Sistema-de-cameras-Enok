@@ -234,6 +234,26 @@ test('contingência H.264 nunca fica quente junto da fonte bruta da mesma câmer
   } finally { restore(); }
 });
 
+test('encoder H.264 da grade desliga rapidamente depois do último leitor', async () => {
+  const { svc, enviados, restore } = proxyComOrcamento({ budget: 50, envOnDemand: false, vistas: ['cam-a'] });
+  try {
+    // HEVC força o path `grid` a usar o publisher FFmpeg de compatibilidade.
+    svc.chooseGridSource = async () => ({
+      profile: { channel: 1, subtype: 1 }, sourceUrl: 'rtsp://x/sub',
+      codec: 'hevc', isHevc: true, usedSubStream: true, requiresSanitization: false,
+    });
+    await svc.configurePathForCamera('cam-a', 'grid');
+    const criado = enviados.find((e) => e.path.includes('_grid'));
+    assert.ok(criado, 'o fallback H.264 deveria ser criado no MediaMTX');
+    assert.equal(criado.body.source, 'publisher');
+    assert.equal(
+      criado.body.runOnDemandCloseAfter,
+      '20s',
+      'encoder caro não pode continuar por 5 minutos sem espectador',
+    );
+  } finally { restore(); }
+});
+
 test('reconciliação esfria o fallback antigo sem interromper leitor ativo', async () => {
   const patched: Array<{ path: string; body: any }> = [];
   const svc: any = Object.create(MediamtxProxyService.prototype);
