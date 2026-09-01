@@ -468,9 +468,16 @@ export function LiveStreamPlayer({
     setQualityMode(getStoredLiveQuality(cameraId));
     setGridUsesH264Fallback(false);
   }, [cameraId]);
+  // RESTAURO TEMPORÁRIO (2026-09-01): a grade HEVC-via-WebRTC (`grid-hevc`)
+  // black-screena em navegadores sem decodificação HEVC/WebRTC, e o fallback
+  // para H.264 não dispara quando a negociação é CANCELADA (só quando FALHA).
+  // Resultado: grade/ronda toda preta. Enquanto o fallback do `grid-hevc` não
+  // for confiável, a grade usa o caminho H.264 comprovado ("Equilibrado").
+  // Para reativar o HEVC: volte GRID_HEVC_ENABLED para true.
+  const GRID_HEVC_ENABLED = false;
   const deliveryMode: LiveDeliveryMode = liveViewMode === 'selected'
     ? (qualityMode === 'instant' ? 'grid' : qualityMode === 'max' ? 'original' : 'selected')
-    : gridUsesH264Fallback ? 'grid' : 'grid-hevc';
+    : (GRID_HEVC_ENABLED && !gridUsesH264Fallback) ? 'grid-hevc' : 'grid';
 
   const changeQuality = useCallback((next: LiveQualityMode) => {
     // A declaração de codecs do navegador é apenas uma pista: alguns clientes
