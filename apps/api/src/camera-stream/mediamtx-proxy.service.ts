@@ -1520,11 +1520,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // credencial, caminho e canal. Mudou algum → chave nova → re-sonda. Health
     // check tocando `lastSeenAt`/`status` não muda nada disso.
     const cacheKey = [
-      // Versão da decisão: v2 deixou de promover uma URL de outra família só
-      // porque ela respondeu H.264. Mantê-la na chave faz cada câmera revalidar
+      // Versão da decisão: v3 deixou de promover uma URL que aceita RTSP mas
+      // não entrega parâmetros de vídeo decodificáveis. Mantê-la na chave faz
+      // cada câmera revalidar
       // sua anotação uma única vez após o deploy, sem uma limpeza global nem
       // novas sondas a cada abertura.
-      'grid-v2',
+      'grid-v3',
       cameraId,
       camera.ip,
       camera.rtspPort,
@@ -1590,7 +1591,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // É só uma segunda camada de cache: a decisão em si continua sendo tomada
     // exatamente pelo mesmo código de sempre. Falhou a leitura, ou o cadastro
     // mudou? Cai na sondagem de sempre.
-    const impressao = `grid-v2|${impressaoDoCadastro({
+    const impressao = `grid-v3|${impressaoDoCadastro({
       ip: camera.ip, rtspPort: camera.rtspPort, username: camera.username,
       rtspPath: camera.rtspPath, channel: subProfile.channel, subtype: subProfile.subtype,
     })}`;
@@ -1642,14 +1643,27 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       height: number | null;
       hasDataTrack: boolean;
     }> = [];
+    // Um "H.264" sem largura/altura não é um substream utilizável: o RTSP
+    // respondeu ao probe, porém ainda não entregou SPS/PPS nem primeiro quadro.
+    // Promovê-lo por ser H.264 deixava MediaMTX/WebRTC conectados, mas pretos.
+    // Preferimos o stream HEVC íntegro e o transcodificamos para a grade a
+    // guardar uma falsa economia de CPU que não mostra imagem.
+    const addUsableCandidate = (
+      url: string,
+      metadata: { codec: string | null; width: number | null; height: number | null; hasDataTrack: boolean } | null,
+    ) => {
+      if (!metadata?.codec || this.streamPixels(metadata) <= 0) return false;
+      found.push({
+        url,
+        codec: metadata.codec,
+        width: metadata.width,
+        height: metadata.height,
+        hasDataTrack: metadata.hasDataTrack,
+      });
+      return true;
+    };
     const c1 = await this.probeStreamVideoMetadata(primaryUrl, transport);
-    if (c1?.codec) found.push({
-      url: primaryUrl,
-      codec: c1.codec,
-      width: c1.width,
-      height: c1.height,
-      hasDataTrack: c1.hasDataTrack,
-    });
+    addUsableCandidate(primaryUrl, c1);
     // Só sonda o protocolo alternativo quando o caminho configurado NÃO trouxe
     // vídeo. Não usamos mais "não é H.264" como gatilho: isso fez uma câmera
     // Intelbras/Hikvision com sub H.265 ser trocada silenciosamente por uma URL
@@ -1659,13 +1673,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const has264 = () => found.some((f) => !isHevcCodec(f.codec));
     if (found.length === 0 && altUrl) {
       const c2 = await this.probeStreamVideoMetadata(altUrl, transport);
-      if (c2?.codec) found.push({
-        url: altUrl,
-        codec: c2.codec,
-        width: c2.width,
-        height: c2.height,
-        hasDataTrack: c2.hasDataTrack,
-      });
+      addUsableCandidate(altUrl, c2);
     }
 
     // O endpoint se chama "sub", mas devolve o MAIN: medido na Cam-01, tanto
@@ -1685,14 +1693,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         `rtsp://${encodeURIComponent(camera.username)}:${encodeURIComponent(password)}@` +
         `${camera.ip}:${camera.rtspPort}/media/video${subProfile.channel + 1}`;
       const lightweightOem = await this.probeStreamVideoMetadata(lightweightOemUrl, transport);
-      if (lightweightOem?.codec) {
-        found.push({
-          url: lightweightOemUrl,
-          codec: lightweightOem.codec,
-          width: lightweightOem.width,
-          height: lightweightOem.height,
-          hasDataTrack: lightweightOem.hasDataTrack,
-        });
+      if (lightweightOem && addUsableCandidate(lightweightOemUrl, lightweightOem)) {
         this.logger.log(
           `Grade de ${cameraId}: endpoint substream devolvia resolução principal; ` +
           `/media/video${subProfile.channel + 1} respondeu ` +
@@ -1739,13 +1740,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         if (has264()) break;
         const url = `rtsp://${encodeURIComponent(camera.username)}:${encodeURIComponent(password)}@${camera.ip}:${camera.rtspPort}${path}`;
         const c3 = await this.probeStreamVideoMetadata(url, transport);
-        if (c3?.codec) found.push({
-          url,
-          codec: c3.codec,
-          width: c3.width,
-          height: c3.height,
-          hasDataTrack: c3.hasDataTrack,
-        });
+        addUsableCandidate(url, c3);
       }
     }
 
