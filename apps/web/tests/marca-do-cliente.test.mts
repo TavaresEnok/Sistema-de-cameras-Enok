@@ -68,3 +68,13 @@ test('o título da aba não carrega a marca do fornecedor junto com a do cliente
   assert.equal(productPageTitle(null), PRODUCT_NAME);
   assert.equal(productPageTitle('DRAC VMS'), PRODUCT_NAME, 'marca legada não pode reaparecer');
 });
+
+test('login e topo lateral exibem somente a logomarca', () => {
+  const login = readFileSync('src/pages/LoginPage.tsx', 'utf8');
+  const sidebar = readFileSync('src/components/Sidebar.tsx', 'utf8');
+
+  assert.ok(!login.includes('>{facilityName}</h1>'), 'login voltou a desenhar o nome abaixo da logo');
+  assert.ok(!login.includes('{PRODUCT_TAGLINE}'), 'login voltou a desenhar o subtítulo abaixo da logo');
+  assert.ok(!sidebar.includes('>{facilityName}</div>'), 'topo lateral voltou a desenhar o nome ao lado da logo');
+  assert.ok(!sidebar.includes('{PRODUCT_TAGLINE}'), 'topo lateral voltou a desenhar o subtítulo ao lado da logo');
+});

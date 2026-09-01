@@ -5,7 +5,6 @@ import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useBrandingStore } from '../store/brandingStore';
-import { PRODUCT_TAGLINE } from '../lib/product-brand';
 
 function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
   const [email, setEmail] = useState('');
@@ -184,7 +183,7 @@ export default function LoginPage() {
 
         {/* Marca */}
         <div className="text-center" style={{ marginBottom: 28 }}>
-          <div className="relative mx-auto w-fit" style={{ height: 60, minWidth: 60, maxWidth: 236, marginBottom: 16 }}>
+          <div className="relative mx-auto w-fit" style={{ height: 60, minWidth: 60, maxWidth: 236 }}>
             <div style={{ position: 'absolute', inset: -6, borderRadius: 20, background: 'radial-gradient(circle, hsl(var(--primary) / 0.22), transparent 70%)', filter: 'blur(2px)' }} />
             <div
               className="relative flex h-full min-w-[60px] max-w-[236px] items-center justify-center overflow-hidden px-3"
@@ -193,8 +192,6 @@ export default function LoginPage() {
               {logoDataUrl ? <img src={logoDataUrl} alt={facilityName} className="max-h-[44px] min-h-[30px] w-auto max-w-[210px] object-contain" /> : <LogoAjustCam size={30} />}
             </div>
           </div>
-          <h1 className="text-[23px] font-bold" style={{ color: 'var(--tx)', letterSpacing: '-0.01em' }}>{facilityName}</h1>
-          <p className="mt-1 font-mono text-[9px] uppercase" style={{ color: 'var(--tx-4)', letterSpacing: '0.22em' }}>{PRODUCT_TAGLINE}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">

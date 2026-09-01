@@ -15,7 +15,6 @@ import { useThemeStore } from '../store/themeStore';
 import { useIsMobile } from '../hooks/use-mobile';
 import { useBrandingStore } from '../store/brandingStore';
 import { useDeteccoesNaoVistas, formatarContador } from '../hooks/use-deteccoes-nao-vistas';
-import { PRODUCT_TAGLINE } from '../lib/product-brand';
 
 type NavItem = {
   path: string;
@@ -182,21 +181,10 @@ export function Sidebar({
     >
       {/* ── Brand header ── */}
       <div className="sidebar-brand flex items-center h-14 px-3 shrink-0">
-        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+        <div className="flex items-center min-w-0 flex-1">
           <div className={`sidebar-mark shrink-0 h-8 rounded-xl flex items-center justify-center overflow-hidden ${logoDataUrl ? 'w-fit min-w-8 max-w-[108px]' : 'w-8'}`}>
             {logoDataUrl ? <img src={logoDataUrl} alt={facilityName} className="h-full w-auto max-w-[108px] object-contain" /> : <Shield className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />}
           </div>
-          {isExpanded && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.08 }}
-              className="min-w-0"
-            >
-              <div className="max-w-[150px] truncate text-[13px] font-semibold text-sidebar-foreground leading-tight tracking-tight" title={facilityName}>{facilityName}</div>
-              <div className="text-[10px] text-[hsl(var(--muted-foreground))]">{PRODUCT_TAGLINE}</div>
-            </motion.div>
-          )}
         </div>
       </div>
 
