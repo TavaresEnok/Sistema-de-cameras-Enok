@@ -494,7 +494,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       const expected = cameras.filter((cam: any) => cam.enabled !== false);
       if (!expected.length) return;
 
-      const missing = expected.filter((cam: any) => !activePathNames.has(this.pathNameFromCameraId(cam.id, 'grid-hevc')));
+      // A grade web atual usa a rota H.264 compatível. Conferir `grid-hevc`
+      // aqui faria o watchdog recriar uma segunda sessão RTSP por câmera mesmo
+      // depois de a interface ter escolhido corretamente a rota compatível.
+      const missing = expected.filter((cam: any) => !activePathNames.has(this.pathNameFromCameraId(cam.id, 'grid')));
       // Tolerância: só age quando a maioria sumiu (assinatura de MediaMTX zerado).
       // Uma câmera isolada sem path é normal (on-demand/erro pontual) e já é
       // tratada pelo fluxo de ensurePathForCamera quando alguém abre a câmera.
@@ -2110,10 +2113,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         while (nextIndex < cameras.length) {
           const camera = cameras[nextIndex++];
           try {
-            // A fonte bruta da grade é o caminho canônico. Aquecer `grid`
-            // (contingência H.264) e depois abrir `grid-hevc` no navegador
-            // duplicava cada sessão RTSP e deixava a frota parcialmente preta.
-            const tasks: Array<Promise<EnsuredCameraPath>> = [this.ensurePathForCamera(camera.id, 'grid-hevc')];
+            // A grade usa a entrega H.264 compatível. Aquecer a fonte HEVC em
+            // paralelo abria uma segunda sessão RTSP por câmera e deixava o
+            // DVR disputando banda com um caminho que a interface não usa.
+            const tasks: Array<Promise<EnsuredCameraPath>> = [this.ensurePathForCamera(camera.id, 'grid')];
             if (warmSelectedPaths) {
               tasks.push(this.ensurePathForCamera(camera.id, 'selected'));
             }
@@ -2129,8 +2132,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       } else {
         this.logger.log(`Aquecimento MediaMTX concluído: ${warmed}/${cameras.length} path(s) prontos.`);
       }
-      // Migra também paths deixados por versões anteriores: fecha a cópia
-      // quente `_grid` quando ninguém a está lendo e preserva `_grid-hevc`.
+      // O reconciliador mantém fontes frias sem segurar sessões RTSP.
       await this.reconcileHotGridSources();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'erro desconhecido';
