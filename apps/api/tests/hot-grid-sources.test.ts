@@ -178,10 +178,16 @@ function proxyComOrcamento(opts: { budget: number; envOnDemand?: boolean; vistas
 }
 
 /** `sourceOnDemand` do payload que o MediaMTX receberia para o path da grade. */
-async function onDemandEnviado(svc: any, enviados: any[], cameraId: string) {
+async function onDemandEnviado(
+  svc: any,
+  enviados: any[],
+  cameraId: string,
+  mode: 'grid' | 'grid-hevc' = 'grid-hevc',
+) {
   enviados.length = 0;
-  await svc.configurePathForCamera(cameraId, 'grid');
-  const criado = enviados.find((e) => e.path.includes('_grid'));
+  await svc.configurePathForCamera(cameraId, mode);
+  const sufixo = mode === 'grid-hevc' ? '_grid_hevc' : '_grid';
+  const criado = enviados.find((e) => e.path.includes(sufixo));
   assert.ok(criado, 'o path da grade deveria ter sido criado no MediaMTX');
   return criado.body.sourceOnDemand;
 }
@@ -212,4 +218,52 @@ test('env "tudo sob demanda" continua vencendo o orçamento (decisão explícita
       'MEDIAMTX_SOURCE_ON_DEMAND=true é escolha explícita e não pode ser sobreposta pelo orçamento',
     );
   } finally { restore(); }
+});
+
+test('contingência H.264 nunca fica quente junto da fonte bruta da mesma câmera', async () => {
+  const { svc, enviados, restore } = proxyComOrcamento({ budget: 50, envOnDemand: false, vistas: ['cam-a'] });
+  try {
+    assert.equal(
+      await onDemandEnviado(svc, enviados, 'cam-a', 'grid'), true,
+      'grid é fallback: manter grid + grid-hevc quentes duplica a sessão RTSP da câmera',
+    );
+    assert.equal(
+      await onDemandEnviado(svc, enviados, 'cam-a', 'grid-hevc'), false,
+      'grid-hevc é a fonte bruta canônica e pode permanecer aquecida',
+    );
+  } finally { restore(); }
+});
+
+test('reconciliação esfria o fallback antigo sem interromper leitor ativo', async () => {
+  const patched: Array<{ path: string; body: any }> = [];
+  const svc: any = Object.create(MediamtxProxyService.prototype);
+  svc.logger = { warn() {}, log() {}, debug() {}, error() {} };
+  svc.isEnabled = () => true;
+  svc.isGridSourceHot = () => true;
+  svc.apiRequest = async (method: string, path: string, body?: any) => {
+    if (method === 'GET' && path.includes('/config/paths/list')) return JSON.stringify({ items: [
+      { name: 'cam_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_grid', source: 'rtsp://camera/sub', sourceOnDemand: false },
+      { name: 'cam_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_grid_hevc', source: 'rtsp://camera/sub', sourceOnDemand: true },
+      { name: 'cam_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_grid', source: 'rtsp://camera/sub', sourceOnDemand: false },
+    ] });
+    if (method === 'GET' && path.includes('/v3/paths/list')) return JSON.stringify({ items: [
+      { name: 'cam_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_grid', readers: [{}] },
+    ] });
+    if (method === 'PATCH') patched.push({ path, body });
+    return '{}';
+  };
+
+  await svc.reconcileHotGridSources();
+  assert.ok(
+    patched.some((p) => p.path.includes('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_grid') && p.body.sourceOnDemand === true),
+    'fallback antigo e ocioso deve esfriar',
+  );
+  assert.ok(
+    patched.some((p) => p.path.includes('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_grid_hevc') && p.body.sourceOnDemand === false),
+    'fonte bruta quente deve permanecer conectada',
+  );
+  assert.ok(
+    !patched.some((p) => p.path.includes('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_grid')),
+    'path com espectador não pode ser alterado por baixo dele',
+  );
 });

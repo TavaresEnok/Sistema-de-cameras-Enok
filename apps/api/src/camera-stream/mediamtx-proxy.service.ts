@@ -383,15 +383,34 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   private async reconcileHotGridSources() {
     if (!this.isEnabled()) return;
     try {
-      const text = await this.apiRequest('GET', '/v3/config/paths/list?itemsPerPage=1000');
-      const items: any[] = JSON.parse(text)?.items ?? [];
+      const [configText, runtimeText] = await Promise.all([
+        this.apiRequest('GET', '/v3/config/paths/list?itemsPerPage=1000'),
+        this.apiRequest('GET', '/v3/paths/list?itemsPerPage=1000'),
+      ]);
+      const items: any[] = JSON.parse(configText)?.items ?? [];
+      const runtimeItems: any[] = JSON.parse(runtimeText)?.items ?? [];
+      const readersByPath = new Map<string, number>(runtimeItems.map((item: any) => [
+        String(item?.name ?? ''),
+        Array.isArray(item?.readers) ? item.readers.length : Number(item?.readers ?? 0),
+      ]));
       for (const item of items) {
         const name: string = item?.name ?? '';
-        if (!name.endsWith('_grid_source')) continue;
-        const parsed = this.cameraIdFromPathName(name.replace(/_source$/, ''));
+        const publicName = name.endsWith('_source') ? name.replace(/_source$/, '') : name;
+        const parsed = this.cameraIdFromPathName(publicName);
         if (!parsed) continue;
-        const desiredOnDemand = !this.isGridSourceHot(parsed.cameraId);
+        if (parsed.deliveryMode !== 'grid' && parsed.deliveryMode !== 'grid-hevc') continue;
+        // `grid-hevc` é a fonte bruta canônica (H.265 ou H.264, como veio da
+        // câmera). `grid` é somente a contingência H.264. Manter os dois quentes
+        // abre DUAS sessões RTSP por câmera e esgota DVRs/OEMs rapidamente.
+        // Publisher não aceita sourceOnDemand: runOnDemand já o controla.
+        if (String(item?.source ?? '') === 'publisher') continue;
+        const desiredOnDemand = parsed.deliveryMode === 'grid'
+          ? true
+          : !this.isGridSourceHot(parsed.cameraId);
         if (item.sourceOnDemand === desiredOnDemand) continue;
+        // Não altera a configuração por baixo de quem está assistindo. Assim
+        // que o último leitor sair, o ciclo seguinte esfria o fallback.
+        if ((readersByPath.get(name) ?? 0) > 0) continue;
         await this.apiRequest(
           'PATCH',
           `/v3/config/paths/patch/${encodeURIComponent(name)}`,
@@ -475,7 +494,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       const expected = cameras.filter((cam: any) => cam.enabled !== false);
       if (!expected.length) return;
 
-      const missing = expected.filter((cam: any) => !activePathNames.has(this.pathNameFromCameraId(cam.id, 'grid')));
+      const missing = expected.filter((cam: any) => !activePathNames.has(this.pathNameFromCameraId(cam.id, 'grid-hevc')));
       // Tolerância: só age quando a maioria sumiu (assinatura de MediaMTX zerado).
       // Uma câmera isolada sem path é normal (on-demand/erro pontual) e já é
       // tratada pelo fluxo de ensurePathForCamera quando alguém abre a câmera.
@@ -914,7 +933,14 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // seria nós atacando os DVRs da própria frota.
     const isGridSource = pathName.endsWith('_grid') || pathName.endsWith('_grid_hevc');
     const parsedForHot = isGridSource ? this.cameraIdFromPathName(pathName) : null;
-    const sourceOnDemand = !(isGridSource && parsedForHot && this.isGridSourceHot(parsedForHot.cameraId));
+    // Só a fonte bruta canônica (`grid-hevc`) pode ficar aquecida. A
+    // contingência `grid` é sempre sob demanda; do contrário dois perfis da
+    // mesma câmera ficam conectados simultaneamente sem necessidade.
+    const sourceOnDemand = !(
+      pathName.endsWith('_grid_hevc')
+      && parsedForHot
+      && this.isGridSourceHot(parsedForHot.cameraId)
+    );
     const desired = {
       source: sourceUrl,
       sourceOnDemand,
@@ -2075,7 +2101,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         while (nextIndex < cameras.length) {
           const camera = cameras[nextIndex++];
           try {
-            const tasks: Array<Promise<EnsuredCameraPath>> = [this.ensurePathForCamera(camera.id, 'grid')];
+            // A fonte bruta da grade é o caminho canônico. Aquecer `grid`
+            // (contingência H.264) e depois abrir `grid-hevc` no navegador
+            // duplicava cada sessão RTSP e deixava a frota parcialmente preta.
+            const tasks: Array<Promise<EnsuredCameraPath>> = [this.ensurePathForCamera(camera.id, 'grid-hevc')];
             if (warmSelectedPaths) {
               tasks.push(this.ensurePathForCamera(camera.id, 'selected'));
             }
@@ -2088,9 +2117,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       }));
       if (failed > 0) {
         this.logger.warn(`Aquecimento MediaMTX parcial: ${warmed}/${cameras.length} path(s) prontos.`);
-        return;
+      } else {
+        this.logger.log(`Aquecimento MediaMTX concluído: ${warmed}/${cameras.length} path(s) prontos.`);
       }
-      this.logger.log(`Aquecimento MediaMTX concluído: ${warmed}/${cameras.length} path(s) prontos.`);
+      // Migra também paths deixados por versões anteriores: fecha a cópia
+      // quente `_grid` quando ninguém a está lendo e preserva `_grid-hevc`.
+      await this.reconcileHotGridSources();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'erro desconhecido';
       this.logger.warn(`Falha ao aquecer paths MediaMTX: ${message}`);
@@ -2393,8 +2425,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // 'original' é sempre sob demanda; 'selected' segue a env global.
       sourceOnDemand: deliveryMode === 'original'
         ? true
-        : deliveryMode === 'grid' || deliveryMode === 'grid-hevc'
-          ? this.resolveGridSourceOnDemand(cameraId)
+        : deliveryMode === 'grid'
+          ? true
+          : deliveryMode === 'grid-hevc'
+            ? this.resolveGridSourceOnDemand(cameraId)
           : sourceOnDemand,
       sourceOnDemandStartTimeout,
       sourceOnDemandCloseAfter: deliveryMode === 'original' ? selectedRunOnDemandCloseAfter : sourceOnDemandCloseAfter,
