@@ -1492,7 +1492,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   // Caminho RTSP do SUB no protocolo ALTERNATIVO. Algumas câmeras OEM amarram cada
   // protocolo a um stream fixo: /Streaming/Channels/* sempre devolve o main e
   // /cam/realmonitor* sempre devolve o sub (H.264), ignorando o índice do canal.
-  // Quando o sub no caminho configurado não é H.264, tentamos o protocolo oposto.
+  //
+  // Atenção: as duas sintaxes também aparecem em fabricantes diferentes. Uma
+  // Intelbras/Hikvision pode aceitar a conexão Dahua e até responder ao probe,
+  // mas não sustentar uma sessão de vídeo utilizável. Por isso o protocolo
+  // alternativo é contingência para caminho SEM vídeo, nunca uma otimização por
+  // codec (H.265 válido não autoriza mudar de família de URL).
   private alternateSubPath(rtspPath: string | null | undefined, channel: number): string | null {
     const p = (rtspPath || '').toLowerCase();
     if (p.includes('/streaming/channels')) return `/cam/realmonitor?channel=${channel}&subtype=1`;
@@ -1515,7 +1520,11 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // credencial, caminho e canal. Mudou algum → chave nova → re-sonda. Health
     // check tocando `lastSeenAt`/`status` não muda nada disso.
     const cacheKey = [
-      'grid',
+      // Versão da decisão: v2 deixou de promover uma URL de outra família só
+      // porque ela respondeu H.264. Mantê-la na chave faz cada câmera revalidar
+      // sua anotação uma única vez após o deploy, sem uma limpeza global nem
+      // novas sondas a cada abertura.
+      'grid-v2',
       cameraId,
       camera.ip,
       camera.rtspPort,
@@ -1581,10 +1590,10 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // É só uma segunda camada de cache: a decisão em si continua sendo tomada
     // exatamente pelo mesmo código de sempre. Falhou a leitura, ou o cadastro
     // mudou? Cai na sondagem de sempre.
-    const impressao = impressaoDoCadastro({
+    const impressao = `grid-v2|${impressaoDoCadastro({
       ip: camera.ip, rtspPort: camera.rtspPort, username: camera.username,
       rtspPath: camera.rtspPath, channel: subProfile.channel, subtype: subProfile.subtype,
-    });
+    })}`;
     const anotado = await this.lerAnotacaoDoMosaico(cameraId, impressao);
     if (anotado) {
       if (anotado.urlSemSegredo) {
@@ -1641,9 +1650,14 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       height: c1.height,
       hasDataTrack: c1.hasDataTrack,
     });
-    // Só sonda o alternativo se o primeiro não for H.264 (economiza um probe).
+    // Só sonda o protocolo alternativo quando o caminho configurado NÃO trouxe
+    // vídeo. Não usamos mais "não é H.264" como gatilho: isso fez uma câmera
+    // Intelbras/Hikvision com sub H.265 ser trocada silenciosamente por uma URL
+    // Dahua, que respondia ao ffprobe mas deixava WebRTC/HLS sem primeiro frame.
+    // H.265 válido continua sendo uma fonte real e o pipeline de grade o
+    // converte para H.264 quando o navegador precisar.
     const has264 = () => found.some((f) => !isHevcCodec(f.codec));
-    if (!has264() && altUrl) {
+    if (found.length === 0 && altUrl) {
       const c2 = await this.probeStreamVideoMetadata(altUrl, transport);
       if (c2?.codec) found.push({
         url: altUrl,
