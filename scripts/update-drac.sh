@@ -15,6 +15,23 @@ case "$COMPOSE_MODE" in
 esac
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$ROOT_DIR/infra/docker-compose.yml" -f "$COMPOSE_OVERRIDE")
 
+env_value() {
+  local name="$1"
+  [ -f "$ENV_FILE" ] || return 0
+  sed -n "s/^${name}=//p" "$ENV_FILE" | tail -n1 | sed 's/^"//; s/"$//'
+}
+
+# Não permita que uma atualização remova o TURN de uma instalação atrás da
+# Gateway. Sem este overlay a sinalização WHEP continua em 201, porém o ICE
+# oferece apenas o IP privado e todo viewer termina em fallback HLS.
+if [ "$(env_value DRAC_GATEWAY_MODE)" = "true" ] || [ -n "$(env_value MEDIAMTX_TURN_URL)" ]; then
+  [ -f "$ROOT_DIR/infra/docker-compose.gateway.yml" ] || {
+    printf '[DRAC update][ERRO] Instalação Gateway sem docker-compose.gateway.yml; atualização recusada.\n' >&2
+    exit 1
+  }
+  COMPOSE+=(-f "$ROOT_DIR/infra/docker-compose.gateway.yml")
+fi
+
 # A GPU PRECISA SOBREVIVER A UMA ATUALIZAÇÃO.
 #
 # Até 27/08/2026 este script montava o compose SEM os overlays de GPU. Efeito:

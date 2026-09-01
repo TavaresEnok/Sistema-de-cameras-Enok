@@ -54,9 +54,16 @@ issues=()      # problemas ativos (viram status degraded)
 actions=()     # auto-curas executadas neste ciclo (para o log/alerta)
 
 COMPOSE_MEDIAMTX=(docker compose --env-file "$INFRA_DIR/.env" -f "$INFRA_DIR/docker-compose.yml" -f "$INFRA_DIR/docker-compose.prod.yml")
-if { [ "$(load_env_var DRAC_GATEWAY_MODE)" = "true" ] || [ -n "$(load_env_var MEDIAMTX_TURN_URL)" ]; } \
-   && [ -f "$INFRA_DIR/docker-compose.gateway.yml" ]; then
-  COMPOSE_MEDIAMTX+=(-f "$INFRA_DIR/docker-compose.gateway.yml")
+GATEWAY_EXPECTED=false
+GATEWAY_OVERLAY_AVAILABLE=true
+if [ "$(load_env_var DRAC_GATEWAY_MODE)" = "true" ] || [ -n "$(load_env_var MEDIAMTX_TURN_URL)" ]; then
+  GATEWAY_EXPECTED=true
+  if [ -f "$INFRA_DIR/docker-compose.gateway.yml" ]; then
+    COMPOSE_MEDIAMTX+=(-f "$INFRA_DIR/docker-compose.gateway.yml")
+  else
+    GATEWAY_OVERLAY_AVAILABLE=false
+    issues+=("live:overlay-turn-ausente")
+  fi
 fi
 if [ "$(load_env_var DRAC_GPU_ENABLED)" = "true" ] && [ -f "$INFRA_DIR/docker-compose.gpu.yml" ]; then
   COMPOSE_MEDIAMTX+=(-f "$INFRA_DIR/docker-compose.gpu.yml")
@@ -90,6 +97,15 @@ mediamtx_ports_ok() {
   docker port vms-mediamtx 2>/dev/null | grep -q '8889/tcp' \
     && docker port vms-mediamtx 2>/dev/null | grep -q '8888/tcp'
 }
+mediamtx_turn_ok() {
+  [ "$GATEWAY_EXPECTED" = "true" ] || return 0
+  local expected actual
+  expected="$(load_env_var MEDIAMTX_TURN_URL)"
+  [ -n "$expected" ] || return 1
+  actual="$(docker inspect vms-mediamtx --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+    | sed -n 's/^MTX_WEBRTCICESERVERS2_0_URL=//p' | tail -n1)"
+  [ "$actual" = "$expected" ]
+}
 if docker inspect vms-mediamtx >/dev/null 2>&1; then
   # DEBOUNCE: um recreate do mediamtx + restart da api PISCA todos os viewers. Então só
   # age se as portas estiverem REALMENTE ausentes — reconfirma após 5s p/ descartar um
@@ -98,7 +114,15 @@ if docker inspect vms-mediamtx >/dev/null 2>&1; then
   if ! mediamtx_ports_ok; then
     sleep 5
   fi
-  if ! mediamtx_ports_ok; then
+  if { ! mediamtx_ports_ok || ! mediamtx_turn_ok; } \
+     && [ "$GATEWAY_OVERLAY_AVAILABLE" = "false" ]; then
+    # Fail-closed: se a instalação exige Gateway mas o arquivo sumiu, NÃO
+    # recrie pelo compose base. Isso removeria o TURN de um container que ainda
+    # pode estar atendendo sessões e transformaria degradação em pane total.
+    issues+=("live:autocura-bloqueada-sem-overlay-turn")
+  elif ! mediamtx_ports_ok || ! mediamtx_turn_ok; then
+    ports_were_ok=false
+    mediamtx_ports_ok && ports_were_ok=true
     # AUTO-CURA: recria o mediamtx pelo compose base (que agora carrega as portas).
     "${COMPOSE_MEDIAMTX[@]}" up -d mediamtx >/dev/null 2>&1 && sleep 3
     # Fallback: se ainda sem portas (ex.: container órfão/fora do compose segurando o
@@ -107,12 +131,17 @@ if docker inspect vms-mediamtx >/dev/null 2>&1; then
       docker rm -f vms-mediamtx >/dev/null 2>&1
       "${COMPOSE_MEDIAMTX[@]}" up -d mediamtx >/dev/null 2>&1 && sleep 3
     fi
-    if mediamtx_ports_ok; then
-      actions+=("religou-portas-mediamtx")
+    if mediamtx_ports_ok && mediamtx_turn_ok; then
+      if [ "$ports_were_ok" = "true" ]; then
+        actions+=("restaurou-turn-mediamtx")
+      else
+        actions+=("religou-portas-mediamtx")
+      fi
       # MediaMTX novo perde os paths dinâmicos; a API os re-injeta no boot (warmCameraPaths).
       docker restart vms-api >/dev/null 2>&1 && actions+=("reaqueceu-paths-api")
     else
-      issues+=("live:mediamtx-sem-portas")
+      mediamtx_ports_ok || issues+=("live:mediamtx-sem-portas")
+      mediamtx_turn_ok || issues+=("live:mediamtx-sem-turn")
     fi
   fi
   # Confirma o caminho ponta-a-ponta: host consegue falar HLS/WebRTC do MediaMTX?

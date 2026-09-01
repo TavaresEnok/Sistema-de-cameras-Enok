@@ -20,6 +20,7 @@ import {
   type LiveProtocol,
   type WebrtcInboundSample,
 } from '../lib/live-protocol-policy';
+import { discoverWhepIceServers } from '../lib/whep-ice-servers';
 
 type LiveStreamPlayerProps = {
   cameraId: string;
@@ -1226,7 +1227,25 @@ export function LiveStreamPlayer({
           if (webrtcPcRef.current) {
             try { webrtcPcRef.current.close(); } catch { /* já encerrado */ }
           }
+          // WHEP não embute o TURN no SDP: ele o anuncia no cabeçalho Link de
+          // uma requisição OPTIONS. Na infraestrutura antiga o candidato
+          // público direto escondia essa omissão. Atrás da Gateway/NAT, criar
+          // o peer sem consultar o Link deixava apenas 10.10.0.x:8189 —
+          // inalcançável pelo navegador — e TODA a grade caía para HLS.
+          const abortController = new AbortController();
+          webrtcAbortControllerRef.current = abortController;
+          const mediaToken = mediaAuthTokenRef.current;
+          const iceServers = await discoverWhepIceServers(
+            whepUrl,
+            mediaToken ? `Bearer ${mediaToken}` : null,
+            abortController.signal,
+          );
+          if (cancelled || abortController.signal.aborted) {
+            throw new Error('Inicialização WebRTC cancelada.');
+          }
+
           const pc = new RTCPeerConnection({
+            iceServers,
             bundlePolicy: 'max-bundle',
             rtcpMuxPolicy: 'require',
           });
@@ -1240,9 +1259,6 @@ export function LiveStreamPlayer({
 
           pc.addTransceiver('video', { direction: 'recvonly' });
           pc.addTransceiver('audio', { direction: 'recvonly' });
-          const abortController = new AbortController();
-          webrtcAbortControllerRef.current = abortController;
-
           await new Promise<void>((resolve, reject) => {
             let videoTrackReceived = false;
             let visibleFrameReceived = false;

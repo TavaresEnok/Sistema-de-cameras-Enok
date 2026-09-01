@@ -22,6 +22,23 @@ case "$COMPOSE_MODE" in
   *) printf '[DRAC restore][ERRO] DRAC_COMPOSE_MODE deve ser prod ou dev.\n' >&2; exit 1 ;;
 esac
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$ROOT_DIR/infra/docker-compose.yml" -f "$COMPOSE_OVERRIDE")
+
+env_value() {
+  local name="$1"
+  [ -f "$ENV_FILE" ] || return 0
+  sed -n "s/^${name}=//p" "$ENV_FILE" | tail -n1 | sed 's/^"//; s/"$//'
+}
+
+# Restaurar banco/storage também relança os serviços. Em modo Gateway, subir
+# o MediaMTX sem o overlay TURN tornaria a instalação aparentemente saudável
+# por HTTP, mas inalcançável por WebRTC a partir da internet.
+if [ "$(env_value DRAC_GATEWAY_MODE)" = "true" ] || [ -n "$(env_value MEDIAMTX_TURN_URL)" ]; then
+  [ -f "$ROOT_DIR/infra/docker-compose.gateway.yml" ] || {
+    printf '[DRAC restore][ERRO] Instalação Gateway sem docker-compose.gateway.yml; restauração recusada.\n' >&2
+    exit 1
+  }
+  COMPOSE+=(-f "$ROOT_DIR/infra/docker-compose.gateway.yml")
+fi
 RESTORE_MUTATED=false
 ROLLBACK_IN_PROGRESS=false
 STORAGE_SWAPPED=false

@@ -78,6 +78,24 @@ IMAGEM_TESTE="$(docker images --format '{{.Repository}}:{{.Tag}}' \
 ARQUIVOS=(-f docker-compose.yml)
 [ -f docker-compose.prod.yml ] && ARQUIVOS+=(-f docker-compose.prod.yml)
 
+# Instalações publicadas atrás da Gateway dependem do TURN para o navegador
+# alcançar o MediaMTX privado. Omitir este overlay deixa o WHEP respondendo,
+# mas anuncia somente 10.10.0.x como candidato ICE: o sintoma é WebRTC tentar
+# por alguns segundos e a grade inteira degradar para HLS/transcode.
+env_value() {
+  local name="$1"
+  [ -f .env ] || return 0
+  sed -n "s/^${name}=//p" .env | tail -n1 | sed 's/^"//; s/"$//'
+}
+
+if [ "$(env_value DRAC_GATEWAY_MODE)" = "true" ] || [ -n "$(env_value MEDIAMTX_TURN_URL)" ]; then
+  [ -f docker-compose.gateway.yml ] || {
+    echo "ERRO: instalação Gateway exige docker-compose.gateway.yml; recusando subir sem TURN." >&2
+    exit 1
+  }
+  ARQUIVOS+=(-f docker-compose.gateway.yml)
+fi
+
 MODO="CPU"
 if [ "$FORCAR_CPU" = "1" ]; then
   MODO="CPU (forçado por --sem-gpu)"

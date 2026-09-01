@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Image, type ImageStyle, StyleSheet, type StyleProp, Text, type TextStyle, View, type ViewStyle } from 'react-native';
 import { RTCPeerConnection, RTCSessionDescription, RTCView } from 'react-native-webrtc';
 import type { LiveStatus } from './VideoPlayers';
+import { discoverWhepIceServers } from '../services/whep-ice-servers';
 
 const CONNECT_TIMEOUT_MS = 12_000;
 const ICE_GATHER_TIMEOUT_MS = 2_000;
@@ -130,7 +131,13 @@ export function WebRtcVideo({
     const start = async () => {
       apply('connecting');
       try {
-        pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
+        // MediaMTX anuncia as credenciais TURN temporárias no Link do OPTIONS
+        // WHEP. Sem lê-lo, o app só enxerga o candidato privado 10.10.0.x e
+        // falha em toda instalação atrás da Gateway/NAT.
+        const authorization = mediaToken ? `Bearer ${mediaToken}` : null;
+        const iceServers = await discoverWhepIceServers(whepUrl, authorization);
+        if (cancelled) return;
+        pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
         pc.addTransceiver('video', { direction: 'recvonly' });
         pc.addTransceiver('audio', { direction: 'recvonly' });
 

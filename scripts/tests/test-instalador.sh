@@ -283,10 +283,15 @@ else
 fi
 
 if grep -qF 'docker-compose.gateway.yml' "$RAIZ/scripts/atualizar-instalacao.sh" \
-  && grep -qF 'COMPOSE_MEDIAMTX+=(-f "$INFRA_DIR/docker-compose.gateway.yml")' "$RAIZ/scripts/runtime-watchdog.sh"; then
-  ok 'atualização e auto-cura preservam o overlay TURN da Gateway'
+  && grep -qF 'docker-compose.gateway.yml' "$RAIZ/scripts/update-drac.sh" \
+  && grep -qF 'docker-compose.gateway.yml' "$RAIZ/scripts/restore-drac.sh" \
+  && grep -qF 'docker-compose.gateway.yml' "$RAIZ/infra/drac-up.sh" \
+  && grep -qF 'docker-compose.gateway.yml' "$RAIZ/infra/gpu-setup.sh" \
+  && grep -qF 'COMPOSE_MEDIAMTX+=(-f "$INFRA_DIR/docker-compose.gateway.yml")' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && grep -qF 'MTX_WEBRTCICESERVERS2_0_URL=' "$RAIZ/scripts/runtime-watchdog.sh"; then
+  ok 'subida, atualização, restauração, GPU e auto-cura preservam o TURN da Gateway'
 else
-  nok 'atualização preserva TURN' 'atualizador ou watchdog voltou a subir somente o compose base'
+  nok 'ciclo de vida preserva TURN' 'algum caminho voltou a subir somente o compose base'
 fi
 
 if grep -qF 'LOCK_FILE="$STATE_DIR/runtime-watchdog.lock"' "$RAIZ/scripts/runtime-watchdog.sh" \

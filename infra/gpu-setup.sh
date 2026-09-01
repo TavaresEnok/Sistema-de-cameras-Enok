@@ -20,7 +20,20 @@ cd "$(dirname "$0")"
 # DRAC_ENV=dev na máquina de desenvolvimento.
 ENV_OVERLAY="docker-compose.prod.yml"
 [[ "${DRAC_ENV:-prod}" == "dev" ]] && ENV_OVERLAY="docker-compose.dev.yml"
-COMPOSE=(docker compose -f docker-compose.yml -f "$ENV_OVERLAY" -f docker-compose.gpu.yml)
+COMPOSE=(docker compose --env-file .env -f docker-compose.yml -f "$ENV_OVERLAY")
+
+env_value() {
+  local name="$1"
+  [ -f .env ] || return 0
+  sed -n "s/^${name}=//p" .env | tail -n1 | sed 's/^"//; s/"$//'
+}
+
+if [ "$(env_value DRAC_GATEWAY_MODE)" = "true" ] || [ -n "$(env_value MEDIAMTX_TURN_URL)" ]; then
+  [ -f docker-compose.gateway.yml ] \
+    || { echo 'ERRO: instalação Gateway sem docker-compose.gateway.yml.' >&2; exit 1; }
+  COMPOSE+=(-f docker-compose.gateway.yml)
+fi
+COMPOSE+=(-f docker-compose.gpu.yml)
 CUDA_TEST_IMAGE="nvidia/cuda:12.4.1-base-ubuntu22.04"
 INSTALL_TOOLKIT=0
 [[ "${1:-}" == "--install-toolkit" ]] && INSTALL_TOOLKIT=1

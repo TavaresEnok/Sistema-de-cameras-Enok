@@ -6,6 +6,7 @@ import { computeDetectionRect } from '../src/utils/detection-geometry';
 import { matchesPlaybackFilter, recordingKind, timelineRange } from '../src/utils/playback';
 import { contrastRatio, ensureReadableText, fetchBranding } from '../src/services/branding';
 import { clearStreamUrlsCache, requestCachedStreamUrls } from '../src/services/stream-urls-cache';
+import { parseWhepIceServers } from '../src/services/whep-ice-servers';
 import type { Camera, Recording } from '../src/types';
 import { readFileSync } from 'node:fs';
 
@@ -83,6 +84,17 @@ test('stream WHEP: Location externo nunca recebe token de reprodução', () => {
   const source = readFileSync('src/components/WebRtcVideo.tsx', 'utf8');
   assert(source.includes('resolved.origin !== original.origin'), 'sessão WHEP deve permanecer na origem autorizada');
   assert(source.includes("throw new Error('WHEP devolveu sessão em origem diferente')"), 'origem diferente deve abortar a conexão');
+});
+
+test('stream WHEP: app lê o TURN temporário antes de criar o peer', () => {
+  const parsed = parseWhepIceServers(
+    '<turn:177.104.156.25:3478?transport=udp>; rel="ice-server"; username="u"; credential="c"',
+  );
+  assert(parsed.length === 1 && parsed[0].username === 'u', 'Link TURN deve virar configuração ICE');
+  const source = readFileSync('src/components/WebRtcVideo.tsx', 'utf8');
+  assert(source.indexOf('discoverWhepIceServers(') < source.indexOf('new RTCPeerConnection('),
+    'OPTIONS WHEP precisa acontecer antes de criar RTCPeerConnection');
+  assert(!source.includes('iceServers: []'), 'app não pode descartar o TURN anunciado pelo servidor');
 });
 
 test('release mobile: iOS tem identidade e builds de loja incrementam versão', () => {

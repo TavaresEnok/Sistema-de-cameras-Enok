@@ -90,9 +90,12 @@ test('tentativa SUPERADA fecha o pc e APAGA a própria sessão no servidor', () 
 test('um pc anterior é FECHADO antes de ser substituído na ref', () => {
   // Segunda barreira: qualquer caminho que chegue à criação de um novo
   // RTCPeerConnection não pode simplesmente perder a referência do anterior.
-  const i = SRC.indexOf('const pc = new RTCPeerConnection(');
-  assert.ok(i > -1);
-  const antes = SRC.slice(Math.max(0, i - 500), i);
+  const inicio = SRC.indexOf('const startWebrtc = async');
+  const i = SRC.indexOf('const pc = new RTCPeerConnection(', inicio);
+  assert.ok(inicio > -1 && i > inicio);
+  // A descoberta OPTIONS/TURN acontece entre a limpeza e a criação do peer;
+  // inspecione todo o começo da tentativa, não uma janela frágil de caracteres.
+  const antes = SRC.slice(inicio, i);
   assert.match(antes, /webrtcPcRef\.current\.close\(\)/, 'feche o pc anterior antes de sobrescrever a ref');
 });
 
