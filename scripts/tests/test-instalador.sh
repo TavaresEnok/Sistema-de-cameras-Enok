@@ -308,6 +308,14 @@ else
   nok 'verificador de portas isola a stack' 'voltou a auditar indiscriminadamente todos os containers do host'
 fi
 
+if grep -qF 'LOGIN_EXPLICITO=false' "$RAIZ/scripts/verificar-instalacao.sh" \
+  && grep -qF 'credencial inicial não é mais válida' "$RAIZ/scripts/verificar-instalacao.sh" \
+  && grep -qF 'nenhum administrador ativo foi confirmado' "$RAIZ/scripts/verificar-instalacao.sh"; then
+  ok "verificador tolera senha inicial trocada somente quando há administrador ativo"
+else
+  falha "verificador não distingue credencial explícita de senha inicial já trocada"
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os testes do instalador passaram.\033[0m\n\n'

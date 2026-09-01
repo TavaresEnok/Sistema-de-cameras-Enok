@@ -173,6 +173,10 @@ secao '4. Login funciona'
 CRED_FILE="$DIR/infra/.credenciais-iniciais"
 LOGIN_EMAIL="${DRAC_ADMIN_EMAIL:-}"
 LOGIN_SENHA="${DRAC_ADMIN_PASSWORD:-}"
+LOGIN_EXPLICITO=false
+if [ -n "$LOGIN_EMAIL" ] || [ -n "$LOGIN_SENHA" ]; then
+  LOGIN_EXPLICITO=true
+fi
 if [ -z "$LOGIN_EMAIL" ] && [ -r "$CRED_FILE" ]; then
   LOGIN_EMAIL="$(env_get "$CRED_FILE" usuario)"
   LOGIN_SENHA="$(env_get "$CRED_FILE" senha)"
@@ -188,8 +192,22 @@ else
   TOKEN="$(printf '%s' "$resposta" | sed -nE 's/.*"access_?[Tt]oken"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
   if [ -n "$TOKEN" ]; then
     ok "login do administrador ($LOGIN_EMAIL) devolveu token"
+  elif [ "$LOGIN_EXPLICITO" = true ]; then
+    falha "login do administrador falhou" "usuario=$LOGIN_EMAIL — as credenciais fornecidas explicitamente não foram aceitas; resposta: ${resposta:0:120}"
   else
-    falha "login do administrador falhou" "usuario=$LOGIN_EMAIL — o banco foi semeado? resposta: ${resposta:0:120}"
+    # O arquivo é entregue somente para o primeiro acesso. Depois da troca
+    # obrigatória de senha ele fica, corretamente, desatualizado. Isso não pode
+    # bloquear uma atualização segura nem provocar rollback de uma instalação
+    # saudável. Ainda exigimos a existência de ao menos um administrador ativo;
+    # para comprovar o login em si, o operador pode fornecer DRAC_ADMIN_*.
+    admins_ativos="$(compose exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -tAc \
+      'SELECT count(*) FROM "User" WHERE "isActive" = true AND role IN ('"'"'ADMIN'"'"', '"'"'SUPER_ADMIN'"'"');' \
+      2>/dev/null | tr -d '[:space:]')"
+    if [[ "$admins_ativos" =~ ^[1-9][0-9]*$ ]]; then
+      aviso "credencial inicial não é mais válida" "há $admins_ativos administrador(es) ativo(s); a senha inicial provavelmente já foi trocada. Use DRAC_ADMIN_EMAIL/DRAC_ADMIN_PASSWORD para testar o login atual"
+    else
+      falha "login do administrador falhou" "a credencial inicial não funciona e nenhum administrador ativo foi confirmado no banco"
+    fi
   fi
 fi
 
