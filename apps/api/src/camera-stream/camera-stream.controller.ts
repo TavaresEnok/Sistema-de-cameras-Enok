@@ -60,10 +60,19 @@ export function isLoopbackMediaWorkerAuthorized(body: MediaMtxAuthRequest) {
   const path = String(body?.path ?? '');
   const sourcePath = /^cam_[0-9a-f]{32}(?:_grid|_grid_hevc|_orig)?_source$/i.test(path);
   const outputPath = /^cam_[0-9a-f]{32}(?:_grid|_grid_hevc|_orig)?$/i.test(path);
+  // MediaMTX 1.15 pode enviar somente o IP ou IP:porta no callback HTTP,
+  // dependendo do transporte RTSP. O publisher `runOnDemand` disca para o
+  // próprio 127.0.0.1; rejeitar a variação com porta fazia o FFmpeg receber
+  // 401 no ANNOUNCE e toda câmera HEVC ficava eternamente em "Conectando".
+  // Não aceitamos rede Docker aqui: continua sendo estritamente loopback.
+  const rawIp = String(body?.ip ?? '').trim().toLowerCase();
   const loopback =
-    body?.ip === '127.0.0.1'
-    || body?.ip === '::1'
-    || body?.ip === '::ffff:127.0.0.1';
+    rawIp === '127.0.0.1'
+    || rawIp === '::1'
+    || rawIp === '::ffff:127.0.0.1'
+    || /^127\.0\.0\.1:\d+$/.test(rawIp)
+    || /^\[::1\]:\d+$/.test(rawIp)
+    || /^\[::ffff:127\.0\.0\.1\]:\d+$/.test(rawIp);
   return (
     loopback
     && (

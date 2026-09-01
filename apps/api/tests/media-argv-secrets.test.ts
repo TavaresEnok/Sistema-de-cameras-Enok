@@ -16,6 +16,18 @@ test('worker interno só lê path oculto e publica no path público via loopback
     action: 'publish',
     path: `cam_${cameraHex}`,
   }), true);
+  // MediaMTX recente pode incluir a porta junto ao IP no callback. Continua
+  // sendo loopback, não uma autorização para a rede Docker.
+  assert.equal(isLoopbackMediaWorkerAuthorized({
+    ip: '127.0.0.1:8554',
+    action: 'publish',
+    path: `cam_${cameraHex}_grid`,
+  }), true);
+  assert.equal(isLoopbackMediaWorkerAuthorized({
+    ip: '[::1]:8554',
+    action: 'publish',
+    path: `cam_${cameraHex}_grid`,
+  }), true);
   assert.equal(isLoopbackMediaWorkerAuthorized({
     ip: '10.0.0.20',
     action: 'publish',
