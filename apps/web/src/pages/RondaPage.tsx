@@ -144,12 +144,45 @@ export default function RondaPage() {
     await carregar();
   };
 
+  // Cobrir a aplicação inteira não é o mesmo que tela cheia: o navegador ainda
+  // deixa abas, barra de endereço e a janela visíveis. O pedido precisa nascer
+  // diretamente do clique do operador (regra de segurança do navegador), por
+  // isso ele fica aqui, no botão Iniciar — e não dentro do efeito da Ronda.
+  const iniciarRonda = useCallback((ronda: Ronda) => {
+    if (typeof document !== 'undefined' && document.fullscreenEnabled && !document.fullscreenElement) {
+      void document.documentElement.requestFullscreen().catch(() => {
+        // Caso o navegador/política corporativa negue, a Ronda continua no
+        // mural interno em vez de simplesmente não abrir.
+      });
+    }
+    setRodando(ronda);
+  }, []);
+
+  const sairDaRonda = useCallback(() => {
+    setRodando(null);
+    if (typeof document !== 'undefined' && document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+  }, []);
+
+  // Esc também pode sair do fullscreen antes de chegar ao listener interno da
+  // Ronda. Se isso ocorrer, fechamos a experiência para não deixar um mural
+  // aparentemente "em execução" numa janela comum.
+  useEffect(() => {
+    if (!rodando || typeof document === 'undefined') return;
+    const aoMudarTelaCheia = () => {
+      if (!document.fullscreenElement) setRodando(null);
+    };
+    document.addEventListener('fullscreenchange', aoMudarTelaCheia);
+    return () => document.removeEventListener('fullscreenchange', aoMudarTelaCheia);
+  }, [rodando]);
+
   if (rodando) {
     // AppLayout anima a página com `transform`. Um `position: fixed` dentro
     // desse ancestral deixa de ser fixo à viewport e podia parecer apenas um
     // painel grande, com menu/cabeçalho ainda à vista. Portal para `body` é a
     // garantia de tela cheia real ao iniciar a ronda, como um mural de TV.
-    const mural = <MuralDaRonda ronda={rodando} layouts={layouts} cameras={cameras} onSair={() => setRodando(null)} />;
+    const mural = <MuralDaRonda ronda={rodando} layouts={layouts} cameras={cameras} onSair={sairDaRonda} />;
     return typeof document === 'undefined' ? mural : createPortal(mural, document.body);
   }
 
@@ -220,7 +253,7 @@ export default function RondaPage() {
                   {r.paradas.length} parada{r.paradas.length === 1 ? '' : 's'} · volta de {formatarDuracao(r.duracaoDaVoltaSegundos)}
                 </p>
                 <div className="mt-1 flex gap-2">
-                  <button type="button" className="btn btn-primary btn-sm flex-1" onClick={() => setRodando(r)}>
+                  <button type="button" className="btn btn-primary btn-sm flex-1" onClick={() => iniciarRonda(r)}>
                     <Play className="h-3.5 w-3.5" /> Iniciar
                   </button>
                   {meuParaMexer(r) && (
