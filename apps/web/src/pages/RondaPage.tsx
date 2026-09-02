@@ -723,7 +723,7 @@ function MuralDaRonda({
           <div>
             <p className="text-sm font-medium">Carregando ronda…</p>
             <p className="mt-1 text-xs text-white/55">
-              Preparando {quantidadePronta} de {chavesDosPlayers.length} câmera{chavesDosPlayers.length === 1 ? '' : 's'} para trocar sem piscadas.
+              Preparando {quantidadePronta} de {chavesDosPlayers.length} câmera{chavesDosPlayers.length === 1 ? '' : 's'} para iniciar a ronda.
             </p>
           </div>
           <button type="button" onClick={onSair} className="mt-1 rounded-lg border border-white/20 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10">
