@@ -29,7 +29,13 @@ test('a Ronda lê os mosaicos da MESMA fonte que o servidor valida', () => {
 });
 
 test('a grade desenhada é a que foi SALVA', () => {
-  assert.match(RONDA, /layout\?\.gridSize/, 'precisa usar o formato salvo');
+  assert.match(
+    RONDA,
+    /String\(layout\.gridSize[^)]*\)\.split\('x'\)/,
+    'precisa derivar colunas e linhas do formato salvo',
+  );
+  assert.match(RONDA, /tela\.colunas/, 'a grade exibida precisa usar as colunas salvas');
+  assert.match(RONDA, /tela\.linhas/, 'a grade exibida precisa usar as linhas salvas');
   assert.doesNotMatch(
     RONDA,
     /Math\.sqrt\(/,
