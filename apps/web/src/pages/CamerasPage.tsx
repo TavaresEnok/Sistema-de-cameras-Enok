@@ -1422,7 +1422,7 @@ export default function CamerasPage() {
             title="Para câmera ou DVR que envia o vídeo para o servidor — funciona atrás de CGNAT, 4G e redes sem porta aberta"
           >
             <Radio className="w-3.5 h-3.5" />
-            Câmera que envia (RTMP)
+            Câmera RTMP
           </button>
           <button
             onClick={() => setShowWizard(true)}
