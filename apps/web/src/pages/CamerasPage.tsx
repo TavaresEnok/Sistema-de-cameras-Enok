@@ -1417,7 +1417,7 @@ export default function CamerasPage() {
           </div>
           <button
             onClick={() => setShowPushDialog(true)}
-            className="btn btn-secondary btn-sm"
+            className="btn btn-primary btn-sm"
             data-testid="button-add-push-camera"
             title="Para câmera ou DVR que envia o vídeo para o servidor — funciona atrás de CGNAT, 4G e redes sem porta aberta"
           >

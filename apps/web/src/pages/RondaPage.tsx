@@ -6,7 +6,7 @@ import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { lerCopiaLocal, lerMosaicoDaApi, meuParaMexer, preferirApi, type MosaicoSalvo } from '../lib/mosaicos-salvos';
-import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
+import { LiveStreamPlayer, type LivePlayerStatus } from '../components/LiveStreamPlayer';
 import { paradaNoInstante, proximaParada, type Parada } from '../lib/ronda-rotacao';
 
 /**
@@ -524,15 +524,81 @@ function MuralDaRonda({
   const [pausado, setPausado] = useState(false);
   const [restante, setRestante] = useState(paradasValidas[0]?.segundos ?? 30);
   const inicioRef = useRef<number>(Date.now());
+  // A ronda não pode começar no instante em que os players montam. Cada
+  // WebRTC/RTSP precisa negociar, pedir keyframe e desenhar o primeiro quadro;
+  // trocar de mosaico enquanto isso acontece era exatamente o "preto, aparece,
+  // preto de novo" que o operador viu.
+  const [preparando, setPreparando] = useState(true);
+  const preparoConcluidoRef = useRef(false);
+  const [statusDosPlayers, setStatusDosPlayers] = useState<Record<string, LivePlayerStatus>>({});
   // Controles (cabeçalho/rodapé) somem sozinhos, como no Modo Mural: a ronda
   // fica horas numa TV e barras fixas roubam área das câmeras.
   const { visivel, propsDoControle } = useAutoHideControls(true);
+
+  // Todas as telas são montadas durante a preparação e continuam montadas
+  // durante a ronda. Assim, ao voltar da tela 2 para a 1, a conexão da tela 1
+  // ainda existe — não há uma nova negociação WebRTC nem novo frame preto.
+  const telas = useMemo(() => paradasValidas.map((parada, indiceDaParada) => {
+    const layout = layouts.find((item) => item.id === parada.layoutId)!;
+    const colunas = Math.max(1, Number(String(layout.gridSize ?? '2x2').split('x')[0]) || 2);
+    const linhas = Math.max(1, Number(String(layout.gridSize ?? '2x2').split('x')[1]) || 2);
+    const posicoes = Array.from({ length: colunas * linhas }, (_, posicao) => {
+      const cameraId = layout.cameraIds?.[posicao];
+      return cameraId ? String(cameraId) : null;
+    });
+    return { parada, layout, indiceDaParada, colunas, linhas, posicoes };
+  }), [layouts, paradasValidas]);
+
+  const chavesDosPlayers = useMemo(
+    () => telas.flatMap((tela) => tela.posicoes.flatMap((cameraId, posicao) => cameraId ? [`${tela.indiceDaParada}:${posicao}`] : [])),
+    [telas],
+  );
+  const prontosParaExibir = chavesDosPlayers.length > 0 && chavesDosPlayers.every((chave) => {
+    const estado = statusDosPlayers[chave]?.state;
+    // Um erro é um resultado terminal: o tile mostrará o aviso próprio, mas a
+    // ronda não fica congelada para sempre por uma câmera offline.
+    return estado === 'playing' || estado === 'fallback' || estado === 'error';
+  });
+  const quantidadePronta = chavesDosPlayers.filter((chave) => {
+    const estado = statusDosPlayers[chave]?.state;
+    return estado === 'playing' || estado === 'fallback' || estado === 'error';
+  }).length;
+
+  const registrarStatusDoPlayer = useCallback((chave: string, status: LivePlayerStatus) => {
+    setStatusDosPlayers((atual) => {
+      const anterior = atual[chave];
+      if (anterior?.state === status.state && anterior?.activeProtocol === status.activeProtocol && anterior?.reason === status.reason) return atual;
+      return { ...atual, [chave]: status };
+    });
+  }, []);
+
+  const finalizarPreparo = useCallback(() => {
+    if (preparoConcluidoRef.current) return;
+    preparoConcluidoRef.current = true;
+    inicioRef.current = Date.now();
+    setIndice(0);
+    setRestante(paradasValidas[0]?.segundos ?? 30);
+    setPreparando(false);
+  }, [paradasValidas]);
+
+  useEffect(() => {
+    if (prontosParaExibir) finalizarPreparo();
+  }, [finalizarPreparo, prontosParaExibir]);
+
+  useEffect(() => {
+    // Há câmeras que podem estar realmente offline. Depois de uma janela ampla
+    // de aquecimento, começamos com as disponíveis e deixamos o tile com erro
+    // se recuperar sozinho, em vez de transformar uma câmera ruim em uma ronda
+    // que nunca começa.
+    const limite = window.setTimeout(finalizarPreparo, 28_000);
+    return () => window.clearTimeout(limite);
+  }, [finalizarPreparo]);
 
   // A posição é calculada pelo TEMPO DECORRIDO, não por contagem de trocas.
   // Assim a aba que ficou em segundo plano — onde o navegador estrangula o
   // temporizador — volta na parada certa em vez de ficar para trás.
   useEffect(() => {
-    if (pausado || paradasValidas.length === 0) return;
+    if (preparando || pausado || paradasValidas.length === 0) return;
     const t = setInterval(() => {
       const decorrido = (Date.now() - inicioRef.current) / 1000;
       const pos = paradaNoInstante(paradasValidas, decorrido);
@@ -540,7 +606,7 @@ function MuralDaRonda({
       setRestante(Math.max(0, Math.ceil((paradasValidas[pos.indice]?.segundos ?? 0) - pos.segundosNaParada)));
     }, 500);
     return () => clearInterval(t);
-  }, [pausado, paradasValidas]);
+  }, [pausado, paradasValidas, preparando]);
 
   useEffect(() => {
     const aoTeclar = (e: KeyboardEvent) => {
@@ -572,57 +638,66 @@ function MuralDaRonda({
     );
   }
 
-  const parada = paradasValidas[Math.min(indice, paradasValidas.length - 1)];
-  const layout = layouts.find((l) => l.id === parada?.layoutId);
-
-  // ── A GRADE É A QUE FOI SALVA, NÃO UMA CALCULADA AQUI ────────────────────
-  //
-  // A primeira versão desta tela calculava as colunas pela raiz quadrada do
-  // número de câmeras. Um mosaico 2×4 montado no Ao Vivo virava quadrado na
-  // ronda, e as câmeras trocavam de lugar entre as duas telas — parte do que o
-  // dono viu como "não está sincronizado".
-  //
-  // E as posições VAZIAS são preservadas: o operador que deixou um buraco no
-  // canto o deixou de propósito. Compactar move todas as câmeras seguintes, e
-  // quem decorou onde fica o portão perde a referência.
-  const colunas = Math.max(1, Number(String(layout?.gridSize ?? '2x2').split('x')[0]) || 2);
-  const linhas = Math.max(1, Number(String(layout?.gridSize ?? '2x2').split('x')[1]) || 2);
-  const posicoes: (string | null)[] = Array.from({ length: colunas * linhas }, (_, i) => {
-    const id = layout?.cameraIds?.[i];
-    return id ? String(id) : null;
-  });
-  const idsDaTela = posicoes.filter(Boolean) as string[];
+  const telaAtual = telas[Math.min(indice, telas.length - 1)];
+  const parada = telaAtual?.parada;
+  const layout = telaAtual?.layout;
 
   return (
     <div className="fixed inset-0 z-50 bg-black">
-      {/* TELA CHEIA como o Modo Mural: a grade ocupa TODA a viewport, travada na
-          proporção (colunas·16):(linhas·9) e centralizada — quadros encostados,
-          sem coluna preta no meio, sobra só nas bordas do telão. O cabeçalho e o
-          rodapé FLUTUAM por cima e somem sozinhos (auto-hide), para não roubar
-          área das câmeras. */}
-      <div className="absolute inset-0 grid place-items-center p-0.5">
-      <div className="grid gap-0.5 max-w-full max-h-full" style={{ gridTemplateColumns: `repeat(${colunas}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${linhas}, minmax(0, 1fr))`, aspectRatio: `${colunas * 16} / ${linhas * 9}`, width: '100%', maxWidth: '100%', maxHeight: '100%' }}>
-        {idsDaTela.length === 0 ? (
-          <div className="flex items-center justify-center text-sm text-white/60">
-            Este mosaico não tem câmeras.
-          </div>
-        ) : (
-          posicoes.map((id, i) => (
-            <div key={id ?? `vazio-${i}`} className="relative min-h-0 bg-black">
-              {id ? (
-                <LiveStreamPlayer
-                  cameraId={id}
-                  cameraName={cameras.find((c) => c.id === id)?.name ?? ''}
-                  liveViewMode="grid"
-                  className="absolute inset-0 h-full w-full"
-                  showOverlay={false}
-                />
-              ) : null}
+      {/* Todas as grades ficam vivas em camadas. A camada inativa está invisível
+          para o operador, mas não é desmontada: ao retornar a ela, o frame já
+          está no vídeo em vez de reiniciar a trilha. */}
+      {telas.map((tela) => {
+        const ativa = tela.indiceDaParada === Math.min(indice, telas.length - 1);
+        return (
+          <div
+            key={`${tela.layout.id}-${tela.indiceDaParada}`}
+            aria-hidden={!ativa}
+            className={`absolute inset-0 grid place-items-center p-0.5 transition-opacity duration-300 ${ativa && !preparando ? 'z-[1] opacity-100' : 'pointer-events-none z-0 opacity-0'}`}
+          >
+            <div
+              className="grid max-h-full max-w-full gap-0.5"
+              style={{
+                gridTemplateColumns: `repeat(${tela.colunas}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${tela.linhas}, minmax(0, 1fr))`,
+                aspectRatio: `${tela.colunas * 16} / ${tela.linhas * 9}`,
+                width: '100%', maxWidth: '100%', maxHeight: '100%',
+              }}
+            >
+              {tela.posicoes.map((cameraId, posicao) => (
+                <div key={cameraId ? `${cameraId}-${posicao}` : `vazio-${posicao}`} className="relative min-h-0 bg-black">
+                  {cameraId && (
+                    <LiveStreamPlayer
+                      cameraId={cameraId}
+                      cameraName={cameras.find((camera) => camera.id === cameraId)?.name ?? ''}
+                      liveViewMode="grid"
+                      className="absolute inset-0 h-full w-full"
+                      showOverlay={false}
+                      startDelayMs={Math.min((tela.indiceDaParada * tela.posicoes.length + posicao) * 120, 3_000)}
+                      onStatusChange={(status) => registrarStatusDoPlayer(`${tela.indiceDaParada}:${posicao}`, status)}
+                    />
+                  )}
+                </div>
+              ))}
             </div>
-          ))
-        )}
-      </div>
-      </div>
+          </div>
+        );
+      })}
+
+      {preparando && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black text-center text-white">
+          <LoaderCircle className="h-7 w-7 animate-spin text-white/70" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-medium">Carregando ronda…</p>
+            <p className="mt-1 text-xs text-white/55">
+              Preparando {quantidadePronta} de {chavesDosPlayers.length} câmera{chavesDosPlayers.length === 1 ? '' : 's'} para trocar sem piscadas.
+            </p>
+          </div>
+          <button type="button" onClick={onSair} className="mt-1 rounded-lg border border-white/20 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10">
+            Cancelar
+          </button>
+        </div>
+      )}
 
       {/* Cabeçalho flutuante (auto-hide), sobre a grade em tela cheia. */}
       <div {...propsDoControle} className={`absolute inset-x-0 top-0 z-10 flex items-center gap-3 bg-black/55 px-4 py-2 text-white backdrop-blur-sm transition-opacity duration-300 ${visivel ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
