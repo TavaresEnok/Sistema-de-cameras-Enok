@@ -483,6 +483,14 @@ export default function PlaybackPage() {
   // A fila de Detecções já filtrava; a Reprodução, onde o operador de fato
   // procura, não tinha como.
   const [filtroDeObjeto, setFiltroDeObjeto] = useState<FiltroDeObjeto>(null);
+  // A pesquisa por pessoa/veículo só faz sentido quando esta instalação tem a
+  // IA ligada. "Tudo" continua disponível porque mostra as gravações e os
+  // eventos de movimento, inclusive os que não têm rótulo semântico.
+  //
+  // Não confundimos IA temporariamente offline com IA desligada: os rótulos
+  // já gravados continuam pesquisáveis no primeiro caso. O backend devolve o
+  // estado explícito `disabled` quando AI_AUTO_START_ENABLED=false.
+  const [iaDesativadaNaInstalacao, setIaDesativadaNaInstalacao] = useState(false);
   const [selectedForZip, setSelectedForZip] = useState<Set<string>>(new Set());
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [apagandoSelecionadas, setApagandoSelecionadas] = useState(false);
@@ -620,6 +628,32 @@ export default function PlaybackPage() {
   const recordingListRef = useRef<HTMLDivElement | null>(null);
   const listScrollFrameRef = useRef<number | null>(null);
   const [listMetrics, setListMetrics] = useState({ scrollTopPx: 0, viewportHeightPx: 0 });
+
+  // A instalação pode operar sem IA (por exemplo, em modo manual para poupar
+  // recursos). Nesse caso os filtros semânticos não têm como produzir um novo
+  // resultado e precisam ficar claramente indisponíveis — não apenas falhar
+  // quando o operador clicar.
+  useEffect(() => {
+    let ativo = true;
+    if (!accessToken) {
+      setIaDesativadaNaInstalacao(false);
+      return () => { ativo = false; };
+    }
+    void client.get<{ status?: string }>('/ai/health')
+      .then(({ data }) => {
+        if (ativo) setIaDesativadaNaInstalacao(String(data?.status ?? '').toLowerCase() === 'disabled');
+      })
+      .catch(() => {
+        // Indisponibilidade pontual não significa que a IA foi desligada: os
+        // rótulos já gravados ainda podem ser pesquisados.
+        if (ativo) setIaDesativadaNaInstalacao(false);
+      });
+    return () => { ativo = false; };
+  }, [accessToken, client]);
+
+  useEffect(() => {
+    if (iaDesativadaNaInstalacao && filtroDeObjeto !== null) setFiltroDeObjeto(null);
+  }, [filtroDeObjeto, iaDesativadaNaInstalacao]);
 
   // ── VOD CONTÍNUO (ADITIVO) ────────────────────────────────────────────────
   // UMA playlist por câmera+dia (GET /recordings/vod.m3u8?format=json) descreve o
@@ -3155,9 +3189,11 @@ export default function PlaybackPage() {
             <button
               key={valor}
               type="button"
+              disabled={iaDesativadaNaInstalacao}
               onClick={() => setFiltroDeObjeto(filtroDeObjeto === valor ? null : valor)}
               className={`seg-btn ${filtroDeObjeto === valor ? 'active' : ''}`}
               aria-pressed={filtroDeObjeto === valor}
+              title={iaDesativadaNaInstalacao ? 'A IA está desativada nesta instalação.' : undefined}
             >
               {rotulo}
             </button>
