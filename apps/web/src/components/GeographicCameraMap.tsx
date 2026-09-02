@@ -126,7 +126,12 @@ export function GeographicCameraMap({
     map.on('zoomend', () => setZoom(map.getZoom()));
     mapRef.current = map;
 
-    const resizeObserver = new ResizeObserver(() => map.resize());
+    // MapLibre ainda não possui matriz/projeção durante o carregamento inicial
+    // do estilo. Um ResizeObserver pode disparar antes do `load` e chamar
+    // resize nesse intervalo, causando o erro "reading '0'" do motor.
+    const resizeObserver = new ResizeObserver(() => {
+      if (map.isStyleLoaded()) map.resize();
+    });
     resizeObserver.observe(container);
     return () => {
       resizeObserver.disconnect();
