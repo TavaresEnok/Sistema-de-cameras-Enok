@@ -37,7 +37,6 @@ function marcadorHtml(ponto: PontoNoMapa, online: boolean) {
 }
 
 function enquadrar(map: MapLibreMap, positions: PositionedCamera[]) {
-  map.resize();
   if (!positions.length) {
     map.jumpTo({ center: FALLBACK_CENTER, zoom: 4 });
     return;
@@ -126,15 +125,7 @@ export function GeographicCameraMap({
     map.on('zoomend', () => setZoom(map.getZoom()));
     mapRef.current = map;
 
-    // MapLibre ainda não possui matriz/projeção durante o carregamento inicial
-    // do estilo. Um ResizeObserver pode disparar antes do `load` e chamar
-    // resize nesse intervalo, causando o erro "reading '0'" do motor.
-    const resizeObserver = new ResizeObserver(() => {
-      if (map.isStyleLoaded()) map.resize();
-    });
-    resizeObserver.observe(container);
     return () => {
-      resizeObserver.disconnect();
       markersRef.current.forEach((marker) => marker.remove());
       markersRef.current = [];
       map.remove();
