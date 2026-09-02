@@ -22,6 +22,13 @@ test('o poster tem um caminho de thumbnail em disco (instantâneo)', () => {
   assert.match(SRC, /\.thumb\.jpg/, 'a busca é pelo thumbnail de gravação');
 });
 
+test('o último snapshot live é persistido por câmera, inclusive sem gravação', () => {
+  assert.match(SRC, /latestPersistedPoster/, 'o poster precisa sobreviver ao restart da API');
+  assert.match(SRC, /persistLivePoster/, 'frame live válido deve ser materializado no storage');
+  assert.match(SRC, /LIVE_POSTER_STORAGE_ROOT/, 'o diretório persistente precisa poder ser separado do acervo');
+  assert.match(SRC, /await rename\(temporary, target\)/, 'a troca deve ser atômica para nunca servir JPG parcial');
+});
+
 test('o disco é consultado ANTES do grab RTSP lento', () => {
   const inicio = SRC.indexOf('async getLivePosterFrame');
   const corpo = SRC.slice(inicio, inicio + 1800);
@@ -82,6 +89,44 @@ test('integração: entrega gravação antiga na hora e depois promove para live
     const promoted = await promotedPromise;
     assert.equal(promoted.source, 'live');
     assert.equal(promoted.buffer.toString(), 'frame-atual');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('integração: sem Recording, usa o último snapshot salvo da câmera', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'drac-poster-saved-'));
+  try {
+    const posters = join(root, 'posters');
+    mkdirSync(posters, { recursive: true });
+    writeFileSync(join(posters, 'camera-cam-2.jpg'), Buffer.from('ultimo-frame-live'));
+
+    const service = new FfmpegMjpegService(
+      { get: (key: string) => {
+        if (key === 'recordingsRoot') return join(root, 'recordings');
+        if (key === 'livePosterStorageRoot') return posters;
+        return undefined;
+      } } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    let releaseLive!: () => void;
+    const liveReady = new Promise<void>((resolve) => { releaseLive = resolve; });
+    (service as any).generateLivePosterFrame = async () => {
+      await liveReady;
+      return { buffer: Buffer.from('novo-frame'), generatedAt: Date.now(), source: 'live' as const };
+    };
+
+    const fallback = await service.getLivePosterFrame('cam-2');
+    assert.equal(fallback.source, 'saved');
+    assert.equal(fallback.buffer.toString(), 'ultimo-frame-live');
+
+    const promotedPromise = service.getLivePosterFrame('cam-2', true);
+    releaseLive();
+    const promoted = await promotedPromise;
+    assert.equal(promoted.source, 'live');
+    assert.equal(promoted.buffer.toString(), 'novo-frame');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

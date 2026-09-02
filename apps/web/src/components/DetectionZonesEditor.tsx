@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { Check, Loader2, Plus, Trash2, Undo2 } from 'lucide-react';
+import { CameraOff, Check, Loader2, Plus, RefreshCw, Trash2, Undo2 } from 'lucide-react';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
@@ -75,6 +75,10 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   const [drawKind, setDrawKind] = useState<'include' | 'exclude' | 'line'>(() => ferramentaInicial(initialZones));
   const [saving, setSaving] = useState(false);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
+  const [posterStatus, setPosterStatus] = useState<'loading' | 'retrying' | 'empty' | 'ready'>('loading');
+  const posterRetryTimerRef = useRef<number | null>(null);
+  const posterRetryCountRef = useRef(0);
+  const posterFreshRetryDoneRef = useRef(false);
   // ── A CAIXA TEM DE TER A PROPORÇÃO DA CÂMERA ─────────────────────────────
   //
   // A caixa era fixa em 16:9 e a imagem entrava com `object-cover`, que CORTA
@@ -102,22 +106,54 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   }, [initialZones, cameraId]);
 
   // Snapshot da câmera como pano de fundo (mesmo poster usado no live).
-  useEffect(() => {
-    if (!accessToken) return;
-    let cancelled = false;
-    void axios
-      .post<{ streamToken: string }>(`${API_URL}/camera-stream/${cameraId}/token`, {}, {
+  // O servidor devolve o último frame salvo em disco quando o RTSP recente
+  // falha. Ainda assim a rede pode cair entre receber a URL e carregar a
+  // imagem: neste caso não deixamos o ícone de imagem quebrada aparecer e
+  // tentamos novamente com backoff, sem obrigar o operador a sair e voltar.
+  const loadPoster = useCallback(async (fresh = false): Promise<boolean> => {
+    if (!accessToken) return false;
+    try {
+      const { data } = await axios.post<{ streamToken: string }>(`${API_URL}/camera-stream/${cameraId}/token`, {}, {
         headers: { Authorization: `Bearer ${accessToken}` },
-      })
-      .then(({ data }) => {
-        if (cancelled || !data?.streamToken) return;
-        setPosterUrl(`${API_URL}/camera-stream/${cameraId}/poster?token=${encodeURIComponent(data.streamToken)}&v=${Date.now()}`);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
+      });
+      if (!data?.streamToken) throw new Error('Token de imagem ausente');
+      const params = new URLSearchParams({ token: data.streamToken, v: String(Date.now()) });
+      if (fresh) params.set('fresh', '1');
+      setPosterUrl(`${API_URL}/camera-stream/${cameraId}/poster?${params.toString()}`);
+      return true;
+    } catch {
+      return false;
+    }
   }, [accessToken, cameraId]);
+
+  const schedulePosterRetry = useCallback(() => {
+    if (posterRetryTimerRef.current !== null) window.clearTimeout(posterRetryTimerRef.current);
+    const attempt = posterRetryCountRef.current++;
+    if (attempt >= 3) {
+      setPosterStatus('empty');
+      return;
+    }
+    setPosterStatus('retrying');
+    const delay = [1200, 3500, 9000][attempt];
+    posterRetryTimerRef.current = window.setTimeout(() => {
+      void loadPoster(true).then((ok) => {
+        if (!ok) schedulePosterRetry();
+      });
+    }, delay);
+  }, [loadPoster]);
+
+  useEffect(() => {
+    posterRetryCountRef.current = 0;
+    posterFreshRetryDoneRef.current = false;
+    setPosterUrl(null);
+    setPosterStatus('loading');
+    void loadPoster(false).then((ok) => {
+      if (!ok) schedulePosterRetry();
+    });
+    return () => {
+      if (posterRetryTimerRef.current !== null) window.clearTimeout(posterRetryTimerRef.current);
+    };
+  }, [cameraId, loadPoster, schedulePosterRetry]);
 
   const toNormalized = useCallback((clientX: number, clientY: number) => {
     const el = containerRef.current;
@@ -336,10 +372,45 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
               if (img.naturalWidth > 0 && img.naturalHeight > 0) {
                 setProporcao(`${img.naturalWidth} / ${img.naturalHeight}`);
               }
+              setPosterStatus('ready');
+              posterRetryCountRef.current = 0;
+              // A primeira resposta pode ser o snapshot antigo salvo no disco
+              // enquanto o servidor busca o frame recente. Uma nova consulta
+              // curta troca automaticamente para o atual, sem recarregar a tela.
+              if (!posterFreshRetryDoneRef.current) {
+                posterFreshRetryDoneRef.current = true;
+                posterRetryTimerRef.current = window.setTimeout(() => { void loadPoster(true); }, 2500);
+              }
+            }}
+            onError={() => {
+              setPosterUrl(null); // esconde o ícone nativo de imagem quebrada
+              schedulePosterRetry();
             }}
           />
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-xs text-white/40">Carregando imagem da câmera…</div>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[radial-gradient(circle_at_50%_35%,hsl(var(--muted)_/_0.38),transparent_55%)] px-5 text-center text-white/55">
+            {posterStatus === 'loading' || posterStatus === 'retrying'
+              ? <RefreshCw className="h-5 w-5 animate-spin text-white/45" aria-hidden="true" />
+              : <CameraOff className="h-6 w-6 text-white/45" aria-hidden="true" />}
+            <span className="text-xs">
+              {posterStatus === 'loading' ? 'Carregando imagem da câmera…'
+                : posterStatus === 'retrying' ? 'Reconectando à câmera…'
+                  : 'Ainda não há imagem salva para esta câmera.'}
+            </span>
+            {posterStatus === 'empty' && (
+              <button
+                type="button"
+                onClick={() => {
+                  posterRetryCountRef.current = 0;
+                  setPosterStatus('retrying');
+                  void loadPoster(true).then((ok) => { if (!ok) schedulePosterRetry(); });
+                }}
+                className="rounded border border-white/20 bg-black/30 px-2.5 py-1 text-[11px] text-white/80 transition-colors hover:bg-white/10"
+              >
+                Tentar novamente
+              </button>
+            )}
+          </div>
         )}
 
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">

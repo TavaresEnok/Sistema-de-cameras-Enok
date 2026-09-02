@@ -14,8 +14,8 @@ import {
   execFileWithSecretUrl,
   spawnWithSecretUrl,
 } from '../common/process/secret-url-process.helper';
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 type FfmpegStreamConfig = {
   rtspTransport: string;
@@ -54,7 +54,12 @@ type StreamAttempt = {
 type PosterCacheEntry = {
   buffer: Buffer;
   generatedAt: number;
-  source: 'recording' | 'live';
+  /**
+   * `saved` é o último frame ao vivo materializado no storage. Diferente do
+   * cache em memória, ele sobrevive ao restart da API e permite abrir o editor
+   * de perímetro mesmo se a câmera estiver oscilando naquele instante.
+   */
+  source: 'recording' | 'saved' | 'live';
 };
 
 @Injectable()
@@ -410,6 +415,58 @@ export class FfmpegMjpegService {
     }
   }
 
+  /**
+   * Último snapshot ao vivo que a própria API conseguiu capturar. A gravação
+   * pode estar manual/desligada — especialmente durante instalação e testes —
+   * portanto depender somente de `.thumb.jpg` de Recording deixava o editor de
+   * perímetro sem fallback justamente nas câmeras que ainda não gravaram.
+   *
+   * O diretório fica ao lado de `recordings` por padrão (`/storage/posters`),
+   * mas pode ser separado via LIVE_POSTER_STORAGE_ROOT. O id é normalizado
+   * antes de virar caminho para nunca transformar um id em path traversal.
+   */
+  private getPersistedPosterRoot(): string {
+    const configured = this.configService.get<string>('livePosterStorageRoot')
+      ?? process.env.LIVE_POSTER_STORAGE_ROOT;
+    if (configured?.trim()) return configured.trim();
+    const recordingsRoot = this.configService.get<string>('recordingsRoot')
+      ?? process.env.RECORDINGS_ROOT
+      ?? './storage/recordings';
+    return join(dirname(recordingsRoot), 'posters');
+  }
+
+  private persistedPosterPath(cameraId: string): string {
+    const safeId = String(cameraId).replace(/[^a-zA-Z0-9_-]/g, '');
+    return join(this.getPersistedPosterRoot(), `camera-${safeId || 'unknown'}.jpg`);
+  }
+
+  private async latestPersistedPoster(cameraId: string): Promise<PosterCacheEntry | null> {
+    try {
+      const path = this.persistedPosterPath(cameraId);
+      const [info, buffer] = await Promise.all([stat(path), readFile(path)]);
+      return buffer.length ? { buffer, generatedAt: info.mtimeMs, source: 'saved' } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Grava por rename atômico: o browser recebe sempre JPG completo, nunca meio arquivo. */
+  private async persistLivePoster(cameraId: string, entry: PosterCacheEntry): Promise<void> {
+    if (entry.source !== 'live' || !entry.buffer.length) return;
+    const target = this.persistedPosterPath(cameraId);
+    const folder = dirname(target);
+    const temporary = join(folder, `.${String(cameraId).replace(/[^a-zA-Z0-9_-]/g, '')}.${process.pid}.${Date.now()}.tmp`);
+    await mkdir(folder, { recursive: true });
+    try {
+      await writeFile(temporary, entry.buffer, { mode: 0o640 });
+      await rename(temporary, target);
+    } catch (error) {
+      // Snapshot é melhoria de UX, nunca pode derrubar a captura/visualização
+      // ao vivo por uma falha de disco pontual.
+      this.logger.debug(`Falha ao persistir poster camera=${cameraId}: ${(error as Error).message}`);
+    }
+  }
+
   private refreshLivePoster(cameraId: string, fallback?: PosterCacheEntry): Promise<PosterCacheEntry> {
     const current = this.posterInFlight.get(cameraId);
     if (current) return current;
@@ -439,7 +496,16 @@ export class FfmpegMjpegService {
     // uma captura atual é disparada. O app pede `fresh=1` em seguida e aguarda
     // esse mesmo trabalho, sem abrir dois FFmpegs para a câmera.
     if (!cached) {
-      const disco = await this.latestDiskThumbnail(cameraId);
+      // Escolhe a imagem realmente mais recente entre uma gravação antiga e o
+      // último frame live já salvo. Assim uma câmera em modo manual continua
+      // tendo uma cena conhecida, sem esconder uma gravação mais nova.
+      const [saved, recording] = await Promise.all([
+        this.latestPersistedPoster(cameraId),
+        this.latestDiskThumbnail(cameraId),
+      ]);
+      const disco = [saved, recording]
+        .filter((entry): entry is PosterCacheEntry => entry !== null)
+        .sort((a, b) => b.generatedAt - a.generatedAt)[0];
       if (disco) {
         this.posterCache.set(cameraId, disco);
         cached = disco;
@@ -517,6 +583,7 @@ export class FfmpegMjpegService {
           });
           if (Buffer.isBuffer(stdout) && stdout.length > 0) {
             const entry: PosterCacheEntry = { buffer: stdout, generatedAt: Date.now(), source: 'live' };
+            await this.persistLivePoster(cameraId, entry);
             this.posterCache.set(cameraId, entry);
             return entry;
           }

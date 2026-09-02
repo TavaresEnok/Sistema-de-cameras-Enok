@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Clock, LoaderCircle, Pause, Play, Plus, Trash2, X } from 'lucide-react';
 import { useAutoHideControls } from '../hooks/use-auto-hide-controls';
 import { getApiBaseUrl } from '../lib/api-base';
@@ -144,7 +145,12 @@ export default function RondaPage() {
   };
 
   if (rodando) {
-    return <MuralDaRonda ronda={rodando} layouts={layouts} cameras={cameras} onSair={() => setRodando(null)} />;
+    // AppLayout anima a página com `transform`. Um `position: fixed` dentro
+    // desse ancestral deixa de ser fixo à viewport e podia parecer apenas um
+    // painel grande, com menu/cabeçalho ainda à vista. Portal para `body` é a
+    // garantia de tela cheia real ao iniciar a ronda, como um mural de TV.
+    const mural = <MuralDaRonda ronda={rodando} layouts={layouts} cameras={cameras} onSair={() => setRodando(null)} />;
+    return typeof document === 'undefined' ? mural : createPortal(mural, document.body);
   }
 
   return (
