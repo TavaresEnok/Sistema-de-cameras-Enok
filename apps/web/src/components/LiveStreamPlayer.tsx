@@ -1670,6 +1670,25 @@ export function LiveStreamPlayer({
           activeProtocolRef.current = null;
           return;
         }
+        if (
+          axios.isAxiosError<CommercialRestrictionError>(streamError)
+          && streamError.response?.status === 503
+          && streamError.response.data?.error === 'rtmp_source_unavailable'
+        ) {
+          // Publicação RTMP não é falha de WebRTC a ser tentada em loop: não há
+          // mídia no servidor enquanto o app/encoder estiver desconectado.
+          // Parar aqui evita o "Conectando" eterno; o botão permite retestar
+          // assim que a origem voltar, sem sair da página.
+          setError(
+            streamError.response.data.userMessage
+            ?? 'Aguardando transmissão RTMP da câmera.',
+          );
+          setRetryMessage(null);
+          setIsLoading(false);
+          setActiveProtocol(null);
+          activeProtocolRef.current = null;
+          return;
+        }
         const message = streamError instanceof Error ? streamError.message : 'Falha ao iniciar stream.';
         if (/401|403|unauthorized|forbidden|auth|credencial|senha/i.test(message)) {
           setError('Falha de autenticação da câmera: valide usuário/senha RTSP/ONVIF.');

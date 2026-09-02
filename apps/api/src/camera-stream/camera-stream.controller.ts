@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Query, Req, Res, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Query, Req, Res, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SkipThrottle } from '@nestjs/throttler';
 import { UserRole } from '@prisma/client';
@@ -481,7 +481,19 @@ export class CameraStreamController {
         measuredLiveCodec = ensured.sourceVideoCodec;
         liveTranscodedForBrowser = ensured.transcodedForLive;
         effectiveDeliveryProfile = ensured.liveProfile ?? effectiveDeliveryProfile;
-      } catch {
+      } catch (error) {
+        // Uma câmera RTMP só existe enquanto o equipamento/app está publicando.
+        // Não devolvemos URLs vazias como se a live estivesse iniciando: o
+        // player precisa encerrar a espera e informar o operador sem expor
+        // detalhes internos de MediaMTX/SRS.
+        if ((camera as { sourceMode?: string | null }).sourceMode === 'rtmp_push') {
+          const detail = error instanceof Error ? error.message : 'publicação RTMP indisponível';
+          throw new ServiceUnavailableException({
+            error: 'rtmp_source_unavailable',
+            userMessage: 'Aguardando transmissão RTMP da câmera. Verifique se o equipamento ou aplicativo continua enviando vídeo.',
+            adminMessage: detail,
+          });
+        }
         mediaBridge = this.mediamtxProxyService.buildPublicUrls(req, null, null);
       }
     }

@@ -2235,7 +2235,13 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     let bitrateKbps = Number(camera.detectedBitrateKbps ?? camera.streamBitrateKbps) || null;
 
     if (this.rtmpIngestSource) {
-      const resolved = await this.rtmpIngestSource.resolve(camera);
+      // Para RTMP não basta conhecer a chave: sem um publisher ativo, criar o
+      // path de entrega aponta o MediaMTX para uma origem inexistente. Isso
+      // deixava o navegador preso em "Conectando" e ainda gerava tentativas
+      // RTSP inúteis a cada poucos segundos. Só montamos o caminho quando há
+      // mídia chegando de fato; a próxima abertura a cria assim que o encoder
+      // ou aplicativo voltar a publicar.
+      const resolved = await this.rtmpIngestSource.resolve(camera, { requireReady: true });
       pathName = resolved.pathName;
       sourceUrl = resolved.sourceUrl;
       codec = resolved.metadata.codec || codec;
