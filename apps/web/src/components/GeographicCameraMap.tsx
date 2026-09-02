@@ -1,18 +1,28 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera as CameraIcon, LocateFixed } from 'lucide-react';
-import maplibregl, { LngLatBounds, type Map as MapLibreMap, type Marker as MapLibreMarker } from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
+import { divIcon, latLngBounds, type Map as LeafletMap } from 'leaflet';
+import { MapContainer, Marker, Popup, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
 import type { Camera } from '../store/vmsDataStore';
-import { agruparParaZoom, explicacaoDoPonto, rotuloDoPonto, type PontoNoMapa } from '../lib/posicao-no-mapa';
+import {
+  agruparParaZoom,
+  explicacaoDoPonto,
+  rotuloDoPonto,
+  type PontoNoMapa,
+} from '../lib/posicao-no-mapa';
 
 type Center = { latitude: number; longitude: number };
 type PositionedCamera = { camera: Camera; position: Center };
 
-const FALLBACK_CENTER: [number, number] = [-51.9253, -14.235];
-const WORLD_BOUNDS: [[number, number], [number, number]] = [[-180, -85], [180, 85]];
-// Vetores OpenFreeMap: nenhum cadastro, chave ou custo por visualização. O
-// próprio estilo entrega a atribuição obrigatória de OpenStreetMap/OpenMapTiles.
-const BASE_MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const FALLBACK_CENTER: [number, number] = [-14.235, -51.9253];
+const WORLD_BOUNDS: [[number, number], [number, number]] = [[-85, -180], [85, 180]];
+// O antigo fundo CARTO passou a devolver ladrilhos com a marca
+// "API KEY REQUIRED". Este fundo nao exige chave e continua usando os dados
+// abertos do OpenStreetMap. As constantes ficam isoladas para que uma futura
+// troca de provedor nao volte a contaminar a logica do mapa.
+const BASE_MAP_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
+const BASE_MAP_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, tiles by <a href="https://www.hotosm.org/">HOT</a> / <a href="https://www.openstreetmap.fr/">OSM France</a>';
 
 const CAMERA_MARKER_SVG = `
   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -22,56 +32,121 @@ const CAMERA_MARKER_SVG = `
     <path d="M17.5 10.5h.01" />
   </svg>`;
 
-function marcadorHtml(ponto: PontoNoMapa, online: boolean) {
+function cameraMarkerIcon(ponto: PontoNoMapa, online: boolean) {
   const estado = ponto.estimado ? 'estimated' : online ? 'online' : 'offline';
   const contador = ponto.agrupado
     ? `<span class="camera-map-pin__count">${ponto.cameras.length > 99 ? '99+' : ponto.cameras.length}</span>`
     : '';
-  return `
-    <span class="camera-map-pin camera-map-pin--${estado}${ponto.agrupado ? ' camera-map-pin--group' : ''}">
-      <span class="camera-map-pin__halo"></span>
-      <span class="camera-map-pin__body">${CAMERA_MARKER_SVG}</span>
-      <span class="camera-map-pin__status"></span>
-      ${contador}
-    </span>`;
-}
 
-function enquadrar(map: MapLibreMap, positions: PositionedCamera[]) {
+  return divIcon({
+    className: 'camera-map-marker-host',
+    html: `
+      <span class="camera-map-pin camera-map-pin--${estado}${ponto.agrupado ? ' camera-map-pin--group' : ''}">
+        <span class="camera-map-pin__halo"></span>
+        <span class="camera-map-pin__body">${CAMERA_MARKER_SVG}</span>
+        <span class="camera-map-pin__status"></span>
+        ${contador}
+      </span>`,
+    iconSize: [52, 60],
+    iconAnchor: [26, 56],
+    popupAnchor: [0, -54],
+    tooltipAnchor: [0, -52],
+  });
+}
+function fitPositions(map: LeafletMap, positions: PositionedCamera[]) {
+  map.invalidateSize({ animate: false });
   if (!positions.length) {
-    map.jumpTo({ center: FALLBACK_CENTER, zoom: 4 });
+    map.setView(FALLBACK_CENTER, 4, { animate: false });
     return;
   }
   if (positions.length === 1) {
     const { latitude, longitude } = positions[0].position;
-    map.jumpTo({ center: [longitude, latitude], zoom: 16 });
+    map.setView([latitude, longitude], 16, { animate: false });
     return;
   }
-  const bounds = new LngLatBounds();
-  positions.forEach(({ position }) => bounds.extend([position.longitude, position.latitude]));
-  map.fitBounds(bounds, { padding: 64, maxZoom: 16, duration: 0 });
+  map.fitBounds(
+    latLngBounds(positions.map(({ position }) => [position.latitude, position.longitude])),
+    { animate: false, padding: [64, 64], maxZoom: 16 },
+  );
 }
 
-function popupDeGrupo(ponto: PontoNoMapa, onOpen: (camera: Camera) => void) {
-  const content = document.createElement('div');
-  content.className = 'camera-map-popup max-h-56 min-w-[15rem] overflow-y-auto';
-  const explicacao = document.createElement('p');
-  explicacao.className = 'm-0 mb-2 text-[11px] leading-relaxed text-muted-foreground';
-  explicacao.textContent = explicacaoDoPonto(ponto);
-  content.appendChild(explicacao);
-  const lista = document.createElement('ul');
-  lista.className = 'm-0 list-none p-0';
-  ponto.cameras.forEach((camera) => {
-    const botao = document.createElement('button');
-    botao.type = 'button';
-    botao.className = 'w-full rounded px-1.5 py-1 text-left text-xs hover:bg-accent';
-    botao.textContent = camera.name;
-    botao.addEventListener('click', () => onOpen(camera as Camera));
-    const item = document.createElement('li');
-    item.appendChild(botao);
-    lista.appendChild(item);
+/**
+ * Informa o zoom atual para fora do mapa.
+ *
+ * Sem isto o agrupamento era fixo: aproximar não separava nada, porque a tela
+ * não sabia que o zoom havia mudado. Era o que o dono via em 28/08/2026.
+ */
+function OuvinteDeZoom({ aoMudar }: { aoMudar: (zoom: number) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    const avisar = () => aoMudar(map.getZoom());
+    avisar();
+    map.on('zoomend', avisar);
+    return () => { map.off('zoomend', avisar); };
+  }, [map, aoMudar]);
+  return null;
+}
+
+function SeletorDePosicaoNoMapa({
+  ativo,
+  aoEscolher,
+}: {
+  ativo: boolean;
+  aoEscolher?: (position: Center) => void;
+}) {
+  const map = useMapEvents({
+    click(event) {
+      if (ativo) aoEscolher?.({ latitude: event.latlng.lat, longitude: event.latlng.lng });
+    },
   });
-  content.appendChild(lista);
-  return content;
+  useEffect(() => {
+    const container = map.getContainer();
+    const cursorAnterior = container.style.cursor;
+    if (ativo) container.style.cursor = 'crosshair';
+    return () => { container.style.cursor = cursorAnterior; };
+  }, [ativo, map]);
+  return null;
+}
+
+/**
+ * O Leaflet mede o contêiner UMA vez. Se ele muda de tamanho depois — e passou
+ * a mudar em 27/08/2026, quando a faixa de aviso entrou ACIMA do mapa — o mapa
+ * continua desenhando para o tamanho antigo e a tela fica CINZA, com os
+ * ladrilhos posicionados fora da área visível.
+ *
+ * Foi o que o dono viu: "quando dou zoom total fica cinza". Os ladrilhos
+ * existiam (nove de nove responderam 200 no zoom 19); o mapa é que estava
+ * desenhando no lugar errado.
+ */
+function VigiaDeTamanho() {
+  const map = useMap();
+  useEffect(() => {
+    const alvo = map.getContainer();
+    const remedir = () => map.invalidateSize({ animate: false });
+    const observador = new ResizeObserver(remedir);
+    observador.observe(alvo);
+    window.addEventListener('resize', remedir);
+    // Uma medida logo apos a montagem: a rota pode terminar de dimensionar
+    // depois que o mapa ja nasceu.
+    const t = window.setTimeout(remedir, 120);
+    return () => {
+      observador.disconnect();
+      window.removeEventListener('resize', remedir);
+      window.clearTimeout(t);
+    };
+  }, [map]);
+  return null;
+}
+
+function CameraBounds({ positions, signature }: { positions: PositionedCamera[]; signature: string }) {
+  const map = useMap();
+  useEffect(() => {
+    // O contêiner pode terminar de dimensionar depois da montagem da rota.
+    // O frame seguinte garante que o Leaflet calcule o centro com o tamanho real.
+    const frame = requestAnimationFrame(() => fitPositions(map, positions));
+    return () => cancelAnimationFrame(frame);
+  }, [map, signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
 }
 
 export function GeographicCameraMap({
@@ -85,15 +160,15 @@ export function GeographicCameraMap({
   pickMode?: boolean;
   onPickPosition?: (position: Center) => void;
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<MapLibreMap | null>(null);
-  const markersRef = useRef<MapLibreMarker[]>([]);
-  const [mapReady, setMapReady] = useState(false);
-  const [zoom, setZoom] = useState(4);
+  const mapRef = useRef<LeafletMap | null>(null);
   const positioned = useMemo(
     () => cameras.filter((camera) => Number.isFinite(camera.latitude) && Number.isFinite(camera.longitude)),
     [cameras],
   );
+  // Agrupa no zoom distante e abre sobreposições apenas no zoom de rua. A
+  // abertura é visual e não altera as coordenadas armazenadas.
+  const [zoom, setZoom] = useState(4);
+  const pontos = useMemo<PontoNoMapa[]>(() => agruparParaZoom(positioned, zoom), [positioned, zoom]);
   const positions = useMemo<PositionedCamera[]>(
     () => positioned.map((camera) => ({
       camera,
@@ -101,110 +176,92 @@ export function GeographicCameraMap({
     })),
     [positioned],
   );
-  const pontos = useMemo<PontoNoMapa[]>(() => agruparParaZoom(positioned, zoom), [positioned, zoom]);
-  // O zoom não participa da assinatura: aproximar nunca pode reenquadrar a
-  // visão do operador de volta para o Brasil inteiro.
+  // A assinatura do enquadramento usa as CÂMERAS, não os agrupamentos: se
+  // dependesse dos grupos, cada mudança de zoom reenquadraria o mapa e o
+  // operador nunca conseguiria aproximar — o mapa puxaria a visão de volta.
   const signature = positioned.map((c) => `${c.id}:${c.latitude}:${c.longitude}`).join('|');
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || mapRef.current) return;
-    const map = new maplibregl.Map({
-      container,
-      style: BASE_MAP_STYLE,
-      center: FALLBACK_CENTER,
-      zoom: 4,
-      minZoom: 3,
-      maxZoom: 20,
-      maxBounds: WORLD_BOUNDS,
-      renderWorldCopies: false,
-      attributionControl: {},
-    });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left');
-    map.on('load', () => setMapReady(true));
-    map.on('zoomend', () => setZoom(map.getZoom()));
-    mapRef.current = map;
-
-    return () => {
-      markersRef.current.forEach((marker) => marker.remove());
-      markersRef.current = [];
-      map.remove();
-      mapRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!mapReady || !map) return;
-    const frame = requestAnimationFrame(() => enquadrar(map, positions));
-    return () => cancelAnimationFrame(frame);
-  }, [mapReady, signature]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!mapReady || !map) return;
-    const canvas = map.getCanvas();
-    canvas.style.cursor = pickMode ? 'crosshair' : '';
-    const onClick = (event: maplibregl.MapMouseEvent) => {
-      if (pickMode) onPickPosition?.({ latitude: event.lngLat.lat, longitude: event.lngLat.lng });
-    };
-    map.on('click', onClick);
-    return () => {
-      canvas.style.cursor = '';
-      map.off('click', onClick);
-    };
-  }, [mapReady, pickMode, onPickPosition]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!mapReady || !map) return;
-    markersRef.current.forEach((marker) => marker.remove());
-    markersRef.current = pontos.map((ponto) => {
-      const algumaOnline = ponto.cameras.some((camera) => (camera as Camera).isOnline);
-      const element = document.createElement('button');
-      element.type = 'button';
-      element.className = `camera-map-marker-host${pickMode ? ' pointer-events-none' : ''}`;
-      element.innerHTML = marcadorHtml(ponto, algumaOnline);
-      element.title = rotuloDoPonto(ponto);
-      element.setAttribute('aria-label', rotuloDoPonto(ponto));
-
-      const marker = new maplibregl.Marker({ element, anchor: 'bottom' })
-        .setLngLat([ponto.longitude, ponto.latitude])
-        .addTo(map);
-      if (!pickMode && ponto.agrupado) {
-        const popup = new maplibregl.Popup({ offset: 12, closeButton: true, maxWidth: '260px' })
-          .setDOMContent(popupDeGrupo(ponto, onOpen));
-        marker.setPopup(popup);
-      } else if (!pickMode) {
-        element.addEventListener('click', () => onOpen(ponto.cameras[0] as Camera));
-      }
-      return marker;
-    });
-    return () => {
-      markersRef.current.forEach((marker) => marker.remove());
-      markersRef.current = [];
-    };
-  }, [mapReady, pontos, onOpen, pickMode]);
-
-  const mostrarTodas = useCallback(() => {
-    const map = mapRef.current;
-    if (map) enquadrar(map, positions);
-  }, [positions]);
 
   return (
     <div className="relative h-full min-h-[420px] overflow-hidden bg-[#dbe4e8]">
-      <div ref={containerRef} className="z-0 h-full min-h-[420px] w-full" />
+      <MapContainer
+        ref={mapRef}
+        center={FALLBACK_CENTER}
+        zoom={4}
+        minZoom={3}
+        maxZoom={20}
+        maxBounds={WORLD_BOUNDS}
+        maxBoundsViscosity={1}
+        worldCopyJump={false}
+        scrollWheelZoom
+        className="z-0 h-full min-h-[420px] w-full"
+      >
+        <TileLayer
+          attribution={BASE_MAP_ATTRIBUTION}
+          url={BASE_MAP_URL}
+          subdomains="abc"
+          maxNativeZoom={19}
+          bounds={WORLD_BOUNDS}
+          noWrap
+        />
+        <VigiaDeTamanho />
+        <OuvinteDeZoom aoMudar={setZoom} />
+        <SeletorDePosicaoNoMapa ativo={pickMode} aoEscolher={onPickPosition} />
+        <CameraBounds positions={positions} signature={signature} />
+        {pontos.map((ponto) => {
+          const algumaOnline = ponto.cameras.some((c) => (c as Camera).isOnline);
+          const marcador = cameraMarkerIcon(ponto, algumaOnline);
+          return (
+            <Marker
+              key={ponto.id}
+              position={[ponto.latitude, ponto.longitude]}
+              icon={marcador}
+              title={rotuloDoPonto(ponto)}
+              alt={rotuloDoPonto(ponto)}
+              bubblingMouseEvents={pickMode}
+              eventHandlers={pickMode || ponto.agrupado ? undefined : { click: () => onOpen(ponto.cameras[0] as Camera) }}
+            >
+              <Tooltip direction="top" offset={[0, -6]} opacity={0.96}>
+                {rotuloDoPonto(ponto)} · {ponto.estimado ? 'posição estimada' : algumaOnline ? 'online' : 'offline'}
+              </Tooltip>
+              {ponto.agrupado && (
+                <Popup>
+                  <div className="max-h-56 min-w-[15rem] overflow-y-auto">
+                    <p className="m-0 mb-2 text-[11px] leading-relaxed text-muted-foreground">
+                      {explicacaoDoPonto(ponto)}
+                    </p>
+                    <ul className="m-0 list-none p-0">
+                      {ponto.cameras.map((c) => (
+                        <li key={c.id}>
+                          <button
+                            type="button"
+                            onClick={() => onOpen(c as Camera)}
+                            className="w-full rounded px-1.5 py-1 text-left text-xs hover:bg-accent"
+                          >
+                            {c.name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </Popup>
+              )}
+            </Marker>
+          );
+        })}
+      </MapContainer>
+
       <button
         type="button"
-        onClick={mostrarTodas}
-        className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-md border border-border bg-card text-foreground shadow-lg hover:bg-accent"
+        onClick={() => mapRef.current && fitPositions(mapRef.current, positions)}
+        className="absolute right-3 top-3 z-[800] flex h-9 w-9 items-center justify-center rounded-md border border-border bg-card text-foreground shadow-lg hover:bg-accent"
         aria-label="Mostrar todas as câmeras"
         title="Mostrar todas as câmeras"
       >
         <LocateFixed className="h-4 w-4" />
       </button>
+
       {!positions.length && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6">
+        <div className="pointer-events-none absolute inset-0 z-[700] flex items-center justify-center p-6">
           <div className="max-w-sm rounded-xl border border-border bg-card/95 p-5 text-center shadow-xl">
             <CameraIcon className="mx-auto h-7 w-7 text-primary" />
             <div className="mt-3 text-sm font-semibold">{cameras.length} câmera{cameras.length === 1 ? '' : 's'} cadastrada{cameras.length === 1 ? '' : 's'}</div>
