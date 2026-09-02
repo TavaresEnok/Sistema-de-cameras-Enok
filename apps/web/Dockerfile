@@ -18,7 +18,11 @@ ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
 
 # Install dependencies
-RUN apk add --no-cache git
+# mpegts.js traz uma dependência apontada por git+ssh. O build não deve exigir
+# uma chave privada do GitHub: convertemos apenas esses URLs públicos para HTTPS.
+RUN apk add --no-cache git \
+  && git config --global url."https://github.com/".insteadOf "git@github.com:" \
+  && git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
 RUN pnpm install --prod=false
 
 # Copy source
