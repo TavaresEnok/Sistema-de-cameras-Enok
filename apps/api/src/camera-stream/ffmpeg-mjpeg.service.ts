@@ -432,7 +432,11 @@ export class FfmpegMjpegService {
     const recordingsRoot = this.configService.get<string>('recordingsRoot')
       ?? process.env.RECORDINGS_ROOT
       ?? './storage/recordings';
-    return join(dirname(recordingsRoot), 'posters');
+    // `RECORDINGS_ROOT` é o volume gravável inteiro nas instalações atuais
+    // (`/storage`), não necessariamente a subpasta `/storage/recordings`.
+    // Usar dirname('/storage') formava `/posters`, fora do volume e proibido
+    // pelo filesystem read-only da API. O fallback nunca era persistido.
+    return join(recordingsRoot, 'posters');
   }
 
   private persistedPosterPath(cameraId: string): string {

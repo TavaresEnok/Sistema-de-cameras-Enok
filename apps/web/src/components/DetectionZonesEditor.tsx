@@ -77,6 +77,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
   const [posterStatus, setPosterStatus] = useState<'loading' | 'retrying' | 'empty' | 'ready'>('loading');
   const posterRetryTimerRef = useRef<number | null>(null);
+  const posterLoadTimeoutRef = useRef<number | null>(null);
   const posterRetryCountRef = useRef(0);
   const posterFreshRetryDoneRef = useRef(false);
   // ── A CAIXA TEM DE TER A PROPORÇÃO DA CÂMERA ─────────────────────────────
@@ -128,13 +129,18 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
 
   const schedulePosterRetry = useCallback(() => {
     if (posterRetryTimerRef.current !== null) window.clearTimeout(posterRetryTimerRef.current);
+    if (posterLoadTimeoutRef.current !== null) window.clearTimeout(posterLoadTimeoutRef.current);
     const attempt = posterRetryCountRef.current++;
-    if (attempt >= 3) {
+    // O editor não pode manter o operador preso numa tela preta por quase um
+    // minuto quando a câmera ou a rota do snapshot não responde. Uma segunda
+    // tentativa já cobre uma falha transitória; depois mostramos um estado
+    // claro e deixamos a nova tentativa sob controle do operador.
+    if (attempt >= 1) {
       setPosterStatus('empty');
       return;
     }
     setPosterStatus('retrying');
-    const delay = [1200, 3500, 9000][attempt];
+    const delay = 1_500;
     posterRetryTimerRef.current = window.setTimeout(() => {
       void loadPoster(true).then((ok) => {
         if (!ok) schedulePosterRetry();
@@ -152,8 +158,24 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
     });
     return () => {
       if (posterRetryTimerRef.current !== null) window.clearTimeout(posterRetryTimerRef.current);
+      if (posterLoadTimeoutRef.current !== null) window.clearTimeout(posterLoadTimeoutRef.current);
     };
   }, [cameraId, loadPoster, schedulePosterRetry]);
+
+  // Uma URL de <img> pode ficar pendurada em uma conexão intermediária sem
+  // disparar `onerror`. Não deixamos o editor virar um retângulo preto eterno:
+  // após 7 s ele solicita o poster novamente, com frame recente quando houver.
+  useEffect(() => {
+    if (!posterUrl || posterStatus === 'ready') return;
+    if (posterLoadTimeoutRef.current !== null) window.clearTimeout(posterLoadTimeoutRef.current);
+    posterLoadTimeoutRef.current = window.setTimeout(() => {
+      setPosterUrl(null);
+      schedulePosterRetry();
+    }, 7_000);
+    return () => {
+      if (posterLoadTimeoutRef.current !== null) window.clearTimeout(posterLoadTimeoutRef.current);
+    };
+  }, [posterUrl, posterStatus, schedulePosterRetry]);
 
   const toNormalized = useCallback((clientX: number, clientY: number) => {
     const el = containerRef.current;
@@ -368,6 +390,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             className="absolute inset-0 h-full w-full object-fill opacity-80"
             draggable={false}
             onLoad={(e) => {
+              if (posterLoadTimeoutRef.current !== null) window.clearTimeout(posterLoadTimeoutRef.current);
               const img = e.currentTarget;
               if (img.naturalWidth > 0 && img.naturalHeight > 0) {
                 setProporcao(`${img.naturalWidth} / ${img.naturalHeight}`);
@@ -383,6 +406,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
               }
             }}
             onError={() => {
+              if (posterLoadTimeoutRef.current !== null) window.clearTimeout(posterLoadTimeoutRef.current);
               setPosterUrl(null); // esconde o ícone nativo de imagem quebrada
               schedulePosterRetry();
             }}
@@ -413,7 +437,20 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
           </div>
         )}
 
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
+        {posterUrl && posterStatus !== 'ready' && (
+          <div className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/25">
+            <span className="inline-flex items-center gap-2 rounded-md bg-black/65 px-3 py-1.5 text-xs text-white/80">
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Carregando imagem da câmera…
+            </span>
+          </div>
+        )}
+
+        <svg
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          className={`absolute inset-0 h-full w-full transition-opacity ${posterStatus === 'ready' ? 'opacity-100' : 'opacity-0'}`}
+          aria-hidden={posterStatus !== 'ready'}
+        >
           {/* A seta é o que torna o sentido COMPREENSÍVEL: "ab" e "ba" não
               significam nada sozinhos — a ponta na tela mostra qual é qual. */}
           <defs>
