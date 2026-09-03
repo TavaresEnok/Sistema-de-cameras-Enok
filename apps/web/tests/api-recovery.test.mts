@@ -34,4 +34,7 @@ test('publicação RTMP recém-chegada se recupera com limite, sem spinner infin
   const source = await readFile(playerPath, 'utf8');
   assert.match(source, /RTMP_SOURCE_AUTO_RETRY_LIMIT = 4/);
   assert.match(source, /rtmp_source_unavailable[\s\S]*retryAttemptRef\.current < RTMP_SOURCE_AUTO_RETRY_LIMIT[\s\S]*scheduleReconnect\('Aguardando transmissão RTMP da câmera'\)/);
+  assert.match(source, /RTMP_SOURCE_BACKGROUND_RETRY_MS = 15_000/);
+  assert.match(source, /scheduleRtmpBackgroundRecovery[\s\S]*setError\(message\)[\s\S]*setIsLoading\(false\)[\s\S]*RTMP_SOURCE_BACKGROUND_RETRY_MS/);
+  assert.match(source, /rtmp_source_unavailable[\s\S]*scheduleRtmpBackgroundRecovery\(/);
 });

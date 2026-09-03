@@ -66,6 +66,7 @@ const LIVE_FAST_RETRY_MAX_MS = 7000;
 // origem interna. Recuperamos essa janela automaticamente, mas paramos após
 // tentativas suficientes para uma fonte realmente desligada não virar spinner.
 const RTMP_SOURCE_AUTO_RETRY_LIMIT = 4;
+const RTMP_SOURCE_BACKGROUND_RETRY_MS = 15_000;
 const LIVE_EDGE_OFFSET_SECONDS = 0.35;
 // Recuperação de latência sem salto (técnica do Frigate): acima de 1,2s de
 // deriva a reprodução acelera suavemente (teto 1,5×) até reencostar no ao vivo;
@@ -353,6 +354,7 @@ export function LiveStreamPlayer({
   const hasFrameRef = useRef(false);
   const retryTimerRef = useRef<number | null>(null);
   const retryAttemptRef = useRef(0);
+  const rtmpBackgroundRecoveryRef = useRef(false);
   const activeProtocolRef = useRef<ActiveLiveProtocol | null>(null);
   const primaryProtocolRef = useRef<LiveProtocol>('webrtc');
   const hiddenAtRef = useRef<number | null>(null);
@@ -471,6 +473,8 @@ export function LiveStreamPlayer({
   useEffect(() => {
     setQualityMode(getStoredLiveQuality(cameraId));
     setGridUsesH264Fallback(false);
+    retryAttemptRef.current = 0;
+    rtmpBackgroundRecoveryRef.current = false;
   }, [cameraId]);
   // RESTAURO TEMPORÁRIO (2026-09-01): a grade HEVC-via-WebRTC (`grid-hevc`)
   // black-screena em navegadores sem decodificação HEVC/WebRTC, e o fallback
@@ -860,6 +864,7 @@ export function LiveStreamPlayer({
 
     const markHealthy = (protocol: ActiveLiveProtocol) => {
       retryAttemptRef.current = 0;
+      rtmpBackgroundRecoveryRef.current = false;
       setRetryMessage(null);
       setError(null);
       setActiveProtocol(protocol);
@@ -910,11 +915,31 @@ export function LiveStreamPlayer({
       }, delayMs);
     };
 
+    const scheduleRtmpBackgroundRecovery = (message: string) => {
+      if (cancelled) return;
+      clearRetryTimer();
+      rtmpBackgroundRecoveryRef.current = true;
+      setError(message);
+      setRetryMessage(null);
+      setIsLoading(false);
+      setActiveProtocol(null);
+      activeProtocolRef.current = null;
+      retryTimerRef.current = window.setTimeout(() => {
+        retryTimerRef.current = null;
+        failedProtocolsRef.current.clear();
+        streamUrlsCache.clear(`stream-urls:${authUserId}:${cameraId}:${deliveryMode}`);
+        setReloadNonce((value) => value + 1);
+      }, RTMP_SOURCE_BACKGROUND_RETRY_MS);
+    };
+
     const boot = async () => {
       const alreadyHadFrame = hasFrameRef.current;
-      setIsLoading(!alreadyHadFrame);
-      setError(null);
-      if (!alreadyHadFrame) {
+      const backgroundRtmpRecovery = rtmpBackgroundRecoveryRef.current;
+      if (!backgroundRtmpRecovery) {
+        setIsLoading(!alreadyHadFrame);
+        setError(null);
+      }
+      if (!alreadyHadFrame && !backgroundRtmpRecovery) {
         setActiveProtocol(null);
         activeProtocolRef.current = null;
         setHasLiveFrame(false);
@@ -1687,14 +1712,10 @@ export function LiveStreamPlayer({
             scheduleReconnect('Aguardando transmissão RTMP da câmera');
             return;
           }
-          setError(
+          scheduleRtmpBackgroundRecovery(
             streamError.response.data.userMessage
             ?? 'Aguardando transmissão RTMP da câmera.',
           );
-          setRetryMessage(null);
-          setIsLoading(false);
-          setActiveProtocol(null);
-          activeProtocolRef.current = null;
           return;
         }
         const message = streamError instanceof Error ? streamError.message : 'Falha ao iniciar stream.';
@@ -2413,6 +2434,8 @@ export function LiveStreamPlayer({
             <button
               type="button"
               onClick={() => {
+                retryAttemptRef.current = 0;
+                rtmpBackgroundRecoveryRef.current = false;
                 setError(null);
                 setIsLoading(true);
                 setReloadNonce((value) => value + 1);
