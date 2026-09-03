@@ -36,6 +36,19 @@ test('update aguarda API e Web iniciarem antes de considerar o deploy quebrado',
   assert.match(updateScript, /wait_for_http HEAD http:\/\/127\.0\.0\.1:5173\/ Web/);
 });
 
+test('update não confunde readiness em Atenção com falha que exige rollback', () => {
+  assert.match(
+    updateScript,
+    /readiness_status=0\s+"\$ROOT_DIR\/scripts\/production-readiness\.sh" \|\| readiness_status=\$\?/,
+  );
+  assert.match(updateScript, /if \[ "\$readiness_status" -ge 2 \]/);
+  assert.doesNotMatch(
+    updateScript,
+    /set \+e\s+"\$ROOT_DIR\/scripts\/production-readiness\.sh"/,
+    'ERR trap dispara mesmo com set +e; o comando deve estar protegido por ||',
+  );
+});
+
 test('update bloqueia a migration histórica quando ainda existem gravações duplicadas', () => {
   assert.match(updateScript, /preflight_recording_duplicates/);
   assert.match(updateScript, /20260501042000_recordings_indexes/);

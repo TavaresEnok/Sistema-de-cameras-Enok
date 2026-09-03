@@ -309,10 +309,11 @@ wait_for_http HEAD http://127.0.0.1:5173/ Web
 
 if [ -x "$ROOT_DIR/scripts/production-readiness.sh" ]; then
   log "Executando readiness"
-  set +e
-  "$ROOT_DIR/scripts/production-readiness.sh"
-  readiness_status=$?
-  set -e
+  # O comando precisa estar no lado esquerdo de `||`: com `trap ERR` herdado,
+  # apenas usar `set +e` ainda dispara o rollback antes de conseguirmos ler o
+  # código 1 ("Atenção"). Só código 2+ representa bloqueio de promoção.
+  readiness_status=0
+  "$ROOT_DIR/scripts/production-readiness.sh" || readiness_status=$?
   if [ "$readiness_status" -ge 2 ]; then
     fail "Readiness bloqueado apos atualizacao. Backup em $BACKUP_DIR"
   fi
