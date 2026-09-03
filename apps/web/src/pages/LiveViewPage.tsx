@@ -145,7 +145,7 @@ function persistSavedLayouts(layouts: SavedLayout[]) {
   window.localStorage.setItem(LIVE_LAYOUTS_STORAGE_KEY, JSON.stringify(layouts));
 }
 
-export default function LiveViewPage() {
+export default function LiveViewPage({ pageActive = true }: { pageActive?: boolean }) {
   const API_URL = getApiBaseUrl();
   const accessToken = useAuthStore((state) => state.accessToken);
   const allCameras = useVmsDataStore((state) => state.cameras);
@@ -213,6 +213,7 @@ export default function LiveViewPage() {
     // O painel recolhido não gera trabalho de snapshot. Ao abrir, os tokens são
     // emitidos em um único lote; o navegador baixa somente as imagens visíveis.
     if (!panelOpen) return;
+    if (!pageActive) return;
     void loadSidebarPosters();
     const renew = () => {
       if (document.visibilityState === 'visible') void loadSidebarPosters();
@@ -225,7 +226,7 @@ export default function LiveViewPage() {
       window.removeEventListener('focus', renew);
       document.removeEventListener('visibilitychange', renew);
     };
-  }, [loadSidebarPosters, panelOpen, sidebarPosterCameraIdsKey]);
+  }, [loadSidebarPosters, pageActive, panelOpen, sidebarPosterCameraIdsKey]);
 
   const retrySidebarPoster = useCallback((cameraId: string) => {
     setSidebarPosterUrls((current) => {
@@ -410,6 +411,7 @@ export default function LiveViewPage() {
   // Esc volta para a grade anterior — exceto digitando num campo ou com diálogo
   // aberto (nesses casos o Esc pertence ao campo/diálogo).
   useEffect(() => {
+    if (!pageActive) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (layoutDialog || deleteTarget) return;
@@ -426,7 +428,7 @@ export default function LiveViewPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [restoreLayout, layoutDialog, deleteTarget, wallMode, toggleWallMode]);
+  }, [pageActive, restoreLayout, layoutDialog, deleteTarget, wallMode, toggleWallMode]);
 
   const handleCamAction = useCallback((action: string, camera: Camera) => {
     if (action === 'playback') setLocation(`/playback?cameraId=${encodeURIComponent(camera.id)}`);

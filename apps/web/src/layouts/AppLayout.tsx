@@ -61,9 +61,16 @@ const SHORTCUTS: Array<{ key: string; description: string; minRole?: ShortcutRol
   { key: '?',        description: 'Mostrar atalhos' },
 ];
 
-interface AppLayoutProps { children: React.ReactNode }
+interface AppLayoutProps {
+  children: React.ReactNode;
+  /** Página preservada fora da rota: continua com os players vivos, mas não
+   * pode reagir a atalhos nem abrir UI invisível. */
+  active?: boolean;
+  /** Chave estável para conteúdo mantido vivo fora de sua rota. */
+  contentKey?: string;
+}
 
-export function AppLayout({ children }: AppLayoutProps) {
+export function AppLayout({ children, active = true, contentKey }: AppLayoutProps) {
   const [location, setLocation] = useLocation();
   const [cmdOpen, setCmdOpen] = useState(false);
   const [shortcutsOpen, setAtalhosOpen] = useState(false);
@@ -91,6 +98,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const pageTitle = resolvePageTitle(location);
 
   useEffect(() => {
+    if (!active) return;
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault(); setCmdOpen(o => !o); return;
@@ -109,7 +117,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [pagePaths, setLocation]);
+  }, [active, pagePaths, setLocation]);
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-background">
@@ -175,7 +183,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         <main className="flex-1 min-h-0 overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div
-              key={location}
+              key={contentKey ?? location}
               initial={{ opacity: 0, y: 5 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -5 }}
