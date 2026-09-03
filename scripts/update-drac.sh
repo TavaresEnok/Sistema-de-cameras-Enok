@@ -21,6 +21,28 @@ env_value() {
   sed -n "s/^${name}=//p" "$ENV_FILE" | tail -n1 | sed 's/^"//; s/"$//'
 }
 
+env_set() {
+  local name="$1"
+  local value="$2"
+  if grep -qE "^${name}=" "$ENV_FILE"; then
+    sed -i -E "s|^${name}=.*|${name}=${value}|" "$ENV_FILE"
+  else
+    printf '\n%s=%s\n' "$name" "$value" >> "$ENV_FILE"
+  fi
+}
+
+# A Central é um produto da VM Management, não um serviço de cada tenant.
+# `docker compose up drac-central` ativa o serviço mesmo quando ele possui
+# `profiles: [central]`; por isso a lista precisa ser decidida antes e nunca
+# mencionar a Central numa instalação comum.
+APP_SERVICES=(api web)
+COMPOSE_PROFILES_VALUE="$(env_value COMPOSE_PROFILES)"
+if [ "$(env_value DRAC_UPDATE_INCLUDE_CENTRAL)" = "true" ] \
+  || [[ ",$COMPOSE_PROFILES_VALUE," = *,central,* ]]; then
+  COMPOSE+=(--profile central)
+  APP_SERVICES+=(drac-central)
+fi
+
 # Não permita que uma atualização remova o TURN de uma instalação atrás da
 # Gateway. Sem este overlay a sinalização WHEP continua em 201, porém o ICE
 # oferece apenas o IP privado e todo viewer termina em fallback HLS.
@@ -129,8 +151,8 @@ rollback() {
 
   # Quiesce é obrigatório antes de tocar no banco. Não existe restore seguro
   # enquanto a API pode gravar usando o schema novo.
-  if ! "${COMPOSE[@]}" stop api web drac-central >/dev/null; then
-    printf '[DRAC update][ERRO] Não foi possível parar API/Web/Central para rollback.\n' >&2
+  if ! "${COMPOSE[@]}" stop "${APP_SERVICES[@]}" >/dev/null; then
+    printf '[DRAC update][ERRO] Não foi possível parar os serviços da aplicação para rollback.\n' >&2
     rollback_status=1
     quiesced=false
   fi
@@ -169,8 +191,8 @@ rollback() {
   fi
 
   if [ "$rollback_status" -eq 0 ]; then
-    if ! "${COMPOSE[@]}" build api web drac-central >/dev/null \
-      || ! "${COMPOSE[@]}" up -d api web drac-central >/dev/null \
+    if ! "${COMPOSE[@]}" build "${APP_SERVICES[@]}" >/dev/null \
+      || ! "${COMPOSE[@]}" up -d "${APP_SERVICES[@]}" >/dev/null \
       || ! wait_for_http GET http://127.0.0.1:3000/health/ready API \
       || ! wait_for_http HEAD http://127.0.0.1:5173/ Web; then
       printf '[DRAC update][ERRO] Código anterior restaurado, mas os serviços não validaram.\n' >&2
@@ -288,20 +310,29 @@ ROLLBACK_NEEDED=true
 git -C "$ROOT_DIR" fetch origin "$BRANCH"
 git -C "$ROOT_DIR" merge --ff-only "origin/$BRANCH"
 
-log "Construindo API, Web e Central sem alterar os serviços ativos"
-"${COMPOSE[@]}" build api web drac-central
+# O heartbeat envia DRAC_VERSION, não consulta o .git. Vincular a variável ao
+# commit efetivamente promovido evita que a Central anuncie uma versão antiga
+# depois de um deploy novo. O snapshot do .env acima também torna isto
+# reversível pelo rollback.
+DEPLOY_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+env_set DRAC_VERSION "$DEPLOY_COMMIT"
+chmod 600 "$ENV_FILE"
+log "Versão reportada vinculada ao commit ${DEPLOY_COMMIT:0:12}"
+
+log "Construindo aplicação sem alterar os serviços ativos"
+"${COMPOSE[@]}" build "${APP_SERVICES[@]}"
 
 log "Verificando duplicatas históricas antes das migrações"
 preflight_recording_duplicates
 
-log "Parando API, Web e Central antes das migrações"
-"${COMPOSE[@]}" stop api web drac-central
+log "Parando aplicação antes das migrações"
+"${COMPOSE[@]}" stop "${APP_SERVICES[@]}"
 
 log "Aplicando migracoes com a aplicação quiescente"
 "${COMPOSE[@]}" run --rm --no-deps -w /app/apps/api api npx prisma migrate deploy
 
-log "Subindo API, Web e Central atualizadas"
-"${COMPOSE[@]}" up -d api web drac-central
+log "Subindo aplicação atualizada"
+"${COMPOSE[@]}" up -d "${APP_SERVICES[@]}"
 
 log "Validando healthchecks"
 wait_for_http GET http://127.0.0.1:3000/health/ready API
