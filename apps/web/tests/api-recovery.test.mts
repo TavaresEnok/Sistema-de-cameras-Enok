@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const authPath = fileURLToPath(new URL('../src/store/authStore.ts', import.meta.url));
 const dataPath = fileURLToPath(new URL('../src/store/vmsDataStore.ts', import.meta.url));
 const appPath = fileURLToPath(new URL('../src/App.tsx', import.meta.url));
+const playerPath = fileURLToPath(new URL('../src/components/LiveStreamPlayer.tsx', import.meta.url));
 
 test('sessão se recupera de indisponibilidade transitória sem apagar o cookie', async () => {
   const source = await readFile(authPath, 'utf8');
@@ -27,4 +28,10 @@ test('logout limpa imediatamente os dados operacionais da sessão anterior', asy
   const source = await readFile(appPath, 'utf8');
   assert.match(source, /remove da memória os dados pertencentes à sessão anterior/);
   assert.match(source, /void loadData\(\)/);
+});
+
+test('publicação RTMP recém-chegada se recupera com limite, sem spinner infinito', async () => {
+  const source = await readFile(playerPath, 'utf8');
+  assert.match(source, /RTMP_SOURCE_AUTO_RETRY_LIMIT = 4/);
+  assert.match(source, /rtmp_source_unavailable[\s\S]*retryAttemptRef\.current < RTMP_SOURCE_AUTO_RETRY_LIMIT[\s\S]*scheduleReconnect\('Aguardando transmissão RTMP da câmera'\)/);
 });

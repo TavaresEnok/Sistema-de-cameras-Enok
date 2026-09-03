@@ -62,6 +62,10 @@ const LIVE_STALL_RECONNECT_MS = 16000;
 const LIVE_RECONNECT_DEBOUNCE_MS = 2500;
 const LIVE_FAST_RETRY_BASE_MS = 1200;
 const LIVE_FAST_RETRY_MAX_MS = 7000;
+// A câmera pode chegar ao SRS alguns instantes antes de o MediaMTX anunciar a
+// origem interna. Recuperamos essa janela automaticamente, mas paramos após
+// tentativas suficientes para uma fonte realmente desligada não virar spinner.
+const RTMP_SOURCE_AUTO_RETRY_LIMIT = 4;
 const LIVE_EDGE_OFFSET_SECONDS = 0.35;
 // Recuperação de latência sem salto (técnica do Frigate): acima de 1,2s de
 // deriva a reprodução acelera suavemente (teto 1,5×) até reencostar no ao vivo;
@@ -887,7 +891,7 @@ export function LiveStreamPlayer({
       const delayMs = getFastRetryDelay();
       const alreadyHadFrame = hasFrameRef.current;
       setError(null);
-      const warmupMessage = /Nenhum protocolo de live conseguiu iniciar|Aguardando vídeo/i.test(message);
+      const warmupMessage = /Nenhum protocolo de live conseguiu iniciar|Aguardando vídeo|Aguardando transmissão RTMP/i.test(message);
       setRetryMessage(warmupMessage
         ? 'Aguardando vídeo da câmera'
         : `${message} Reconectando...`);
@@ -1675,10 +1679,14 @@ export function LiveStreamPlayer({
           && streamError.response?.status === 503
           && streamError.response.data?.error === 'rtmp_source_unavailable'
         ) {
-          // Publicação RTMP não é falha de WebRTC a ser tentada em loop: não há
-          // mídia no servidor enquanto o app/encoder estiver desconectado.
-          // Parar aqui evita o "Conectando" eterno; o botão permite retestar
-          // assim que a origem voltar, sem sair da página.
+          // A publicação pode ter acabado de chegar ao SRS e ainda estar sendo
+          // anunciada pelo MediaMTX. Faça uma recuperação curta e limitada; se
+          // a fonte estiver realmente desligada, a tela para com um diagnóstico
+          // honesto em vez de manter "Conectando" eternamente.
+          if (retryAttemptRef.current < RTMP_SOURCE_AUTO_RETRY_LIMIT) {
+            scheduleReconnect('Aguardando transmissão RTMP da câmera');
+            return;
+          }
           setError(
             streamError.response.data.userMessage
             ?? 'Aguardando transmissão RTMP da câmera.',

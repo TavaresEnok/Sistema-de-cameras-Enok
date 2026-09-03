@@ -56,6 +56,11 @@ type ByteSample = {
   bitrateKbps: number | null;
 };
 
+// SRS confirma a publicação antes de o MediaMTX necessariamente expor o path
+// interno. Essa pequena janela é normal em uma entrada RTMP e não deve virar
+// "sem vídeo" no primeiro acesso do operador.
+const READY_RECHECK_DELAYS_MS = [250, 750] as const;
+
 /**
  * Resolve a origem canônica de câmeras que PUBLICAM por RTMP.
  *
@@ -241,6 +246,22 @@ export class RtmpIngestSourceService {
       stalled: false,
       bitrateKbps: null,
     };
+    if (options.requireReady && (!selectedRuntime.ready || selectedRuntime.stalled)) {
+      // Reconsulta todos os aliases por um intervalo curto e limitado. Não é
+      // polling infinito: ela só absorve a propagação SRS -> MediaMTX no exato
+      // momento em que uma câmera RTMP começa a publicar.
+      for (const delayMs of READY_RECHECK_DELAYS_MS) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        for (const pathName of candidates) {
+          const runtime = await this.getRuntime(pathName);
+          if (!runtime.ready || runtime.stalled) continue;
+          selectedPath = pathName;
+          selectedRuntime = runtime;
+          break;
+        }
+        if (selectedRuntime.ready && !selectedRuntime.stalled) break;
+      }
+    }
     if (options.requireReady && (!selectedRuntime.ready || selectedRuntime.stalled)) {
       throw new Error(selectedRuntime.stalled
         ? 'A publicação RTMP está conectada, mas parou de entregar quadros.'
