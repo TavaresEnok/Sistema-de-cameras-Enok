@@ -6,7 +6,9 @@ import { envNumber } from '../../common/config/env-number.helper';
 // `grid-hevc` usa a mesma fonte leve de `grid`, mas preserva o codec recebido.
 // Ele tem path próprio para poder coexistir com o fallback H.264 sem que dois
 // navegadores reconfigurem o mesmo path um por cima do outro.
-export type LiveViewMode = 'grid' | 'grid-hevc' | 'original';
+// Perfis com `-audio` preservam o vídeo do perfil base, mas normalizam apenas
+// a trilha de áudio em Opus. Assim uma grade mutada não abre FFmpeg por tile.
+export type LiveViewMode = 'grid' | 'grid-audio' | 'grid-hevc' | 'original' | 'original-audio';
 
 // TILE DE MOSAICO NÃO É TELA CHEIA — e o bitrate é o que chega no espectador.
 //
@@ -60,8 +62,10 @@ export const GRID_LIVE_BITRATE_KBPS = envNumber('GRID_LIVE_BITRATE_KBPS', 900, {
 export function normalizeLiveViewMode(value?: string | null): LiveViewMode {
   const v = String(value ?? '').trim().toLowerCase();
   if (v === 'grid') return 'grid';
+  if (v === 'grid-audio') return 'grid-audio';
   if (v === 'grid-hevc') return 'grid-hevc';
   if (v === 'original') return 'original';
+  if (v === 'original-audio') return 'original-audio';
   return 'original';
 }
 

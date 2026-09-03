@@ -564,7 +564,7 @@ export class CameraStreamController {
       originalProfile,
       deliveryProfile,
       deliveryMode: viewMode,
-      deliveryTarget: viewMode === 'grid' || viewMode === 'grid-hevc'
+      deliveryTarget: viewMode === 'grid' || viewMode === 'grid-audio' || viewMode === 'grid-hevc'
         ? {
             maxWidth: GRID_LIVE_MAX_WIDTH,
             maxHeight: GRID_LIVE_MAX_HEIGHT,
@@ -583,6 +583,8 @@ export class CameraStreamController {
         protocolOrder,
         reason: viewMode === 'grid-hevc'
           ? 'A grade recebe o substream no codec original e prioriza WebRTC; H.264 é apenas contingência do cliente.'
+          : viewMode === 'grid-audio'
+          ? 'Áudio foi solicitado para este tile; somente esta câmera normaliza AAC em Opus.'
           : smartOriginalEnabled
           ? 'Perfil Live recebido em HEVC; navegador recebe H.264, enquanto gravação permanece no perfil H.265 dedicado.'
           : configuredPreferred === 'webrtc'

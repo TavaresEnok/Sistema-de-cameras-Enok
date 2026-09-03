@@ -21,7 +21,7 @@ import { type LiveViewMode } from './live-delivery-profile.helper';
 export type SourceProfile = 'main' | 'sub';
 
 export function liveViewModeToSourceProfile(mode: LiveViewMode): SourceProfile {
-  return mode === 'grid' || mode === 'grid-hevc' ? 'sub' : 'main';
+  return mode === 'grid' || mode === 'grid-audio' || mode === 'grid-hevc' ? 'sub' : 'main';
 }
 
 /**

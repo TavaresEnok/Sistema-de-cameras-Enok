@@ -1,5 +1,5 @@
 export type LiveProtocol = 'auto' | 'flv' | 'hls' | 'webrtc' | 'mjpeg' | 'llhls';
-export type LiveDeliveryMode = 'grid' | 'grid-hevc' | 'original';
+export type LiveDeliveryMode = 'grid' | 'grid-audio' | 'grid-hevc' | 'original' | 'original-audio';
 export type VideoCodecFamily = 'avc' | 'hevc' | 'unknown';
 
 export type WebrtcInboundSample = {
@@ -70,15 +70,15 @@ export function shouldRetryWebrtcStartup(reason: string, attempt: number) {
 export function buildLiveProtocolOrder(input: ProtocolPolicyInput): LiveProtocol[] {
   const family = videoCodecFamily(input.sourceCodec);
 
-  if (input.deliveryMode === 'grid' || input.deliveryMode === 'grid-hevc') {
+  if (input.deliveryMode === 'grid' || input.deliveryMode === 'grid-audio' || input.deliveryMode === 'grid-hevc') {
     const order: LiveProtocol[] = ['webrtc'];
-    if (input.deliveryMode === 'grid' || family !== 'hevc' || input.mseDecodesHevc) {
+    if (input.deliveryMode !== 'grid-hevc' || family !== 'hevc' || input.mseDecodesHevc) {
       order.push('llhls', 'hls');
     }
     return order;
   }
 
-  if (input.deliveryMode === 'original' && family === 'hevc') {
+  if ((input.deliveryMode === 'original' || input.deliveryMode === 'original-audio') && family === 'hevc') {
     const order: LiveProtocol[] = ['webrtc'];
     if (input.mseDecodesHevc) order.push('llhls', 'hls');
     return order;

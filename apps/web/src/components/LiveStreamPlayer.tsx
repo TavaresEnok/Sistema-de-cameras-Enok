@@ -462,6 +462,10 @@ export function LiveStreamPlayer({
   }, []);
   // Qualidade da câmera única (1x1): persistida por câmera; na grade é sempre 'grid'.
   const [qualityMode, setQualityMode] = useState<LiveQualityMode>(() => getStoredLiveQuality(cameraId));
+  // Grade começa sem trilha de áudio: evita uma conversão AAC→Opus por tile.
+  // O gesto explícito no ícone de volume troca SOMENTE esta câmera para o
+  // perfil com áudio, preservando o último frame durante a renegociação.
+  const [gridAudioRequested, setGridAudioRequested] = useState(false);
   // A grade começa sempre pelo bitstream original do substream. Só muda para o
   // path H.264 depois que este cliente realmente falhar em WebRTC/H.265 (e no
   // HLS/H.265, quando MSE estiver disponível). A detecção declarativa de codec
@@ -470,6 +474,7 @@ export function LiveStreamPlayer({
   useEffect(() => {
     setQualityMode(getStoredLiveQuality(cameraId));
     setGridUsesH264Fallback(false);
+    setGridAudioRequested(false);
     retryAttemptRef.current = 0;
     rtmpBackgroundRecoveryRef.current = false;
   }, [cameraId]);
@@ -481,8 +486,10 @@ export function LiveStreamPlayer({
   // Para reativar o HEVC: volte GRID_HEVC_ENABLED para true.
   const GRID_HEVC_ENABLED = false;
   const deliveryMode: LiveDeliveryMode = liveViewMode === 'selected'
-    ? (qualityMode === 'max' ? 'original' : 'grid')
-    : (GRID_HEVC_ENABLED && !gridUsesH264Fallback) ? 'grid-hevc' : 'grid';
+    ? (qualityMode === 'max' ? 'original-audio' : 'grid-audio')
+    : gridAudioRequested
+      ? 'grid-audio'
+      : (GRID_HEVC_ENABLED && !gridUsesH264Fallback) ? 'grid-hevc' : 'grid';
 
   const changeQuality = useCallback((next: LiveQualityMode) => {
     // A declaração de codecs do navegador é apenas uma pista: alguns clientes
@@ -2592,6 +2599,13 @@ export function LiveStreamPlayer({
           type="button"
           onClick={() => {
             const nextMuted = !isMuted;
+            if (liveViewMode === 'grid' && nextMuted !== isMuted) {
+              // Só o clique que liga/desliga áudio reconecta este tile. A
+              // grade inteira continua no H.264 em passthrough, sem áudio.
+              if (hasFrameRef.current) preserveFrameOnReloadRef.current = true;
+              setRetryMessage(nextMuted ? 'Desativando áudio…' : 'Ativando áudio…');
+              setGridAudioRequested(!nextMuted);
+            }
             setIsMuted(nextMuted);
             const element = videoRef.current;
             if (element) {

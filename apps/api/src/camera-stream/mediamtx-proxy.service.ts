@@ -796,9 +796,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     }
   }
 
-  /** Inverte pathNameFromCameraId: `cam_<32hex>[_grid|_grid_hevc|_orig]` → câmera/modo. */
+  /** Inverte pathNameFromCameraId: `cam_<32hex>[_grid|_grid_audio|_grid_hevc|_orig|_orig_audio]` → câmera/modo. */
   private cameraIdFromPathName(pathName: string): { cameraId: string; deliveryMode: LiveViewMode } | null {
-    const match = pathName.match(/^cam_([0-9a-fA-F]{32})(_grid|_grid_hevc|_orig)?$/);
+    const match = pathName.match(/^cam_([0-9a-fA-F]{32})(_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?$/);
     if (!match) return null;
     const h = match[1];
     const cameraId = `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
@@ -806,10 +806,14 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       cameraId,
       deliveryMode: match[2] === '_grid'
         ? 'grid'
+        : match[2] === '_grid_audio'
+          ? 'grid-audio'
         : match[2] === '_grid_hevc'
           ? 'grid-hevc'
-          : match[2] === '_orig'
-            ? 'original'
+        : match[2] === '_orig'
+          ? 'original'
+          : match[2] === '_orig_audio'
+            ? 'original-audio'
             : 'original',
     };
   }
@@ -869,7 +873,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   pathNameFromCameraId(cameraId: string, deliveryMode: LiveViewMode = 'original') {
     const base = `cam_${cameraId.replace(/[^a-zA-Z0-9]/g, '')}`;
     if (deliveryMode === 'grid') return `${base}_grid`;
+    if (deliveryMode === 'grid-audio') return `${base}_grid_audio`;
     if (deliveryMode === 'grid-hevc') return `${base}_grid_hevc`;
+    if (deliveryMode === 'original-audio') return `${base}_orig_audio`;
     return `${base}_orig`;
   }
 
@@ -1979,7 +1985,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
   async getPathRuntimeSummaryForCamera(cameraId: string) {
     const pathName = this.pathNameFromCameraId(cameraId);
-    const candidateNames = new Set<LiveViewMode>(['grid', 'grid-hevc', 'original']);
+    const candidateNames = new Set<LiveViewMode>(['grid', 'grid-audio', 'grid-hevc', 'original', 'original-audio']);
     const expectedPaths = new Set([...candidateNames].map((mode) => this.pathNameFromCameraId(cameraId, mode)));
     if (!this.isEnabled()) {
       return {
@@ -2123,7 +2129,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
    * closeAfter do on-demand). Best-effort: path inexistente é ignorado. */
   async teardownPathsForCamera(cameraId: string): Promise<void> {
     if (!this.isEnabled()) return;
-    for (const mode of ['grid', 'grid-hevc', 'original'] as const) {
+    for (const mode of ['grid', 'grid-audio', 'grid-hevc', 'original', 'original-audio'] as const) {
       const pathName = this.pathNameFromCameraId(cameraId, mode);
       this.pathEnsureCache.delete(this.buildEnsureKey(cameraId, mode));
       await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(pathName)}`).catch(() => undefined);
@@ -2312,7 +2318,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // prazo curto ainda absorve remontagens rápidas do tile, mas devolve os
     // núcleos logo depois do fallback. Os demais perfis preservam a retenção
     // configurável existente.
-    const effectiveRunOnDemandCloseAfter = deliveryMode === 'grid' ? '20s' : runOnDemandCloseAfter;
+    const effectiveRunOnDemandCloseAfter = deliveryMode === 'grid' || deliveryMode === 'grid-audio'
+      ? '20s'
+      : runOnDemandCloseAfter;
     const rtspTransport = pushSourced
       ? 'tcp'
       : camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp';
@@ -2321,7 +2329,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // sub-stream quando existe (mais leve e rápido); ver chooseGridSource.
     const selected = pushSourced
       ? await this.resolvePushLiveSource(camera, rtspTransport)
-      : deliveryMode === 'grid' || deliveryMode === 'grid-hevc'
+      : deliveryMode === 'grid' || deliveryMode === 'grid-audio' || deliveryMode === 'grid-hevc'
         ? await this.chooseGridSource(cameraId, camera, password, rtspTransport)
         : await this.chooseLiveSource(cameraId, camera, password, rtspTransport);
     const liveProfile = selected.profile;
@@ -2333,24 +2341,20 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const sourceHeight = Number(('height' in selected ? selected.height : null) ?? camera.streamHeight) || null;
     const sourceFps = Number(('fps' in selected ? selected.fps : null) ?? camera.streamFps) || null;
     const sanitizeGridSource =
-      deliveryMode === 'grid' &&
+      (deliveryMode === 'grid' || deliveryMode === 'grid-audio') &&
       !isHevc &&
       Boolean('requiresSanitization' in selected && selected.requiresSanitization);
-    // A grade só precisa de publisher quando a fonte exige compatibilidade de
-    // vídeo OU quando o áudio está habilitado. AAC é comum nas câmeras, mas não
-    // é uma trilha WebRTC confiável em todos os navegadores; nesse caso o
-    // publisher preserva o H.264 já compatível e converte somente o áudio Opus.
-    // A grade continua muda no elemento <video>; o operador escolhe escutar pelo
-    // ícone de volume, sem perder a trilha no caminho até o navegador.
+    // A grade padrão é estritamente vídeo: H.264 compatível segue em
+    // passthrough e não abre pipeline de áudio. `*-audio` existe apenas para a
+    // câmera única ou para o tile cujo operador escolheu escutar.
     //
     // Modo 'original' (máxima qualidade): NUNCA transcoda — passa o stream
     // principal como está (H.265 inclusive) direto pro HLS. O custo de CPU no
     // servidor é ~0; o celular decodifica o HEVC no hardware. Só HLS (WebRTC não
     // reproduz H.265), com latência maior — é o trade-off assumido pelo usuário.
+    const wantsAudio = deliveryMode === 'grid-audio' || deliveryMode === 'original-audio';
     const codecPassthroughMode = deliveryMode === 'original' || deliveryMode === 'grid-hevc';
-    const needsPublisher = codecPassthroughMode
-      ? false
-      : (isHevc || sanitizeGridSource || Boolean(camera.audioEnabled));
+    const needsPublisher = wantsAudio || (!codecPassthroughMode && (isHevc || sanitizeGridSource));
 
     // FREIO: passado o teto, recusa o transcode NOVO em vez de degradar todos.
     //
@@ -2372,7 +2376,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     }
     // Só é "transcodificado" quando o publisher FFmpeg existe de fato — no modo
     // 'original' (passthrough) a fonte HEVC segue intocada e o rótulo deve refletir isso.
-    const transcodedForLive = needsPublisher && (isHevc || Boolean(camera.audioEnabled));
+    const transcodedForLive = needsPublisher && (isHevc || wantsAudio);
 
     const desiredPath: any = {
       source: sourceUrl,
@@ -2381,15 +2385,17 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // uma sessão RTSP + banda WAN do main 24/7 mesmo sem ninguém assistindo.
       // GRADE: o orçamento quente decide por câmera (ver resolveGridSourceOnDemand).
       // 'original' é sempre sob demanda.
-      sourceOnDemand: deliveryMode === 'original'
+      sourceOnDemand: deliveryMode === 'original' || deliveryMode === 'original-audio'
         ? true
-        : deliveryMode === 'grid'
+        : deliveryMode === 'grid' || deliveryMode === 'grid-audio'
           ? true
           : deliveryMode === 'grid-hevc'
             ? this.resolveGridSourceOnDemand(cameraId)
           : sourceOnDemand,
       sourceOnDemandStartTimeout,
-      sourceOnDemandCloseAfter: deliveryMode === 'original' ? originalRunOnDemandCloseAfter : sourceOnDemandCloseAfter,
+      sourceOnDemandCloseAfter: deliveryMode === 'original' || deliveryMode === 'original-audio'
+        ? originalRunOnDemandCloseAfter
+        : sourceOnDemandCloseAfter,
       rtspTransport,
     };
 
@@ -2439,7 +2445,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // intocada. Medido nas 4 câmeras do dono — substream 640×360 @20 H.264,
       // exatamente o teto — decodificava e reencodava para produzir o mesmo
       // vídeo. "isso é retrabalho e jogar % da cpu no lixo!!!" (14/08/2026)
-      const copiaNaGrade = deliveryMode === 'grid'
+      const copiaNaGrade = deliveryMode === 'grid' || deliveryMode === 'grid-audio'
         ? decidirCopiaDeVideo(
             {
               codec: sourceVideoCodec,
@@ -2453,7 +2459,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       if (copiaNaGrade.copiar) {
         this.logger.log(`Grade de ${cameraId} COPIA o vídeo (${sourceWidth}x${sourceHeight} H.264 já cabe) — sem reencode.`);
       }
-      const videoJaServe = !isHevc && (deliveryMode !== 'grid' || copiaNaGrade.copiar);
+      const videoJaServe = !isHevc && ((deliveryMode !== 'grid' && deliveryMode !== 'grid-audio') || copiaNaGrade.copiar);
       const videoArgs = sanitizeGridSource || videoJaServe
         ? '-c:v copy'
         :
@@ -2473,7 +2479,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // reprodução WebRTC em Chrome, Firefox, Edge e Safari; sem isto o AAC da
       // origem aparece no MediaMTX, mas frequentemente não chega tocável ao
       // navegador. Quando o operador não o escuta, o <video> permanece muted.
-      const audioArgs = camera.audioEnabled
+      const audioArgs = wantsAudio
         ? '-map 0:a:0? -c:a libopus -b:a 64k -ac 1 -ar 48000'
         : '-an';
       // MediaMTX preenche $MTX_PATH e $RTSP_PORT automaticamente para o script.
