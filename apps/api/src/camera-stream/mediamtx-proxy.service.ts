@@ -2336,10 +2336,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       deliveryMode === 'grid' &&
       !isHevc &&
       Boolean('requiresSanitization' in selected && selected.requiresSanitization);
-    // A grade só precisa de publisher (transcode) quando a fonte é H.265. Fonte
-    // H.264 — sub-stream OU principal — é entregue ao navegador via PASSTHROUGH
-    // (sem ffmpeg, sem CPU), abrindo praticamente instantâneo. Antes a grade
-    // SEMPRE transcodificava (era a causa principal da lentidão ao abrir o mosaico).
+    // A grade só precisa de publisher quando a fonte exige compatibilidade de
+    // vídeo OU quando o áudio está habilitado. AAC é comum nas câmeras, mas não
+    // é uma trilha WebRTC confiável em todos os navegadores; nesse caso o
+    // publisher preserva o H.264 já compatível e converte somente o áudio Opus.
+    // A grade continua muda no elemento <video>; o operador escolhe escutar pelo
+    // ícone de volume, sem perder a trilha no caminho até o navegador.
     //
     // Modo 'original' (máxima qualidade): NUNCA transcoda — passa o stream
     // principal como está (H.265 inclusive) direto pro HLS. O custo de CPU no
@@ -2348,7 +2350,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const codecPassthroughMode = deliveryMode === 'original' || deliveryMode === 'grid-hevc';
     const needsPublisher = codecPassthroughMode
       ? false
-      : (isHevc || sanitizeGridSource);
+      : (isHevc || sanitizeGridSource || Boolean(camera.audioEnabled));
 
     // FREIO: passado o teto, recusa o transcode NOVO em vez de degradar todos.
     //
@@ -2370,7 +2372,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     }
     // Só é "transcodificado" quando o publisher FFmpeg existe de fato — no modo
     // 'original' (passthrough) a fonte HEVC segue intocada e o rótulo deve refletir isso.
-    const transcodedForLive = needsPublisher && isHevc;
+    const transcodedForLive = needsPublisher && (isHevc || Boolean(camera.audioEnabled));
 
     const desiredPath: any = {
       source: sourceUrl,
@@ -2467,6 +2469,13 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           `-b:v ${GRID_LIVE_BITRATE_KBPS}k -maxrate ${GRID_LIVE_BITRATE_KBPS}k ` +
           `-bufsize ${GRID_LIVE_BITRATE_KBPS * 2}k -pix_fmt yuv420p ` +
           `-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2 -vf "${gridScaleFilter}"`;
+      // `?` não falha em câmeras sem microfone. Quando há áudio, Opus garante
+      // reprodução WebRTC em Chrome, Firefox, Edge e Safari; sem isto o AAC da
+      // origem aparece no MediaMTX, mas frequentemente não chega tocável ao
+      // navegador. Quando o operador não o escuta, o <video> permanece muted.
+      const audioArgs = camera.audioEnabled
+        ? '-map 0:a:0? -c:a libopus -b:a 64k -ac 1 -ar 48000'
+        : '-an';
       // MediaMTX preenche $MTX_PATH e $RTSP_PORT automaticamente para o script.
       // -threads 4: limita libx264 a 4 threads por câmera (3 câmeras × 4 = 12 threads totais).
       // Sem este limite, libx264 cria automaticamente N threads = nº de núcleos lógicos,
@@ -2486,7 +2495,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         // instead of passing corrupted NAL units downstream (which causes
         // green frames in the browser until the next IDR keyframe arrives).
         `-flags low_delay -err_detect careful -rtsp_transport ${rtspTransport} ` +
-        `-i "${privateSourceUrl}" -map 0:v:0 ${videoArgs} -an ` +
+        `-i "${privateSourceUrl}" -map 0:v:0 ${videoArgs} ${audioArgs} ` +
         `-f rtsp -rtsp_transport tcp -muxdelay 0.1 -pkt_size 1200 "${publishUrl}"`;
       const ffmpegCommand = buildFfmpegCommand(videoArgs);
       // AUTO-RECUPERAÇÃO (anti-travamento). Antes de iniciar o restream, mata
