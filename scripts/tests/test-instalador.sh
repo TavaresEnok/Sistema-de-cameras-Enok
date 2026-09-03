@@ -301,6 +301,23 @@ else
   nok 'watchdog usa lock privado por instalação' 'lock em /tmp falha com fs.protected_regular=2 e colide entre instalações'
 fi
 
+if grep -qF 'vms-rtmp-callback vms-rtmp-ingest' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && grep -qF 'heal_rtmp_service vms-rtmp-callback rtmp-callback' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && grep -qF 'heal_rtmp_service vms-rtmp-ingest rtmp-ingest' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && grep -qF 'restaurou-forward-total-rtmp' "$RAIZ/scripts/runtime-watchdog.sh"; then
+  ok 'watchdog observa, cura e confirma o encaminhamento da cadeia RTMP'
+else
+  nok 'watchdog cobre cadeia RTMP' 'SRS/callback/forward não podem falhar fora do monitoramento'
+fi
+
+if grep -qF 'backup_interval="$(load_env_var POSTGRES_BACKUP_INTERVAL_SECONDS)"' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && grep -qF 'backup_max_age=$((backup_interval + 86400))' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && ! grep -qF 'backup:mais-velho-que-36h' "$RAIZ/scripts/runtime-watchdog.sh"; then
+  ok 'watchdog respeita a periodicidade configurada do backup semanal'
+else
+  nok 'watchdog respeita backup semanal' 'limite fixo diário gera alarme permanente e esconde falhas reais'
+fi
+
 if grep -qF 'com.docker.compose.project' "$RAIZ/scripts/verificar-instalacao.sh" \
   && grep -qF 'docker_ps_da_instalacao' "$RAIZ/scripts/verificar-instalacao.sh"; then
   ok 'verificador de portas não culpa o AjustCam por outro produto da mesma VM'

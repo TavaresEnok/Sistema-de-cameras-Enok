@@ -229,6 +229,23 @@ else
   falha "algum backup automático não usa a cadência semanal" "o padrão único deve ser 604800 segundos"
 fi
 
+# ─── 8. Healthchecks de mídia não geram clientes artificiais ────────────────
+secao '8. Healthchecks cobrem a cadeia de mídia sem interferir nela'
+
+if grep -qF "grep -Eq ':078F" "$INFRA/docker-compose.yml" \
+   && ! grep -E 'healthcheck:|test:' -A6 "$INFRA/docker-compose.yml" | grep -qE 'nc -z 127\.0\.0\.1 1935|/dev/tcp/127\.0\.0\.1/1935'; then
+  ok "SRS comprova o listener RTMP sem abrir publicação falsa"
+else
+  falha "healthcheck do SRS interfere na porta RTMP ou não a observa" "use /proc/net/tcp; conectar na 1935 polui sessões e métricas"
+fi
+
+if grep -qF 'for port in 078F 216A 270D 22B9' "$INFRA/docker-compose.yml" \
+   && grep -qF '/proc/net/tcp /proc/net/tcp6' "$INFRA/docker-compose.yml"; then
+  ok "MediaMTX comprova RTMP, RTSP, API e WebRTC sem gerar sessões"
+else
+  falha "healthcheck do MediaMTX cobre só parte do pipeline" "os quatro listeners críticos precisam ser observados sem conexões artificiais"
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mChecks estáticos de infraestrutura: todos passaram.\033[0m\n\n'

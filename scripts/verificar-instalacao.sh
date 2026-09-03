@@ -61,7 +61,7 @@ compose() {
 # ─── 1. Containers ──────────────────────────────────────────────────────────
 secao '1. Containers'
 
-esperados="vms-postgres vms-redis vms-api vms-web vms-mediamtx"
+esperados="vms-postgres vms-redis vms-api vms-web vms-mediamtx vms-rtmp-callback vms-rtmp-ingest"
 for c in $esperados; do
   estado="$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo ausente)"
   saude="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}sem-healthcheck{{end}}' "$c" 2>/dev/null || echo '-')"
