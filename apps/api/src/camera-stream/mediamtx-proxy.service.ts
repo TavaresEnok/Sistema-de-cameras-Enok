@@ -667,7 +667,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
    * passthrough e remux a cada tick, que faria a live piscar.
    */
   private noteGenericTrack(pathName: string, ready: boolean, tracks: unknown[]) {
-    if (!ready || !pathName.endsWith('_grid')) return;
+    if (!ready || (!pathName.endsWith('_grid') && !pathName.endsWith('_grid_audio'))) return;
     const parsed = this.cameraIdFromPathName(pathName);
     if (!parsed) return;
     const hasGeneric = tracks.some((t) => /generic/i.test(String(t)));
@@ -912,7 +912,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // orçamento (ver hot-grid-sources.helper.ts). Quente para todas as 21
     // câmeras desta instalação cabe no orçamento default; quente para 2.000
     // seria nós atacando os DVRs da própria frota.
-    const isGridSource = pathName.endsWith('_grid') || pathName.endsWith('_grid_hevc');
+    const isGridSource = pathName.endsWith('_grid') || pathName.endsWith('_grid_audio') || pathName.endsWith('_grid_hevc');
     const parsedForHot = isGridSource ? this.cameraIdFromPathName(pathName) : null;
     // Só a fonte bruta canônica (`grid-hevc`) pode ficar aquecida. A
     // contingência `grid` é sempre sob demanda; do contrário dois perfis da

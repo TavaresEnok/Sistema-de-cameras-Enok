@@ -58,8 +58,8 @@ type SrsPublishHookRequest = {
 export function isLoopbackMediaWorkerAuthorized(body: MediaMtxAuthRequest) {
   const action = String(body?.action ?? '');
   const path = String(body?.path ?? '');
-  const sourcePath = /^cam_[0-9a-f]{32}(?:_grid|_grid_hevc|_orig)?_source$/i.test(path);
-  const outputPath = /^cam_[0-9a-f]{32}(?:_grid|_grid_hevc|_orig)?$/i.test(path);
+  const sourcePath = /^cam_[0-9a-f]{32}(?:_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?_source$/i.test(path);
+  const outputPath = /^cam_[0-9a-f]{32}(?:_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?$/i.test(path);
   // MediaMTX 1.15 pode enviar somente o IP ou IP:porta no callback HTTP,
   // dependendo do transporte RTSP. O publisher `runOnDemand` disca para o
   // próprio 127.0.0.1; rejeitar a variação com porta fazia o FFmpeg receber
@@ -306,7 +306,7 @@ export class CameraStreamController {
       return deny('Ação de mídia não autorizada.');
     }
 
-    const match = /^cam_([0-9a-f]{32})(?:_grid|_grid_hevc|_orig)?$/i.exec(String(body?.path ?? ''));
+    const match = /^cam_([0-9a-f]{32})(?:_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?$/i.exec(String(body?.path ?? ''));
     if (!match) return deny('Caminho de mídia inválido.');
 
     const token = String(body?.token ?? '').trim();

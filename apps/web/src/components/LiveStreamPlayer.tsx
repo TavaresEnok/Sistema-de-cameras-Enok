@@ -835,7 +835,7 @@ export function LiveStreamPlayer({
           setGridUsesH264Fallback(true);
           return;
         }
-        if (deliveryMode === 'original' && videoCodecFamily(actualCodec) === 'hevc') {
+        if (deliveryMode === 'original-audio' && videoCodecFamily(actualCodec) === 'hevc') {
           failedProtocolsRef.current.clear();
           storeLiveQuality(cameraId, 'instant');
           setQualityMode('instant');
@@ -1032,7 +1032,7 @@ export function LiveStreamPlayer({
             setGridUsesH264Fallback(true);
             return;
           }
-          if (deliveryMode === 'original' && videoCodecFamily(sourceCodec) === 'hevc') {
+          if (deliveryMode === 'original-audio' && videoCodecFamily(sourceCodec) === 'hevc') {
             storeLiveQuality(cameraId, 'instant');
             setQualityMode('instant');
             failedProtocolsRef.current.clear();
@@ -1668,7 +1668,7 @@ export function LiveStreamPlayer({
           setGridUsesH264Fallback(true);
           return;
         }
-        if (deliveryMode === 'original' && videoCodecFamily(sourceCodec) === 'hevc') {
+        if (deliveryMode === 'original-audio' && videoCodecFamily(sourceCodec) === 'hevc') {
           failedProtocolsRef.current.clear();
           streamUrlsCache.clear(cacheKey);
           storeLiveQuality(cameraId, 'instant');

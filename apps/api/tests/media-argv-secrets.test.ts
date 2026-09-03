@@ -29,6 +29,16 @@ test('worker interno só lê path oculto e publica no path público via loopback
     path: `cam_${cameraHex}_grid`,
   }), true);
   assert.equal(isLoopbackMediaWorkerAuthorized({
+    ip: '127.0.0.1:8554',
+    action: 'publish',
+    path: `cam_${cameraHex}_grid_audio`,
+  }), true);
+  assert.equal(isLoopbackMediaWorkerAuthorized({
+    ip: '::1',
+    action: 'read',
+    path: `cam_${cameraHex}_orig_audio_source`,
+  }), true);
+  assert.equal(isLoopbackMediaWorkerAuthorized({
     ip: '10.0.0.20',
     action: 'publish',
     path: `cam_${cameraHex}`,
