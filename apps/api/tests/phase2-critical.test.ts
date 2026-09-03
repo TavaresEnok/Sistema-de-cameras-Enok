@@ -167,6 +167,11 @@ test('poster das câmeras usa a fonte leve do grid sem iniciar live selected', (
   const methodStart = proxy.indexOf('async resolveGridPosterSource(cameraId: string)');
   assert.notEqual(methodStart, -1, 'proxy deve expor a escolha leve da grade para snapshots');
   const methodBody = proxy.slice(methodStart, proxy.indexOf('\n  private ', methodStart));
+  assert.match(
+    methodBody,
+    /isPushSourced\(camera\)[\s\S]*resolvePushLiveSource\(camera, transport\)/,
+    'poster RTMP deve usar a publicação interna, nunca o IP marcador da câmera',
+  );
   assert.match(methodBody, /chooseGridSource\(cameraId, camera, password, transport\)/);
   assert.doesNotMatch(
     methodBody,

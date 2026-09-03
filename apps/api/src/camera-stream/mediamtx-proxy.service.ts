@@ -1825,11 +1825,26 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     if ((camera as { enabled?: boolean }).enabled === false) {
       throw new BadRequestException('Câmera desativada.');
     }
-    const password = this.cryptoService.decrypt(camera.passwordEncrypted);
     const transport =
       camera.preferredRtspTransport
       ?? this.configService.get<string>('ffmpegRtspTransport')
       ?? 'tcp';
+
+    // RTMP não tem uma câmera para consultar por IP/RTSP: os campos de rede são
+    // só marcadores do cadastro. O poster precisa capturar a publicação que já
+    // chegou ao MediaMTX; tentar a seleção normal de grade aqui fazia o validador
+    // de rede rejeitar 0.0.0.0 e mostrava "sem vídeo" apesar da live estar ativa.
+    if (isPushSourced(camera)) {
+      const selected = await this.resolvePushLiveSource(camera, transport);
+      return {
+        sourceUrl: selected.sourceUrl,
+        profile: selected.profile,
+        sourceVideoCodec: selected.isHevc ? 'h265' : 'h264',
+        usedSubStream: false,
+      };
+    }
+
+    const password = this.cryptoService.decrypt(camera.passwordEncrypted);
     const selected = await this.chooseGridSource(cameraId, camera, password, transport);
     return {
       sourceUrl: selected.sourceUrl,

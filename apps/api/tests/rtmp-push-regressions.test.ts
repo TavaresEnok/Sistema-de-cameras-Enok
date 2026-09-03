@@ -4,6 +4,7 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { CamerasService } from '../src/cameras/cameras.service';
 import { ClipCaptureService } from '../src/camera-stream/clip-capture.service';
 import { FfmpegMjpegService } from '../src/camera-stream/ffmpeg-mjpeg.service';
+import { MediamtxProxyService } from '../src/camera-stream/mediamtx-proxy.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { generateIngestKey } from '../src/cameras/helpers/rtmp-ingest.helper';
 import type { AuthUser } from '../src/common/types/auth-user.type';
@@ -143,6 +144,31 @@ test('poster de câmera RTMP offline não tenta RTSP direto nem descriptografa m
       && error.message === 'Câmera RTMP ainda não está publicando vídeo.',
   );
   assert.equal(decryptCalls, 0);
+});
+
+test('poster de câmera RTMP publicada usa o stream interno, não o IP marcador', async () => {
+  let decryptCalls = 0;
+  let gridCalls = 0;
+  const proxy = Object.create(MediamtxProxyService.prototype) as any;
+  proxy.camerasService = {
+    getCameraOrThrow: async () => ({
+      id: 'push-poster-1', sourceMode: 'rtmp_push', enabled: true,
+      ip: '0.0.0.0', passwordEncrypted: 'marcador', preferredRtspTransport: 'tcp',
+    }),
+  };
+  proxy.configService = { get: () => 'tcp' };
+  proxy.cryptoService = { decrypt: () => { decryptCalls += 1; throw new Error('marcador não pode ser lido'); } };
+  proxy.chooseGridSource = async () => { gridCalls += 1; throw new Error('não deve consultar RTSP da câmera'); };
+  proxy.resolvePushLiveSource = async () => ({
+    sourceUrl: 'rtsp://media-interno/cam_publicada', profile: null, isHevc: false,
+  });
+
+  const selected = await proxy.resolveGridPosterSource('push-poster-1');
+  assert.equal(selected.sourceUrl, 'rtsp://media-interno/cam_publicada');
+  assert.equal(selected.sourceVideoCodec, 'h264');
+  assert.equal(selected.usedSubStream, false);
+  assert.equal(decryptCalls, 0);
+  assert.equal(gridCalls, 0);
 });
 
 test('edição de câmera RTMP ignora o marcador de rede sem afrouxar câmera RTSP', async () => {
