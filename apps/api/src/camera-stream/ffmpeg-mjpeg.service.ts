@@ -571,7 +571,7 @@ export class FfmpegMjpegService {
         camera.rtspPort,
       );
       // Snapshot segue a mesma escolha leve da grade e pode cair no RTSP direto
-      // apenas para câmeras pull. Nunca inicializa o path selected só para um frame.
+      // apenas para câmeras pull. Nunca inicializa o path de live só para um frame.
       urls = Array.from(new Set([...(gridUrl ? [gridUrl] : []), ...directUrls]));
     }
     const transports = this.getTransportCandidates(camera);

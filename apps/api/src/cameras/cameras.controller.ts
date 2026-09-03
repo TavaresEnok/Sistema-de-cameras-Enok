@@ -58,7 +58,7 @@ export class CamerasController {
     try {
       const mediamtx = this.moduleRef.get(MediamtxProxyService, { strict: false });
       await Promise.all([
-        mediamtx.ensurePathForCamera(cameraId, 'selected'),
+        mediamtx.ensurePathForCamera(cameraId, 'original'),
         mediamtx.ensurePathForCamera(cameraId, 'grid'),
       ]);
     } catch {

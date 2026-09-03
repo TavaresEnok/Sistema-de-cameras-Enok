@@ -43,7 +43,36 @@ test('botão Gravar usa a publicação interna da RTMP e nunca tenta 0.0.0.0', a
   assert.match(input.url, /^rtsp:\/\/.*@mediamtx:8554\//);
 });
 
-test('RTMP privada criada pelo app ignora continuous e herda 3 dias do grupo', async () => {
+test('RTMP administrativa ignora payload contínuo e nasce manual/desligada', async () => {
+  let written: any = null;
+  const service = Object.create(CamerasService.prototype) as any;
+  service.validateReferences = async () => undefined;
+  service.getDefaultRetentionDays = () => 7;
+  service.cryptoService = { encrypt: (value: string) => `encrypted:${value}` };
+  service.configService = { get: () => '' };
+  service.logger = { log() {} };
+  service.prisma = {
+    camera: {
+      create: async ({ data }: any) => {
+        written = data;
+        return { id: 'push-admin-1', createdAt: new Date(), updatedAt: new Date(), ...data };
+      },
+    },
+  };
+
+  await service.create({
+    name: 'Entrada RTMP',
+    sourceMode: 'rtmp_push',
+    recordingMode: 'continuous',
+    recordingEnabled: true,
+  });
+
+  assert.equal(written.recordingMode, 'manual');
+  assert.equal(written.recordingEnabled, false);
+  assert.equal(written.recordingVideoCodec, 'original');
+});
+
+test('RTMP privada criada pelo app nasce manual, desligada e herda 3 dias do grupo', async () => {
   const writes: any[] = [];
   const owner: AuthUser = {
     id: 'cliente-1',
@@ -85,10 +114,10 @@ test('RTMP privada criada pelo app ignora continuous e herda 3 dias do grupo', a
   assert.equal(writes.length, 1);
   assert.deepEqual(writes[0].privacy, { isPrivate: true, ownerUserId: owner.id });
   assert.equal(writes[0].dto.groupId, 'grupo-3-dias');
-  assert.equal(writes[0].dto.recordingMode, 'motion');
+  assert.equal(writes[0].dto.recordingMode, 'manual');
   assert.equal(writes[0].dto.recordingEnabled, false);
   assert.equal(writes[0].dto.motionTrigger, 'SYSTEM');
-  assert.equal(writes[0].dto.aiEnabled, true);
+  assert.equal(writes[0].dto.aiEnabled, false);
   assert.equal(writes[0].dto.retentionDays, 3);
   assert.equal(writes[0].dto.retentionFollowsGroup, true);
   assert.equal(writes[0].dto.recordingVideoCodec, 'original');
@@ -121,7 +150,7 @@ test('RTMP privada sem grupo recebe retenção própria padrão de 3 dias', asyn
     retentionDays: 365,
   }, owner);
 
-  assert.equal(written.recordingMode, 'motion');
+  assert.equal(written.recordingMode, 'manual');
   assert.equal(written.recordingEnabled, false);
   assert.equal(written.retentionDays, 3);
   assert.equal(written.retentionFollowsGroup, false);

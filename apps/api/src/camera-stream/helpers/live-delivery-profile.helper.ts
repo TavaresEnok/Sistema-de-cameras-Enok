@@ -6,7 +6,7 @@ import { envNumber } from '../../common/config/env-number.helper';
 // `grid-hevc` usa a mesma fonte leve de `grid`, mas preserva o codec recebido.
 // Ele tem path próprio para poder coexistir com o fallback H.264 sem que dois
 // navegadores reconfigurem o mesmo path um por cima do outro.
-export type LiveViewMode = 'selected' | 'grid' | 'grid-hevc' | 'original';
+export type LiveViewMode = 'grid' | 'grid-hevc' | 'original';
 
 // TILE DE MOSAICO NÃO É TELA CHEIA — e o bitrate é o que chega no espectador.
 //
@@ -21,7 +21,7 @@ export type LiveViewMode = 'selected' | 'grid' | 'grid-hevc' | 'original';
 // 640×360 já é mais do que o tile mostra, e 700 kbps sustenta essa resolução
 // com folga em H.264. A conta do mosaico cai de ~38 Mbps para ~15 Mbps, e
 // quem abre uma câmera em tela cheia continua recebendo o perfil grande
-// (`selected`), que não passa por aqui.
+// (`original`), que não passa por aqui.
 // FLUIDEZ x BANDA: por que o FPS voltou a 20 e a resolução NÃO.
 //
 // A redução acima foi feita quando o mosaico congelava. Só que a congestão
@@ -62,7 +62,7 @@ export function normalizeLiveViewMode(value?: string | null): LiveViewMode {
   if (v === 'grid') return 'grid';
   if (v === 'grid-hevc') return 'grid-hevc';
   if (v === 'original') return 'original';
-  return 'selected';
+  return 'original';
 }
 
 export function resolveGridLiveProfile(input?: {

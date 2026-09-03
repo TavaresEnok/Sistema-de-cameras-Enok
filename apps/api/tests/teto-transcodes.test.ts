@@ -20,7 +20,7 @@ import { MediamtxProxyService } from '../src/camera-stream/mediamtx-proxy.servic
 
 function makeProxy(overrides: Record<string, unknown> = {}) {
   const config = { get: () => undefined } as any;
-  const mgr = new MediamtxProxyService(config, {} as any, {} as any, {} as any) as any;
+  const mgr = new MediamtxProxyService(config, {} as any, {} as any) as any;
   mgr.logger = { error() {}, warn() {}, log() {}, debug() {} };
   Object.assign(mgr, overrides);
   return mgr;
@@ -77,7 +77,7 @@ test('o teto é configurável e tem limite superior', () => {
 
 test('quem JÁ tem path no ar não é derrubado pelo freio', () => {
   const fonte = require('fs').readFileSync('src/camera-stream/mediamtx-proxy.service.ts', 'utf8');
-  const bloco = fonte.slice(fonte.indexOf('FREIO: passado o teto'), fonte.indexOf('const gpuAccel'));
+  const bloco = fonte.slice(fonte.indexOf('FREIO: passado o teto'), fonte.indexOf('const transcodedForLive'));
   assert.ok(/jaExiste/.test(bloco) && /if \(!jaExiste\)/.test(bloco),
     'sem essa checagem o freio derruba quem está assistindo para dar lugar a um novo — revezamento, não proteção');
 });

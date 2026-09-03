@@ -95,11 +95,9 @@ const STREAM_URL_CACHE_TTL_MS = 60 * 1000;
 type ActiveLiveProtocol = 'WEBRTC' | 'LL-HLS' | 'HLS';
 // Qualidade escolhida pelo operador na visualização de câmera única (1x1):
 //  - instant  → sub-stream (mesmo da grade): latência mínima, zero CPU, imagem reduzida
-//  - balanced → principal transcodificado H.264: latência mínima, 1080p, ~0,6 núcleo
 //  - max      → principal ORIGINAL sem transcode (HEVC incluso): zero CPU, qualidade
-//               idêntica à câmera; WebRTC quando o navegador decodifica H.265, senão
-//               LL-HLS/HLS (~1–3s de atraso); sem suporte nenhum → volta a balanced.
-type LiveQualityMode = 'instant' | 'balanced' | 'max';
+//               idêntica à câmera; sem suporte a HEVC, volta ao Instantâneo.
+type LiveQualityMode = 'instant' | 'max';
 function hasWebrtcHevcProof() {
   try {
     const provedAt = Number(window.localStorage.getItem(WEBRTC_HEVC_PROOF_STORAGE_KEY));
@@ -119,13 +117,12 @@ function storeWebrtcHevcProof() {
 function getStoredLiveQuality(cameraId: string): LiveQualityMode {
   try {
     const stored = window.localStorage.getItem(`${LIVE_QUALITY_STORAGE_PREFIX}:${cameraId}`);
-    if (stored === 'instant' || stored === 'balanced' || stored === 'max') return stored;
-    // Sem preferência explícita, navegador com HEVC recebe o bitstream original
-    // (zero transcode). O incompatível começa em H.264. A escolha manual segue
-    // persistida e sempre prevalece.
-    return BROWSER_DECODES_HEVC || hasWebrtcHevcProof() ? 'max' : 'balanced';
+    if (stored === 'max') return 'max';
+    // Preferências gravadas por versões antigas, ou qualquer valor inválido,
+    // migram para o único perfil H.264 restante.
+    return 'instant';
   } catch {
-    return BROWSER_DECODES_HEVC || hasWebrtcHevcProof() ? 'max' : 'balanced';
+    return 'instant';
   }
 }
 
@@ -156,7 +153,7 @@ const MSE_DECODES_HEVC = (() => {
   }
 })();
 // Este navegador consegue exibir H.265 por ALGUM caminho? Se não, o modo "Máxima"
-// (H.265 original) cai automaticamente para "Equilibrado" (H.264) — o seletor avisa.
+// (H.265 original) cai automaticamente para "Instantâneo" (H.264).
 const BROWSER_DECODES_HEVC = WEBRTC_DECODES_HEVC || MSE_DECODES_HEVC;
 export type LivePlayerStatus = {
   activeProtocol: ActiveLiveProtocol | null;
@@ -480,11 +477,11 @@ export function LiveStreamPlayer({
   // black-screena em navegadores sem decodificação HEVC/WebRTC, e o fallback
   // para H.264 não dispara quando a negociação é CANCELADA (só quando FALHA).
   // Resultado: grade/ronda toda preta. Enquanto o fallback do `grid-hevc` não
-  // for confiável, a grade usa o caminho H.264 comprovado ("Equilibrado").
+  // for confiável, a grade usa o caminho H.264 comprovado ("Instantâneo").
   // Para reativar o HEVC: volte GRID_HEVC_ENABLED para true.
   const GRID_HEVC_ENABLED = false;
   const deliveryMode: LiveDeliveryMode = liveViewMode === 'selected'
-    ? (qualityMode === 'instant' ? 'grid' : qualityMode === 'max' ? 'original' : 'selected')
+    ? (qualityMode === 'max' ? 'original' : 'grid')
     : (GRID_HEVC_ENABLED && !gridUsesH264Fallback) ? 'grid-hevc' : 'grid';
 
   const changeQuality = useCallback((next: LiveQualityMode) => {
@@ -833,8 +830,8 @@ export function LiveStreamPlayer({
         }
         if (deliveryMode === 'original' && videoCodecFamily(actualCodec) === 'hevc') {
           failedProtocolsRef.current.clear();
-          storeLiveQuality(cameraId, 'balanced');
-          setQualityMode('balanced');
+          storeLiveQuality(cameraId, 'instant');
+          setQualityMode('instant');
           setProtocolReason('O teste real de H.265 falhou; usando a contingência H.264.');
           setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');
           return;
@@ -1029,10 +1026,10 @@ export function LiveStreamPlayer({
             return;
           }
           if (deliveryMode === 'original' && videoCodecFamily(sourceCodec) === 'hevc') {
-            storeLiveQuality(cameraId, 'balanced');
-            setQualityMode('balanced');
+            storeLiveQuality(cameraId, 'instant');
+            setQualityMode('instant');
             failedProtocolsRef.current.clear();
-            setProtocolReason('Este navegador não decodifica H.265 — usando o modo equilibrado (H.264).');
+            setProtocolReason('Este navegador não decodifica H.265 — usando o modo Instantâneo (H.264).');
             setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');
             return;
           }
@@ -1667,8 +1664,8 @@ export function LiveStreamPlayer({
         if (deliveryMode === 'original' && videoCodecFamily(sourceCodec) === 'hevc') {
           failedProtocolsRef.current.clear();
           streamUrlsCache.clear(cacheKey);
-          storeLiveQuality(cameraId, 'balanced');
-          setQualityMode('balanced');
+          storeLiveQuality(cameraId, 'instant');
+          setQualityMode('instant');
           setProtocolReason('O teste real de H.265 falhou; usando a contingência H.264.');
           setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');
           return;
@@ -2484,13 +2481,12 @@ export function LiveStreamPlayer({
             >
               {([
                 ['instant', 'Instantâneo', 'Substream da câmera: imagem menor, menor latência e menos banda. Use em redes lentas ou muitas câmeras.'],
-                ['balanced', 'Equilibrado', 'Resolução original convertida para H.264 — fallback para navegador sem H.265 ou escolha manual.'],
                 [
                   'max',
-                  'Máxima',
+                  'Máxima resolução',
                   browserHevcKnown
                     ? 'Vídeo original da câmera sem conversão (preserva o H.265 quando a câmera usa esse codec). Pode ter 1–3 s de atraso.'
-                    : 'Vídeo original sem conversão. O navegador não declarou H.265; o sistema fará um teste real por WebRTC e voltará automaticamente ao Equilibrado (H.264) se não reproduzir.',
+                    : 'Vídeo original sem conversão. O navegador não declarou H.265; o sistema fará um teste real e voltará automaticamente ao Instantâneo (H.264) se não reproduzir.',
                 ],
               ] as const).map(([mode, label, hint]) => {
                 const isActive = qualityMode === mode;

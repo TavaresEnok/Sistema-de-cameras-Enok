@@ -59,7 +59,7 @@ test('codec desconhecido mantém a contingência segura', () => {
 
 test('preferência aprendida é isolada por modo e família de codec', () => {
   const gridH264 = liveProtocolStorageKey('cam-1', 'grid', 'h264');
-  assert.notEqual(gridH264, liveProtocolStorageKey('cam-1', 'selected', 'h264'));
+  assert.notEqual(gridH264, liveProtocolStorageKey('cam-1', 'original', 'h264'));
   assert.notEqual(gridH264, liveProtocolStorageKey('cam-1', 'grid', 'h265'));
 });
 

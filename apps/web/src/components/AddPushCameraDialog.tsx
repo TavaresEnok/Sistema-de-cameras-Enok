@@ -107,8 +107,10 @@ export function AddPushCameraDialog({
         {
           name: nome.trim(),
           sourceMode: 'rtmp_push',
-          recordingEnabled: true,
-          recordingMode: 'continuous',
+          // RTMP nasce cadastrada, mas sem consumir armazenamento. A gravação
+          // só é armada depois, conscientemente, na página de Gravações.
+          recordingEnabled: false,
+          recordingMode: 'manual',
           ...(localizacaoDoInstalador ?? {}),
         },
         { headers: { Authorization: `Bearer ${accessToken}` } },

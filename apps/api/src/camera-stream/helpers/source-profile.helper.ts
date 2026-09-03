@@ -5,8 +5,8 @@ import { type LiveViewMode } from './live-delivery-profile.helper';
  *
  *  - o Source Gateway fala `main` | `sub` (perfil FÍSICO da câmera: fluxo
  *    principal em alta resolução vs. substream leve);
- *  - o proxy do MediaMTX fala `selected` | `grid` | `original` (INTENÇÃO de
- *    entrega: câmera aberta em tela cheia, mosaico, ou passthrough do original).
+ *  - o proxy do MediaMTX fala `grid` | `original` (INTENÇÃO de entrega:
+ *    mosaico/instantâneo ou câmera aberta no bitstream original).
  *
  * Sem esta tradução o gateway não consegue casar "a origem que o MediaMTX
  * publicou" com "o perfil que o consumidor pediu", e a decisão cai sempre no
@@ -15,7 +15,6 @@ import { type LiveViewMode } from './live-delivery-profile.helper';
  * Mapeamento (e o porquê):
  *  - `grid`     → `sub`  : o mosaico usa o substream de propósito (é o caminho
  *                          leve; ver resolveGridRtspProfile).
- *  - `selected` → `main` : câmera aberta sozinha usa o fluxo principal.
  *  - `original` → `main` : passthrough do bitstream original da câmera, que é o
  *                          principal — só não é transcodificado.
  */
@@ -27,13 +26,10 @@ export function liveViewModeToSourceProfile(mode: LiveViewMode): SourceProfile {
 
 /**
  * Volta de perfil físico para o modo de entrega CANÔNICO daquele perfil. É uma
- * relação de muitos-para-um (`selected` e `original` compartilham `main`), então
- * a volta é ambígua por natureza: devolvemos o modo mais comum de cada lado e
- * documentamos que quem precisa distinguir `selected` de `original` deve carregar
- * o modo original em vez de re-derivá-lo daqui.
+ * relação direta: substream é instantâneo/grade e main é máxima/original.
  */
 export function sourceProfileToLiveViewMode(profile: SourceProfile): LiveViewMode {
-  return profile === 'sub' ? 'grid' : 'selected';
+  return profile === 'sub' ? 'grid' : 'original';
 }
 
 /**

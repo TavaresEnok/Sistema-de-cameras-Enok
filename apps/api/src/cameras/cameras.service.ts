@@ -366,9 +366,9 @@ export class CamerasService implements OnApplicationBootstrap {
     }
 
     // Política obrigatória do autoatendimento móvel: câmera RTMP do cliente
-    // nasce ARMADA por movimento, nunca em gravação contínua. Não confiamos no
-    // payload do app para essa decisão — versões antigas ou uma chamada manual
-    // podem mandar `continuous`, mas o servidor continua impondo a regra.
+    // nasce em modo MANUAL e DESARMADA. Não confiamos no payload do app para
+    // essa decisão — versões antigas ou uma chamada direta podem mandar
+    // `continuous`, mas o servidor continua impondo a regra.
     //
     // Se houver grupo, materializamos a retenção atual e deixamos a câmera
     // seguindo-o, para futuras alterações também valerem. Registros legados
@@ -388,12 +388,9 @@ export class CamerasService implements OnApplicationBootstrap {
       cameraDto = {
         ...dto,
         groupId,
-        recordingMode: 'motion',
-        // Em modo motion este campo representa o processo gravando AGORA, não
-        // o armamento. Começa false e o detector liga durante o evento.
+        recordingMode: 'manual',
         recordingEnabled: false,
         motionTrigger: 'SYSTEM',
-        aiEnabled: true,
         retentionDays: groupRetentionDays ?? 3,
         retentionFollowsGroup: groupRetentionDays !== null,
         // Autoatendimento móvel sempre começa em cópia do fluxo recebido. A
@@ -1808,8 +1805,11 @@ export class CamerasService implements OnApplicationBootstrap {
         latitude: dto.latitude,
         longitude: dto.longitude,
         groupId: dto.groupId,
-        recordingEnabled: dto.recordingEnabled ?? true,
-        recordingMode: dto.recordingMode ?? ((dto.recordingEnabled ?? true) ? 'continuous' : 'manual'),
+        // Invariante de segurança/custo: toda câmera RTMP nova nasce em modo
+        // manual e desarmada. Não confiar no cliente — versões antigas ainda
+        // podem enviar continuous/true.
+        recordingEnabled: false,
+        recordingMode: 'manual',
         retentionDays: dto.retentionDays ?? this.getDefaultRetentionDays(),
         // Câmera nova nasce seguindo o grupo: herdar a política é o padrão são,
         // e um número próprio que ninguém revisita é como se acumula exceção.
@@ -1822,7 +1822,7 @@ export class CamerasService implements OnApplicationBootstrap {
         detectedVideoCodec: null,
         audioEnabled: dto.audioEnabled ?? false,
         aiEnabled: aiEnabledEfetivo({
-          recordingMode: dto.recordingMode ?? 'continuous',
+          recordingMode: 'manual',
           motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
           aiEnabled: dto.aiEnabled ?? true,
         }),

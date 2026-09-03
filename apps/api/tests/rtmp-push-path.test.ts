@@ -26,8 +26,7 @@ const CAMERA_ID = '5b55e86c16cd4976bc23a08e699aa5f3';
 
 function makeProxy(overrides: Record<string, unknown> = {}) {
   const config = { get: () => undefined } as any;
-  const settings = { isGpuAccelerationEnabled: async () => false } as any;
-  const mgr = new MediamtxProxyService(config, {} as any, {} as any, settings) as any;
+  const mgr = new MediamtxProxyService(config, {} as any, {} as any) as any;
   mgr.logger = { error() {}, warn() {}, log() {}, debug() {} };
   Object.assign(mgr, overrides);
   return mgr;
@@ -75,9 +74,9 @@ test('câmera em push lê do path de ingestão, sem discar para a câmera', asyn
   assert.notEqual(criado!.corpo.source, 'publisher', 'não deve subir FFmpeg para câmera que publica');
 });
 
-test('RTMP H.265 preserva original e usa a política H.264 existente só na entrega compatível', async () => {
+test('RTMP H.265 preserva original sem conversão na máxima', async () => {
   const chave = generateIngestKey();
-  const configurar = async (modo: 'selected' | 'original') => {
+  const configurar = async (modo: 'original') => {
     const chamadas: Array<{ metodo: string; corpo?: any }> = [];
     const mgr = makeProxy({
       cryptoService: { decrypt: (v: string) => v.replace(/^cifrado:/, '') },
@@ -102,11 +101,6 @@ test('RTMP H.265 preserva original e usa a política H.264 existente só na entr
   assert.equal(original.result.transcodedForLive, false);
   assert.equal(original.criado.source, `rtsp://mediamtx:8554/${compactIngestPathName(chave)}`);
 
-  const compativel = await configurar('selected');
-  assert.equal(compativel.result.sourceVideoCodec, 'h265');
-  assert.equal(compativel.result.transcodedForLive, true);
-  assert.equal(compativel.criado.source, 'publisher');
-  assert.match(compativel.criado.runOnDemand, /libx264/);
 });
 
 test('gravação RTMP consome a publicação interna e preserva o codec H.265', async () => {
@@ -139,10 +133,10 @@ test('publicação antiga ativa continua sendo lida do path hexadecimal', async 
   assert.equal(r.sourceUrl, `rtsp://mediamtx:8554/${ingestPathName(chave)}`);
 });
 
-test('os três modos leem a MESMA ingestão — quem publica manda um fluxo só', async () => {
+test('os dois modos leem a MESMA ingestão — quem publica manda um fluxo só', async () => {
   const chave = generateIngestKey();
   const fontes: string[] = [];
-  for (const modo of ['grid', 'selected', 'original'] as const) {
+  for (const modo of ['grid', 'original'] as const) {
     const mgr = makeProxy({
       cryptoService: { decrypt: (v: string) => v.replace(/^cifrado:/, '') },
       pathNameFromCameraId: (_id: string, m: string) => `cam_${CAMERA_ID}_${m}`,

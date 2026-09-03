@@ -9,7 +9,6 @@ import {
   resolveLiveRtspProfile,
 } from '../cameras/helpers/rtsp-url.helper';
 import * as os from 'node:os';
-import { existsSync } from 'node:fs';
 import { envNumber } from '../common/config/env-number.helper';
 import {
   ingestPathNames,
@@ -20,7 +19,6 @@ import {
 } from '../cameras/helpers/rtmp-ingest.helper';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { SettingsService } from '../settings/settings.service';
 import {
   computeHotGridSet,
   pruneHistory,
@@ -42,9 +40,7 @@ import {
   type LiveViewMode,
 } from './helpers/live-delivery-profile.helper';
 import { liveViewModeToSourceProfile } from './helpers/source-profile.helper';
-import { decidirFonteDaMaxima } from './helpers/fonte-da-maxima.helper';
 import { decidirCopiaDeVideo } from './helpers/copia-em-vez-de-reencode.helper';
-import { calcularBitrateH264Compativel } from './helpers/bitrate-de-transcode.helper';
 import { SourceGatewayService } from './source-gateway.service';
 import { RtmpIngestSourceService } from '../cameras/rtmp-ingest-source.service';
 import { conferirPadrao, resumirFrota } from './helpers/padrao-de-stream.helper';
@@ -249,7 +245,6 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     private readonly configService: ConfigService,
     private readonly camerasService: CamerasService,
     private readonly cryptoService: CryptoService,
-    private readonly settingsService: SettingsService,
     // Opcional de propósito: o gateway é uma camada nova e DESLIGADA por default.
     // Sendo opcional, este serviço continua instanciável (inclusive nos testes que
     // o constroem à mão) sem conhecer o gateway.
@@ -815,7 +810,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           ? 'grid-hevc'
           : match[2] === '_orig'
             ? 'original'
-            : 'selected',
+            : 'original',
     };
   }
 
@@ -871,34 +866,11 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   // Público para o Source Gateway: consumidores precisam saber o NOME do path
   // interno daquela câmera/perfil para pedir a URL republicada. Só leitura — a
   // função é pura (deriva o nome do id), não cria nem altera path nenhum.
-  /**
-   * O container que executa o FFmpeg do publisher tem NVENC?
-   *
-   * `GPU_TRANSCODE_AVAILABLE=true` é setado quando o stack sobe com a imagem
-   * `mediamtx-nvenc`. Sem esse sinal assumimos CPU — falso negativo custa
-   * desempenho; falso positivo custa a LIVE, então erramos para o lado seguro.
-   */
-  private transcodePipelineHasNvenc(): boolean {
-    const raw = this.configService.get<string>('gpuTranscodeAvailable') ?? process.env.GPU_TRANSCODE_AVAILABLE ?? '';
-    if (String(raw).trim().toLowerCase() !== 'true') return false;
-    // O env é ESTÁTICO (setado quando o stack subiu com GPU). Se a placa for
-    // ARRANCADA com o serviço no ar, o env continua 'true' e o publisher
-    // seguiria emitindo `h264_nvenc` num pipeline sem GPU — o ffmpeg morre na
-    // largada e derruba a LIVE da câmera (runOnDemandRestart=false). O device
-    // node some junto com a placa, então conferimos a presença REAL: sem GPU,
-    // o transcode cai para libx264 sozinho e a live sobrevive.
-    return existsSync('/dev/nvidia0') || existsSync('/dev/nvidiactl');
-  }
-
-  pathNameFromCameraId(cameraId: string, deliveryMode: LiveViewMode = 'selected') {
+  pathNameFromCameraId(cameraId: string, deliveryMode: LiveViewMode = 'original') {
     const base = `cam_${cameraId.replace(/[^a-zA-Z0-9]/g, '')}`;
-    // 'original' tem path PRÓPRIO (_orig): se compartilhasse o base com 'selected',
-    // dois espectadores em modos diferentes ficariam reconfigurando o mesmo path
-    // (transcode ↔ passthrough) um por cima do outro.
     if (deliveryMode === 'grid') return `${base}_grid`;
     if (deliveryMode === 'grid-hevc') return `${base}_grid_hevc`;
-    if (deliveryMode === 'original') return `${base}_orig`;
-    return base;
+    return `${base}_orig`;
   }
 
   private privateSourcePathName(pathName: string) {
@@ -979,7 +951,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     return sourcePathName;
   }
 
-  getPathNameForCamera(cameraId: string, deliveryMode: LiveViewMode = 'selected') {
+  getPathNameForCamera(cameraId: string, deliveryMode: LiveViewMode = 'original') {
     return this.pathNameFromCameraId(cameraId, deliveryMode);
   }
 
@@ -2007,7 +1979,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
   async getPathRuntimeSummaryForCamera(cameraId: string) {
     const pathName = this.pathNameFromCameraId(cameraId);
-    const candidateNames = new Set<LiveViewMode>(['selected', 'grid', 'grid-hevc', 'original']);
+    const candidateNames = new Set<LiveViewMode>(['grid', 'grid-hevc', 'original']);
     const expectedPaths = new Set([...candidateNames].map((mode) => this.pathNameFromCameraId(cameraId, mode)));
     if (!this.isEnabled()) {
       return {
@@ -2114,12 +2086,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       const cameras = todas;
       if (!cameras.length) return;
 
-      const warmSelectedPaths = this.configService.get<boolean>('mediaMtxWarmSelectedPathsOnBoot') === true;
-      this.logger.log(
-        warmSelectedPaths
-          ? `Aquecendo paths MediaMTX de grade e selected para ${cameras.length} câmera(s)...`
-          : `Aquecendo somente paths MediaMTX de grade para ${cameras.length} de ${todas.length} câmera(s) (conjunto quente)...`,
-      );
+      this.logger.log(`Aquecendo paths MediaMTX de grade para ${cameras.length} câmera(s)...`);
       let nextIndex = 0;
       let warmed = 0;
       let failed = 0;
@@ -2131,11 +2098,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
             // A grade usa a entrega H.264 compatível. Aquecer a fonte HEVC em
             // paralelo abria uma segunda sessão RTSP por câmera e deixava o
             // DVR disputando banda com um caminho que a interface não usa.
-            const tasks: Array<Promise<EnsuredCameraPath>> = [this.ensurePathForCamera(camera.id, 'grid')];
-            if (warmSelectedPaths) {
-              tasks.push(this.ensurePathForCamera(camera.id, 'selected'));
-            }
-            await Promise.all(tasks);
+            await this.ensurePathForCamera(camera.id, 'grid');
             warmed += 1;
           } catch {
             failed += 1;
@@ -2155,12 +2118,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     }
   }
 
-  /** Remove os paths (selected + grid) de uma câmera no MediaMTX — usado ao
+  /** Remove os paths de uma câmera no MediaMTX — usado ao
    * DESATIVAR a câmera, para o vídeo parar imediatamente (sem esperar o
    * closeAfter do on-demand). Best-effort: path inexistente é ignorado. */
   async teardownPathsForCamera(cameraId: string): Promise<void> {
     if (!this.isEnabled()) return;
-    for (const mode of ['selected', 'grid', 'grid-hevc', 'original'] as const) {
+    for (const mode of ['grid', 'grid-hevc', 'original'] as const) {
       const pathName = this.pathNameFromCameraId(cameraId, mode);
       this.pathEnsureCache.delete(this.buildEnsureKey(cameraId, mode));
       await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(pathName)}`).catch(() => undefined);
@@ -2169,10 +2132,14 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         `/v3/config/paths/delete/${encodeURIComponent(this.privateSourcePathName(pathName))}`,
       ).catch(() => undefined);
     }
+    // Limpa também o path-base de compatibilidade criado por versões antigas.
+    const legacyPath = `cam_${cameraId.replace(/[^a-zA-Z0-9]/g, '')}`;
+    await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(legacyPath)}`).catch(() => undefined);
+    await this.apiRequest('DELETE', `/v3/config/paths/delete/${encodeURIComponent(this.privateSourcePathName(legacyPath))}`).catch(() => undefined);
     this.invalidateMainCodecCache(cameraId);
   }
 
-  ensurePathForCamera(cameraId: string, deliveryMode: LiveViewMode = 'selected'): Promise<EnsuredCameraPath> {
+  ensurePathForCamera(cameraId: string, deliveryMode: LiveViewMode = 'original'): Promise<EnsuredCameraPath> {
     const ensureKey = this.buildEnsureKey(cameraId, deliveryMode);
     const cached = this.pathEnsureCache.get(ensureKey);
     if (cached && Date.now() - cached.at < MediamtxProxyService.PATH_ENSURE_TTL_MS) {
@@ -2337,19 +2304,15 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const sourceOnDemandStartTimeout = this.configService.get<string>('mediaMtxSourceOnDemandStartTimeout') ?? '6s';
     const sourceOnDemandCloseAfter = this.configService.get<string>('mediaMtxSourceOnDemandCloseAfter') ?? '5m';
     const runOnDemandCloseAfter = this.configService.get<string>('mediaMtxRunOnDemandCloseAfter') ?? '5m';
-    const selectedRunOnDemandCloseAfter =
-      this.configService.get<string>('mediaMtxSelectedRunOnDemandCloseAfter') ?? runOnDemandCloseAfter;
+    const originalRunOnDemandCloseAfter =
+      this.configService.get<string>('mediaMtxOriginalRunOnDemandCloseAfter') ?? runOnDemandCloseAfter;
     // A contingência H.264 da grade pode abrir dezenas de encoders de uma vez.
     // Mantê-los por 5 minutos depois que o navegador voltou ao WebRTC/HEVC
     // consome CPU sem nenhum leitor (medido: 15 FFmpegs = ~2,8 núcleos). Um
     // prazo curto ainda absorve remontagens rápidas do tile, mas devolve os
     // núcleos logo depois do fallback. Os demais perfis preservam a retenção
     // configurável existente.
-    const effectiveRunOnDemandCloseAfter = deliveryMode === 'grid'
-      ? '20s'
-      : deliveryMode === 'selected'
-        ? selectedRunOnDemandCloseAfter
-        : runOnDemandCloseAfter;
+    const effectiveRunOnDemandCloseAfter = deliveryMode === 'grid' ? '20s' : runOnDemandCloseAfter;
     const rtspTransport = pushSourced
       ? 'tcp'
       : camera.preferredRtspTransport ?? this.configService.get<string>('ffmpegRtspTransport') ?? 'tcp';
@@ -2369,17 +2332,6 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const sourceWidth = Number(('width' in selected ? selected.width : null) ?? camera.streamWidth) || null;
     const sourceHeight = Number(('height' in selected ? selected.height : null) ?? camera.streamHeight) || null;
     const sourceFps = Number(('fps' in selected ? selected.fps : null) ?? camera.streamFps) || null;
-    const sourceBitrateKbps = Number(
-      ('bitrateKbps' in selected ? selected.bitrateKbps : null)
-      ?? camera.detectedBitrateKbps
-      ?? camera.streamBitrateKbps,
-    ) || null;
-    const compatibleH264BitrateKbps = calcularBitrateH264Compativel({
-      bitrateKbps: sourceBitrateKbps,
-      largura: sourceWidth,
-      altura: sourceHeight,
-    });
-    const transcodeAudioForWebrtc = deliveryMode === 'selected' && Boolean(camera.audioEnabled);
     const sanitizeGridSource =
       deliveryMode === 'grid' &&
       !isHevc &&
@@ -2396,7 +2348,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const codecPassthroughMode = deliveryMode === 'original' || deliveryMode === 'grid-hevc';
     const needsPublisher = codecPassthroughMode
       ? false
-      : (isHevc || transcodeAudioForWebrtc || sanitizeGridSource);
+      : (isHevc || sanitizeGridSource);
 
     // FREIO: passado o teto, recusa o transcode NOVO em vez de degradar todos.
     //
@@ -2416,54 +2368,17 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         );
       }
     }
-    const gpuAccel =
-      needsPublisher && !sanitizeGridSource && (await this.settingsService.isGpuAccelerationEnabled());
     // Só é "transcodificado" quando o publisher FFmpeg existe de fato — no modo
     // 'original' (passthrough) a fonte HEVC segue intocada e o rótulo deve refletir isso.
-    const transcodedForLive = needsPublisher && (isHevc || transcodeAudioForWebrtc);
-
-    // ── MÁXIMA SEM DISCAR DE NOVO ──────────────────────────────────────────
-    //
-    // O modo 'original' usava a URL da CÂMERA como origem, enquanto os outros
-    // dois modos são alimentados pelo nosso ffmpeg. Trocar para Máxima abria
-    // uma SEGUNDA conexão em paralelo — e câmera de sessão única recusa, não
-    // chega byte, o player fica preto. Foi o relato de 14/08/2026, e é o mesmo
-    // princípio que o Frigate documenta: "reduce the number of connections to
-    // your camera", consumindo do restream em vez de reconectar.
-    let sourceParaEstePath = sourceUrl;
-    if (deliveryMode === 'original' && !pushSourced) {
-      const nomeDaBase = this.pathNameFromCameraId(cameraId, 'selected');
-      const baseAoVivo = await this.getPath(nomeDaBase).then((p: any) => p?.ready === true).catch(() => false);
-      const decisao = decidirFonteDaMaxima({
-        urlDaCamera: sourceUrl,
-        urlDaPublicacao: baseAoVivo ? this.buildInternalRtspUrl(nomeDaBase) : null,
-        publicacaoAoVivo: baseAoVivo,
-        // A base só é cópia crua quando nada está convertendo nela.
-        publicacaoEhCopiaCrua: !isHevc && !transcodeAudioForWebrtc,
-        // Publicação que é cópia crua JÁ é o original — reaproveitá-la é
-        // byte a byte a mesma coisa. Testar a câmera aí seria só espera:
-        // a sonda numa câmera que recusa leva o timeout inteiro, e foi o que
-        // deixou o dono 3 minutos em "Reconectando à câmera…".
-        aceitaSegundaSessao: !baseAoVivo || (!isHevc && !transcodeAudioForWebrtc)
-          ? null
-          : await this.cameraAceitaSegundaSessao(cameraId, sourceUrl, rtspTransport),
-      });
-      sourceParaEstePath = decisao.url;
-      if (decisao.motivo === 'reaproveita-publicacao') {
-        this.logger.log(
-          `Máxima de ${cameraId} servida pela publicação já aberta `
-          + `(${decisao.fidelidadeOriginal ? 'cópia crua' : 'convertida'}) — a câmera recusa uma segunda sessão.`,
-        );
-      }
-    }
+    const transcodedForLive = needsPublisher && isHevc;
 
     const desiredPath: any = {
-      source: sourceParaEstePath,
+      source: sourceUrl,
       // 'original' (máxima qualidade) puxa o stream PRINCIPAL direto da câmera em
       // passthrough. Sempre sob demanda com janela curta: senão o path seguraria
       // uma sessão RTSP + banda WAN do main 24/7 mesmo sem ninguém assistindo.
       // GRADE: o orçamento quente decide por câmera (ver resolveGridSourceOnDemand).
-      // 'original' é sempre sob demanda; 'selected' segue a env global.
+      // 'original' é sempre sob demanda.
       sourceOnDemand: deliveryMode === 'original'
         ? true
         : deliveryMode === 'grid'
@@ -2472,7 +2387,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
             ? this.resolveGridSourceOnDemand(cameraId)
           : sourceOnDemand,
       sourceOnDemandStartTimeout,
-      sourceOnDemandCloseAfter: deliveryMode === 'original' ? selectedRunOnDemandCloseAfter : sourceOnDemandCloseAfter,
+      sourceOnDemandCloseAfter: deliveryMode === 'original' ? originalRunOnDemandCloseAfter : sourceOnDemandCloseAfter,
       rtspTransport,
     };
 
@@ -2502,12 +2417,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           sourceOnDemandCloseAfter,
         )}`
         : sourceUrl;
-      // Este ramo é a contingência H.264 ou a normalização de áudio. Clientes que
+      // Este ramo é a contingência H.264 ou a sanitização da grade. Clientes que
       // reproduzem H.265 usam `grid-hevc`/`original` e não chegam aqui. Quando o
       // publisher é necessário, ele publica H.264 + Opus para ampla compatibilidade.
       desiredPath.source = 'publisher';
       // O publisher tambem normaliza H.264 quando ja precisa abrir FFmpeg para
-      // o audio. Copiar um stream com fragmentos RTP perdidos repassa quadros
+      // a fonte exige sanitização. Copiar um stream com fragmentos RTP perdidos repassa quadros
       // quebrados ao navegador e pode deixar a imagem verde ate o proximo IDR.
       // A grade limita fontes grandes, mas preserva a resolução nativa de fontes
       // menores. Sem o min(iw/ih), um sub-stream 640x360 era ampliado para
@@ -2516,42 +2431,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         `scale=w='min(iw,${GRID_LIVE_MAX_WIDTH})':h='min(ih,${GRID_LIVE_MAX_HEIGHT})':` +
         `force_original_aspect_ratio=decrease:force_divisible_by=2,` +
         `fps=${GRID_LIVE_TARGET_FPS}`;
-      // Aceleração por GPU (NVENC): quando o admin liga o módulo de GPU em
-      // Configurações, o encode H.264 do 1x1 sai da CPU (libx264) e vai para a
-      // placa (h264_nvenc), mantendo o mesmo bitrate/GOP. O decode/scale segue
-      // na CPU; o ganho está no encode 1080p, que é a parte cara.
-      // ⚠️ NÃO basta a configuração estar ligada: o encode roda no container do
-      // MediaMTX, e emitir `-c:v h264_nvenc` num ffmpeg SEM NVENC faz o publisher
-      // morrer na largada. Exigimos o sinal explícito de que o pipeline TEM NVENC.
-      //
-      // ── INCIDENTE 11/08/2026: a GRADE não usa mais NVENC ──────────────────
-      // GeForce limita as sessões simultâneas de encode (~8–12 na RTX 5060 Ti).
-      // Com o mosaico aberto, cada tile HEVC pedia uma sessão; da 13ª em diante
-      // o driver recusava ("OpenEncodeSessionEx failed: incompatible client
-      // key (21)" — 52 falhas em 15 min medidas), o ffmpeg morria e, com
-      // runOnDemandRestart=false, o tile ficava PRETO/0fps num loop de
-      // reconexão. Sintoma visto pelo dono: "1 fps, tela preta, travando".
-      // Um tile é 640×360@20 ultrafast ≈ 12% de um núcleo — barato na CPU e
-      // são MUITOS de uma vez: exatamente a carga errada para um recurso
-      // escasso. A grade fica SEMPRE em libx264; a GPU fica para o 1x1
-      // (Equilibrado, 1080p), que é caro e raramente passa de meia dúzia
-      // simultâneos — e mesmo lá com fallback (abaixo) se a sessão for negada.
-      const useNvenc =
-        gpuAccel && this.transcodePipelineHasNvenc() && deliveryMode !== 'grid';
       // VÍDEO JÁ H.264 NÃO SE REENCODA. Nunca.
-      //
-      // O publisher aqui existe por VÁRIOS motivos, e só um deles é o vídeo:
-      // `transcodeAudioForWebrtc` (áudio ligado) também o obriga, porque o
-      // WebRTC não aceita o G.711 das câmeras. Só que os argumentos de vídeo
-      // eram sempre os de transcode — então uma fonte H.264 com áudio ligado
-      // era reencodada H.264→H.264 para converter o ÁUDIO.
-      //
-      // Foi o que o dono viu na tela, e com razão: "H264 → H.264 · 5X CPU ...
-      // isso é piada???" (14/08/2026). Não era: era o vídeo pagando o preço da
-      // conversão do áudio.
-      //
-      // A grade segue reencodando porque ali o vídeo muda de verdade (é
-      // redimensionado); nos demais modos, H.264 entra e sai intacto.
       // A GRADE TAMBÉM COPIA quando nada mudaria. O filtro dela é um TETO
       // (`scale=min(iw,640)`), não um alvo: fonte que já cabe atravessa
       // intocada. Medido nas 4 câmeras do dono — substream 640×360 @20 H.264,
@@ -2572,40 +2452,21 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         this.logger.log(`Grade de ${cameraId} COPIA o vídeo (${sourceWidth}x${sourceHeight} H.264 já cabe) — sem reencode.`);
       }
       const videoJaServe = !isHevc && (deliveryMode !== 'grid' || copiaNaGrade.copiar);
-      const cpuVideoArgs = sanitizeGridSource || videoJaServe
+      const videoArgs = sanitizeGridSource || videoJaServe
         ? '-c:v copy'
-        : deliveryMode === 'grid'
-        // `veryfast`, não `ultrafast`. Quando tirei o NVENC da grade (sessões
-        // esgotadas derrubavam tiles), ela caiu no `ultrafast` — o preset mais
-        // rápido e PIOR do x264 — e o dono viu na hora: "aspecto lavado,
-        // fantasma". Medido contra a mesma fonte (6 s, 900 kbps, 640x360):
+        :
+        // `veryfast`, não `ultrafast`: o preset mais rápido do x264 degradava
+        // visivelmente a grade (aspecto lavado e fantasma). Medido contra a
+        // mesma fonte (6 s, 900 kbps, 640x360):
         //
         //   ultrafast  SSIM 0,9794  PSNR 40,52 dB   0,15 s   <- causava a queixa
         //   veryfast   SSIM 0,9851  PSNR 41,58 dB   0,22 s
-        //   h264_nvenc SSIM 0,9833  PSNR 41,27 dB   (GPU)    <- o que havia antes
-        //
-        // `veryfast` supera até o NVENC que a grade usava, por ~+0,5 núcleo na
-        // frota inteira. `-refs 2` (era 1) devolve a referência que o x264 usa
+        // `-refs 2` (era 1) devolve a referência que o x264 usa
         // para não borrar objeto em movimento — o "fantasma" da queixa.
-        ? '-threads 2 -c:v libx264 -preset veryfast -tune zerolatency -profile:v main ' +
+          '-threads 2 -c:v libx264 -preset veryfast -tune zerolatency -profile:v main ' +
           `-b:v ${GRID_LIVE_BITRATE_KBPS}k -maxrate ${GRID_LIVE_BITRATE_KBPS}k ` +
           `-bufsize ${GRID_LIVE_BITRATE_KBPS * 2}k -pix_fmt yuv420p ` +
-          `-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2 -vf "${gridScaleFilter}"`
-        : '-threads 4 -c:v libx264 -preset veryfast -tune zerolatency -profile:v high ' +
-          `-b:v ${compatibleH264BitrateKbps}k -maxrate ${compatibleH264BitrateKbps}k ` +
-          `-bufsize ${compatibleH264BitrateKbps * 2}k -pix_fmt yuv420p ` +
-          '-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2';
-      const nvencVideoArgs =
-        // Nem a GPU: reencodar H.264 em H.264 é caro em qualquer lugar.
-        useNvenc && !sanitizeGridSource && !videoJaServe
-          ? '-c:v h264_nvenc -preset p4 -tune ll -profile:v main -rc cbr ' +
-            `-b:v ${compatibleH264BitrateKbps}k -maxrate ${compatibleH264BitrateKbps}k ` +
-            `-bufsize ${compatibleH264BitrateKbps * 2}k -pix_fmt yuv420p ` +
-            '-g 30 -bf 0'
-          : null;
-      const audioArgs = transcodeAudioForWebrtc
-        ? '-c:a libopus -ar 48000 -ac 2 -application lowdelay -b:a 96k'
-        : '-an';
+          `-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2 -vf "${gridScaleFilter}"`;
       // MediaMTX preenche $MTX_PATH e $RTSP_PORT automaticamente para o script.
       // -threads 4: limita libx264 a 4 threads por câmera (3 câmeras × 4 = 12 threads totais).
       // Sem este limite, libx264 cria automaticamente N threads = nº de núcleos lógicos,
@@ -2625,9 +2486,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         // instead of passing corrupted NAL units downstream (which causes
         // green frames in the browser until the next IDR keyframe arrives).
         `-flags low_delay -err_detect careful -rtsp_transport ${rtspTransport} ` +
-        `-i "${privateSourceUrl}" -map 0:v:0 -map 0:a:0? ${videoArgs} ${audioArgs} ` +
+        `-i "${privateSourceUrl}" -map 0:v:0 ${videoArgs} -an ` +
         `-f rtsp -rtsp_transport tcp -muxdelay 0.1 -pkt_size 1200 "${publishUrl}"`;
-      const cpuFfmpegCommand = buildFfmpegCommand(cpuVideoArgs);
+      const ffmpegCommand = buildFfmpegCommand(videoArgs);
       // AUTO-RECUPERAÇÃO (anti-travamento). Antes de iniciar o restream, mata
       // qualquer ffmpeg ENCRAVADO deste MESMO path. Um ffmpeg que parou de publicar
       // mas continuou vivo segurava o antigo lock `flock -n` e fazia todo runOnDemand
@@ -2637,7 +2498,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // Segurança: só elimina processos cujo comm é exatamente `ffmpeg` E cuja linha
       // de comando publica NESTE path (`/<pathName> ` — o publishUrl é o último arg,
       // então é seguido pelo NUL final que vira espaço; o sufixo `_grid` distingue
-      // grid de selected, evitando matar o path irmão). O runOnDemand só roda quando
+      // o path da grade do original, evitando matar o path irmão). O runOnDemand só roda quando
       // o path está SEM fonte, então o publisher ativo nunca é alvo.
       const prekill =
         `for d in /proc/[0-9]*; do ` +
@@ -2645,19 +2506,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         `tr "\\0" " " < "$d/cmdline" 2>/dev/null | grep -qF "/${pathName} " ` +
         `&& kill -9 "$(basename "$d")" 2>/dev/null; ` +
         `done`;
-      // FALLBACK NVENC→CPU (incidente 11/08/2026): a GeForce limita as sessões
-      // de encode; quando o driver recusa ("OpenEncodeSessionEx failed"), o
-      // ffmpeg morre em ~1–2 s. Se o processo NVENC terminar com erro EM MENOS
-      // DE 10 s, tratamos como falha de INICIALIZAÇÃO e relançamos o mesmo
-      // pipeline em libx264 — a câmera abre mesmo com a GPU lotada. A janela de
-      // 10 s evita o falso-positivo perigoso: um NVENC que rodou horas e foi
-      // morto pelo runOnUnDemand (kill -9, também exit≠0) NÃO pode renascer em
-      // CPU como órfão — com >10 s de vida, o script apenas termina.
-      const runOnDemandScript = nvencVideoArgs
-        ? `${prekill}; inicio=$(date +%s); ${buildFfmpegCommand(nvencVideoArgs)}; rc=$?; ` +
-          `[ "$rc" -ne 0 ] && [ $(( $(date +%s) - inicio )) -lt 10 ] && exec ${cpuFfmpegCommand}; ` +
-          `exit "$rc"`
-        : `${prekill}; exec ${cpuFfmpegCommand}`;
+      const runOnDemandScript = `${prekill}; exec ${ffmpegCommand}`;
       desiredPath.runOnDemand = `sh -c ${this.shellQuote(runOnDemandScript)}`;
       // FFMPEG ÓRFÃO: o mesmo prekill, agora também na SAÍDA do último espectador.
       //

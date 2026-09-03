@@ -1,5 +1,5 @@
 export type LiveProtocol = 'auto' | 'flv' | 'hls' | 'webrtc' | 'mjpeg' | 'llhls';
-export type LiveDeliveryMode = 'selected' | 'grid' | 'grid-hevc' | 'original';
+export type LiveDeliveryMode = 'grid' | 'grid-hevc' | 'original';
 export type VideoCodecFamily = 'avc' | 'hevc' | 'unknown';
 
 export type WebrtcInboundSample = {

@@ -63,7 +63,7 @@ test('path privado _grid_source travado é recuperado (antes: ignorado em silên
 });
 
 test('_source dos demais modos também é reconhecido', async () => {
-  for (const [suffix, mode] of [['_source', 'selected'], ['_orig_source', 'original']] as const) {
+  for (const [suffix, mode] of [['_grid_source', 'grid'], ['_orig_source', 'original']] as const) {
     const { mgr, ensured } = makeProxy();
     await mgr.recoverStuckPath(`cam_${HEX}${suffix}`, true, 1);
     assert.equal(ensured.length, 1, `${suffix} deveria recuperar`);
@@ -72,7 +72,7 @@ test('_source dos demais modos também é reconhecido', async () => {
 });
 
 test('paths públicos continuam recuperando como antes (sem regressão)', async () => {
-  for (const [suffix, mode] of [['', 'selected'], ['_grid', 'grid'], ['_orig', 'original']] as const) {
+  for (const [suffix, mode] of [['_grid', 'grid'], ['_orig', 'original']] as const) {
     const { mgr, ensured, deleted } = makeProxy();
     await mgr.recoverStuckPath(`cam_${HEX}${suffix}`, true, 1);
     assert.equal(ensured.length, 1, `cam_<hex>${suffix} deveria recuperar`);

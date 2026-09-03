@@ -74,7 +74,6 @@ export type TranscodePipeline = 'live_single' | 'live_grid' | 'recording';
 export type TranscodeCode =
   | 'passthrough'
   | 'source_hevc'
-  | 'audio_webrtc'
   | 'codec_mode_h265'
   | 'codec_mode_h264';
 
@@ -314,37 +313,20 @@ function buildTranscodeVerdicts(
   const mainCodec = measuredMain ?? configured.videoCodec ?? null;
   const certainty: TranscodeVerdict['certainty'] = measuredMain ? 'measured' : 'assumed';
   const mainIsHevc = isHevcCodec(mainCodec);
-  const audioEnabled = Boolean(configured.audioEnabled);
-
-  // LIVE (câmera individual, entrega 'selected'): o publisher FFmpeg só sobe
-  // quando a fonte é H.265 (o navegador não decodifica HEVC em WebRTC) ou quando
-  // o áudio precisa ser reempacotado para o WebRTC.
-  const liveSingle: TranscodeVerdict = mainIsHevc
-    ? {
-        pipeline: 'live_single',
-        label: 'Ao vivo (câmera individual)',
-        transcoding: true,
-        code: 'source_hevc',
-        reason: 'A fonte é H.265 e o navegador não decodifica H.265 em WebRTC: o servidor converte para H.264.',
-        certainty,
-      }
-    : audioEnabled
-      ? {
-          pipeline: 'live_single',
-          label: 'Ao vivo (câmera individual)',
-          transcoding: true,
-          code: 'audio_webrtc',
-          reason: 'O vídeo passaria direto, mas o áudio habilitado exige reempacotamento para WebRTC.',
-          certainty,
-        }
-      : {
-          pipeline: 'live_single',
-          label: 'Ao vivo (câmera individual)',
-          transcoding: false,
-          code: 'passthrough',
-          reason: 'Vídeo entregue como está, sem conversão (sem custo de CPU).',
-          certainty,
-        };
+  // Na câmera individual não existe mais perfil intermediário transcodificado.
+  // “Máxima” entrega o fluxo principal original e “Instantâneo” reutiliza o
+  // perfil da grade. Portanto o diagnóstico do fluxo principal nunca deve
+  // prometer conversão H.265→H.264 ou reempacotamento de áudio.
+  const liveSingle: TranscodeVerdict = {
+    pipeline: 'live_single',
+    label: 'Ao vivo (Máxima)',
+    transcoding: false,
+    code: 'passthrough',
+    reason: mainIsHevc
+      ? 'O fluxo H.265 original é entregue sem conversão; use Instantâneo se o navegador não reproduzi-lo.'
+      : 'Vídeo original entregue como está, sem conversão (sem custo de CPU).',
+    certainty,
+  };
 
   // GRADE: usa o substream quando existe (é o que a torna instantânea). Fonte
   // H.264 vai por passthrough; só H.265 exige publisher.
