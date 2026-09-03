@@ -70,6 +70,7 @@ test('RTMP administrativa ignora payload contínuo e nasce manual/desligada', as
   assert.equal(written.recordingMode, 'manual');
   assert.equal(written.recordingEnabled, false);
   assert.equal(written.recordingVideoCodec, 'original');
+  assert.equal(written.audioEnabled, true, 'RTMP nova preserva áudio para a live');
 });
 
 test('RTMP privada criada pelo app nasce manual, desligada e herda 3 dias do grupo', async () => {

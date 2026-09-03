@@ -309,7 +309,10 @@ export class CamerasService implements OnApplicationBootstrap {
         recordingHeight: normalizedProfile.recordingHeight,
         recordingFps: normalizedProfile.recordingFps,
         recordingBitrateKbps: normalizedProfile.recordingBitrateKbps,
-        audioEnabled: dto.audioEnabled ?? false,
+        // A câmera já chega com áudio habilitado: a grade continua muda no
+        // navegador por padrão, mas o operador pode escutar ao abrir o ícone.
+        // Desabilitar aqui descartaria a trilha antes de ela chegar ao WebRTC.
+        audioEnabled: dto.audioEnabled ?? true,
         aiEnabled: aiEnabledEfetivo({
           recordingMode: dto.recordingMode ?? 'continuous',
           motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
@@ -1820,7 +1823,10 @@ export class CamerasService implements OnApplicationBootstrap {
         streamVideoCodec: null,
         recordingVideoCodec: dto.recordingVideoCodec ?? 'original',
         detectedVideoCodec: null,
-        audioEnabled: dto.audioEnabled ?? false,
+        // Publicação RTMP segue a mesma política da câmera convencional:
+        // gravação nasce manual/desarmada, mas a trilha de áudio fica disponível
+        // para a visualização ao vivo.
+        audioEnabled: dto.audioEnabled ?? true,
         aiEnabled: aiEnabledEfetivo({
           recordingMode: 'manual',
           motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
