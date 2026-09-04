@@ -1893,17 +1893,25 @@ export function LiveStreamPlayer({
   }, []);
 
   useEffect(() => {
+    // Cada perfil abre outro path/PeerConnection. Não carregue para a nova
+    // qualidade a última amostra da conexão anterior: isso fazia o selo mostrar
+    // por alguns segundos o bitrate do Instantâneo em "Máxima" (e vice-versa).
+    lastBitrateSampleRef.current = null;
+    setMeasuredBitrateKbps(null);
+
     if (liveViewMode !== 'selected' || activeProtocol !== 'WEBRTC') {
-      lastBitrateSampleRef.current = null;
-      setMeasuredBitrateKbps(null);
       return;
     }
 
+    let cancelled = false;
     const sample = async () => {
       const pc = webrtcPcRef.current;
       if (!pc) return;
       try {
         const stats = await pc.getStats();
+        // A qualidade pode ter trocado enquanto getStats() aguardava. Uma
+        // resposta da conexão velha nunca deve sobrescrever a medição nova.
+        if (cancelled || pc !== webrtcPcRef.current) return;
         let bytes = 0;
         stats.forEach((report) => {
           if (report.type === 'inbound-rtp' && report.kind === 'video' && !report.isRemote) {
@@ -1918,14 +1926,17 @@ export function LiveStreamPlayer({
           setMeasuredBitrateKbps(Math.max(0, Math.round(kbps)));
         }
       } catch {
-        setMeasuredBitrateKbps(null);
+        if (!cancelled) setMeasuredBitrateKbps(null);
       }
     };
 
     void sample();
     const interval = window.setInterval(() => void sample(), 2000);
-    return () => window.clearInterval(interval);
-  }, [activeProtocol, liveViewMode]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeProtocol, deliveryMode, liveViewMode]);
 
   useEffect(() => {
     if (activeProtocol !== 'HLS' && activeProtocol !== 'LL-HLS') {

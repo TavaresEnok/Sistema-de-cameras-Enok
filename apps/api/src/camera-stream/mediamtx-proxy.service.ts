@@ -2464,16 +2464,20 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         ? '-c:v copy'
         :
         // `veryfast`, não `ultrafast`: o preset mais rápido do x264 degradava
-        // visivelmente a grade (aspecto lavado e fantasma). Medido contra a
-        // mesma fonte (6 s, 900 kbps, 640x360):
+        // visivelmente a grade (aspecto lavado e fantasma). O teto continua em
+        // 900 kbps, porém com CRF (qualidade variável), não bitrate médio fixo.
+        // Forçar `-b:v 900k` fazia uma cena parada do Instantâneo gastar perto
+        // de 900 kbps enquanto o original VBR da própria câmera caía a 100 kbps
+        // — exatamente o inverso do propósito do modo leve. CRF reduz a taxa
+        // quando não há detalhe/movimento e o VBV impede ultrapassar o teto.
         //
         //   ultrafast  SSIM 0,9794  PSNR 40,52 dB   0,15 s   <- causava a queixa
         //   veryfast   SSIM 0,9851  PSNR 41,58 dB   0,22 s
         // `-refs 2` (era 1) devolve a referência que o x264 usa
         // para não borrar objeto em movimento — o "fantasma" da queixa.
           '-threads 2 -c:v libx264 -preset veryfast -tune zerolatency -profile:v main ' +
-          `-b:v ${GRID_LIVE_BITRATE_KBPS}k -maxrate ${GRID_LIVE_BITRATE_KBPS}k ` +
-          `-bufsize ${GRID_LIVE_BITRATE_KBPS * 2}k -pix_fmt yuv420p ` +
+          `-crf 25 -maxrate ${GRID_LIVE_BITRATE_KBPS}k ` +
+          `-bufsize ${GRID_LIVE_BITRATE_KBPS}k -pix_fmt yuv420p ` +
           `-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2 -vf "${gridScaleFilter}"`;
       // `?` não falha em câmeras sem microfone. Quando há áudio, Opus garante
       // reprodução WebRTC em Chrome, Firefox, Edge e Safari; sem isto o AAC da
