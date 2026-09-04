@@ -2496,7 +2496,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         // `-refs 2` (era 1) devolve a referência que o x264 usa
         // para não borrar objeto em movimento — o "fantasma" da queixa.
           '-threads 2 -c:v libx264 -preset veryfast -tune zerolatency -profile:v main ' +
-          `-crf 25 -maxrate ${deliveryBitrateKbps}k ` +
+          `-crf 23 -maxrate ${deliveryBitrateKbps}k ` +
           `-bufsize ${deliveryBitrateKbps}k -pix_fmt yuv420p ` +
           `-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2 -vf "${gridScaleFilter}"`;
       // `?` não falha em câmeras sem microfone. Quando há áudio, Opus garante

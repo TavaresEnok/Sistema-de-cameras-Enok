@@ -58,6 +58,9 @@ export const GRID_LIVE_TARGET_FPS = envNumber('GRID_LIVE_TARGET_FPS', 20, {
 export const GRID_LIVE_BITRATE_KBPS = envNumber('GRID_LIVE_BITRATE_KBPS', 900, {
   min: 200, max: 8000, integer: true,
 });
+export const INSTANT_LIVE_MIN_BITRATE_KBPS = envNumber('INSTANT_LIVE_MIN_BITRATE_KBPS', 450, {
+  min: 200, max: 2000, integer: true,
+});
 
 /**
  * Orçamento do modo Instantâneo.
@@ -65,8 +68,9 @@ export const GRID_LIVE_BITRATE_KBPS = envNumber('GRID_LIVE_BITRATE_KBPS', 900, {
  * Um teto fixo não basta: uma câmera VBR pode reduzir o original durante uma
  * cena parada e tornar um encode leve de taxa fixa maior que o Full HD. Quando
  * conhecemos a taxa da fonte, reduzimos pela raiz da proporção de pixels (uma
- * aproximação conservadora para H.264) e ainda exigimos pelo menos 30% de
- * economia. Sem telemetria da fonte usamos 600 kbps, nunca os 900 kbps máximos.
+ * aproximação conservadora para H.264). A telemetria instantânea da câmera pode
+ * despencar em cenas paradas; por isso ela nunca reduz o encode abaixo do piso
+ * visual seguro. Sem telemetria da fonte usamos 600 kbps.
  */
 export function resolveInstantBitrateKbps(input: {
   sourceBitrateKbps?: number | null;
@@ -92,7 +96,10 @@ export function resolveInstantBitrateKbps(input: {
   const proportional = Math.floor(sourceBitrate * pixelFactor);
   const belowOriginal = Math.floor(sourceBitrate * 0.7);
 
-  return Math.max(48, Math.min(ceiling, proportional, belowOriginal));
+  // Não tente ser menor que um original já comprimido demais sacrificando a
+  // imagem: 95 kbps em 640×360 @20 produziu macroblocos severos em produção.
+  // Nessa situação rara a qualidade mínima vence a economia de banda.
+  return Math.min(ceiling, Math.max(INSTANT_LIVE_MIN_BITRATE_KBPS, Math.min(proportional, belowOriginal)));
 }
 
 export function normalizeLiveViewMode(value?: string | null): LiveViewMode {
