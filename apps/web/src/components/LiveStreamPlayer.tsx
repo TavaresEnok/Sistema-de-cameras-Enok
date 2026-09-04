@@ -411,6 +411,11 @@ export function LiveStreamPlayer({
   const [displayFps, setDisplayFps] = useState<number | null>(null);
   const [sourceVideoCodec, setSourceVideoCodec] = useState<string | null>(null);
   const [isTranscodedForBrowser, setIsTranscodedForBrowser] = useState(false);
+  // Defesa também no cliente: respostas antigas ainda podem estar no cache do
+  // navegador. Conversão de vídeo só existe quando a ORIGEM é HEVC/H.265.
+  // H.264 com publisher de áudio continua sendo passthrough de vídeo.
+  const showsVideoTranscode = isTranscodedForBrowser
+    && videoCodecFamily(sourceVideoCodec) === 'hevc';
   // Custo da conversão, medido no servidor. A etiqueta de codec já mostrava
   // "H265 → H.264", mas sem dizer que isso custa 5× de CPU — o operador não tinha
   // como saber que o navegador dele é a causa, nem que trocar resolve de graça.
@@ -2548,18 +2553,18 @@ export function LiveStreamPlayer({
           {!compactLiveOverlay && sourceVideoCodec ? (
             <span
               className={`inline-flex h-6 items-center gap-1 rounded border px-2 text-[10px] font-semibold uppercase tracking-wide ${
-                isTranscodedForBrowser
+                showsVideoTranscode
                   ? 'border-amber-400/50 bg-amber-500/20 text-amber-100'
                   : 'border-white/15 bg-black/55 text-white/80'
               }`}
               title={
-                transcodeCost
+                showsVideoTranscode && transcodeCost
                   ? `${transcodeCost.reason ?? ''} Custa cerca de ${transcodeCost.cpuMultiplier ?? 5}x mais CPU do servidor. ${transcodeCost.hint ?? ''}`.trim()
                   : undefined
               }
             >
-              {sourceVideoCodec}{isTranscodedForBrowser ? ' → H.264' : ''}
-              {isTranscodedForBrowser && transcodeCost?.cpuMultiplier
+              {sourceVideoCodec}{showsVideoTranscode ? ' → H.264' : ''}
+              {showsVideoTranscode && transcodeCost?.cpuMultiplier
                 ? ` · ${transcodeCost.cpuMultiplier}x CPU`
                 : ''}
             </span>
