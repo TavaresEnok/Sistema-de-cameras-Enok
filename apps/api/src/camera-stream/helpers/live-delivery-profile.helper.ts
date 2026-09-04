@@ -58,8 +58,11 @@ export const GRID_LIVE_TARGET_FPS = envNumber('GRID_LIVE_TARGET_FPS', 20, {
 export const GRID_LIVE_BITRATE_KBPS = envNumber('GRID_LIVE_BITRATE_KBPS', 900, {
   min: 200, max: 8000, integer: true,
 });
-export const INSTANT_LIVE_MIN_BITRATE_KBPS = envNumber('INSTANT_LIVE_MIN_BITRATE_KBPS', 450, {
+export const INSTANT_LIVE_MIN_BITRATE_KBPS = envNumber('INSTANT_LIVE_MIN_BITRATE_KBPS', 400, {
   min: 200, max: 2000, integer: true,
+});
+export const INSTANT_LIVE_MAX_BITRATE_KBPS = envNumber('INSTANT_LIVE_MAX_BITRATE_KBPS', 700, {
+  min: 300, max: 2000, integer: true,
 });
 
 /**
@@ -80,7 +83,7 @@ export function resolveInstantBitrateKbps(input: {
   outputHeight?: number;
   ceilingKbps?: number;
 }) {
-  const ceiling = Math.max(64, Math.round(Number(input.ceilingKbps) || GRID_LIVE_BITRATE_KBPS));
+  const ceiling = Math.max(64, Math.round(Number(input.ceilingKbps) || INSTANT_LIVE_MAX_BITRATE_KBPS));
   const sourceBitrate = Number(input.sourceBitrateKbps);
   if (!Number.isFinite(sourceBitrate) || sourceBitrate <= 0) {
     return Math.min(600, ceiling);
@@ -99,7 +102,8 @@ export function resolveInstantBitrateKbps(input: {
   // Não tente ser menor que um original já comprimido demais sacrificando a
   // imagem: 95 kbps em 640×360 @20 produziu macroblocos severos em produção.
   // Nessa situação rara a qualidade mínima vence a economia de banda.
-  return Math.min(ceiling, Math.max(INSTANT_LIVE_MIN_BITRATE_KBPS, Math.min(proportional, belowOriginal)));
+  const minimum = Math.min(INSTANT_LIVE_MIN_BITRATE_KBPS, ceiling);
+  return Math.min(ceiling, Math.max(minimum, Math.min(proportional, belowOriginal)));
 }
 
 export function normalizeLiveViewMode(value?: string | null): LiveViewMode {

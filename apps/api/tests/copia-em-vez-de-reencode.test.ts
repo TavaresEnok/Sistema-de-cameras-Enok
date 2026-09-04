@@ -23,6 +23,14 @@ test('fonte menor que o teto também é copiada', () => {
   assert.equal(decidirCopiaDeVideo({ codec: 'h264', largura: 528, altura: 360, fps: 15 }, GRADE).copiar, true);
 });
 
+test('stream 2 H.264 em 480p pode atravessar o Instantâneo sem encode de vídeo', () => {
+  const instantaneo = { larguraMaxima: 854, alturaMaxima: 480, fpsAlvo: 20 };
+  assert.equal(
+    decidirCopiaDeVideo({ codec: 'h264', largura: 854, altura: 480, fps: 20 }, instantaneo).copiar,
+    true,
+  );
+});
+
 test('no path de contingência H.264, H.265 não pode passar sem conversão', () => {
   const d = decidirCopiaDeVideo({ codec: 'h265', largura: 640, altura: 360, fps: 20 }, GRADE);
   assert.equal(d.copiar, false);

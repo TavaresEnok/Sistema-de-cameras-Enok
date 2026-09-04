@@ -37,6 +37,7 @@ import {
   GRID_LIVE_MAX_HEIGHT,
   GRID_LIVE_MAX_WIDTH,
   GRID_LIVE_TARGET_FPS,
+  INSTANT_LIVE_MAX_BITRATE_KBPS,
   resolveInstantBitrateKbps,
   type LiveViewMode,
 } from './helpers/live-delivery-profile.helper';
@@ -84,6 +85,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   private readonly gridSourceCache = new Map<string, {
     url: string | null;
     codec: string | null;
+    width: number | null;
+    height: number | null;
     requiresSanitization: boolean;
     at: number;
   }>();
@@ -1244,6 +1247,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         where: { id: cameraId },
         select: {
           gridHasSubStream: true, gridSourceUrl: true, gridSourceCodec: true,
+          gridSourceWidth: true, gridSourceHeight: true,
           gridRequiresSanitization: true, gridProbeKey: true, gridProbedAt: true,
         },
       });
@@ -1260,7 +1264,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         impressao,
         Date.now(),
       );
-      return r.usar ? r : null;
+      return r.usar ? { ...r, width: c.gridSourceWidth, height: c.gridSourceHeight } : null;
     } catch {
       return null;
     }
@@ -1549,6 +1553,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           profile: subProfile,
           sourceUrl: cached.url,
           isHevc: cached.codec ? isHevcCodec(cached.codec) : false,
+          width: cached.width,
+          height: cached.height,
           usedSubStream: true,
           requiresSanitization: cached.requiresSanitization,
         };
@@ -1583,12 +1589,15 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         const url = comSegredo(anotado.urlSemSegredo, camera.username, password);
         if (url) {
           this.gridSourceCache.set(cacheKey, {
-            url, codec: anotado.codec, requiresSanitization: anotado.precisaLimpeza, at: Date.now(),
+            url, codec: anotado.codec, width: anotado.width, height: anotado.height,
+            requiresSanitization: anotado.precisaLimpeza, at: Date.now(),
           });
           return {
             profile: subProfile,
             sourceUrl: url,
             isHevc: anotado.codec ? isHevcCodec(anotado.codec) : false,
+            width: anotado.width,
+            height: anotado.height,
             usedSubStream: true,
             requiresSanitization: anotado.precisaLimpeza,
           };
@@ -1597,7 +1606,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         // Anotado como "não tem sub". É o caso que mais economiza: sem isto,
         // três câmeras desta frota seriam sondadas em vão a cada abertura.
         this.gridSourceCache.set(cacheKey, {
-          url: null, codec: null, requiresSanitization: false, at: Date.now(),
+          url: null, codec: null, width: null, height: null, requiresSanitization: false, at: Date.now(),
         });
         const m = await this.chooseLiveSource(cameraId, camera, password, transport);
         return {
@@ -1755,6 +1764,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       this.gridSourceCache.set(cacheKey, {
         url: chosen.url,
         codec: chosen.codec,
+        width: chosen.width,
+        height: chosen.height,
         requiresSanitization,
         at: Date.now(),
       });
@@ -1764,6 +1775,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         profile: subProfile,
         sourceUrl: chosen.url,
         isHevc: isHevcCodec(chosen.codec),
+        width: chosen.width,
+        height: chosen.height,
         usedSubStream: true,
         requiresSanitization,
       };
@@ -1773,6 +1786,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     this.gridSourceCache.set(cacheKey, {
       url: null,
       codec: null,
+      width: null,
+      height: null,
       requiresSanitization: false,
       at: Date.now(),
     });
@@ -2342,6 +2357,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const sourceHeight = Number(('height' in selected ? selected.height : null) ?? camera.streamHeight) || null;
     const sourceFps = Number(('fps' in selected ? selected.fps : null) ?? camera.streamFps) || null;
     const sourceBitrateKbps = Number(('bitrateKbps' in selected ? selected.bitrateKbps : null)) || null;
+    const usingSubStream = Boolean('usedSubStream' in selected && selected.usedSubStream);
     const sanitizeGridSource =
       (deliveryMode === 'grid' || deliveryMode === 'grid-audio') &&
       !isHevc &&
@@ -2441,19 +2457,20 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         `scale=w='min(iw,${GRID_LIVE_MAX_WIDTH})':h='min(ih,${GRID_LIVE_MAX_HEIGHT})':` +
         `force_original_aspect_ratio=decrease:force_divisible_by=2,` +
         `fps=${GRID_LIVE_TARGET_FPS}`;
-      // VÍDEO JÁ H.264 NÃO SE REENCODA. Nunca.
-      // A GRADE TAMBÉM COPIA quando nada mudaria. O filtro dela é um TETO
+      // O substream H.264 já leve não é reencodado. A grade copia quando nada
+      // mudaria. O filtro dela é um TETO
       // (`scale=min(iw,640)`), não um alvo: fonte que já cabe atravessa
       // intocada. Medido nas 4 câmeras do dono — substream 640×360 @20 H.264,
       // exatamente o teto — decodificava e reencodava para produzir o mesmo
       // vídeo. "isso é retrabalho e jogar % da cpu no lixo!!!" (14/08/2026)
-      // A grade muda copia H.264 leve para poupar CPU. O Instantâneo com áudio
-      // (`grid-audio`, usado na câmera única) precisa cumprir outro contrato:
-      // ser realmente mais leve que a Máxima. Como o FFmpeg já está aberto para
-      // AAC→Opus, também reduzimos o vídeo e controlamos sua banda. Copiá-lo
-      // permitiria que um substream mal configurado consumisse tanto quanto o
-      // principal.
-      const copiaNaGrade = deliveryMode === 'grid'
+      // O Instantâneo (`grid-audio`) também copia o stream 2 quando ele é H.264
+      // e já está em até 480p: zero encode de vídeo; se houver AAC, o FFmpeg
+      // converte apenas o áudio para Opus. Sem stream 2 adequado, reduzimos o
+      // principal para 360p dentro do orçamento de 400–700 kbps.
+      const copyCeiling = deliveryMode === 'grid-audio'
+        ? { larguraMaxima: 854, alturaMaxima: 480, fpsAlvo: GRID_LIVE_TARGET_FPS }
+        : { larguraMaxima: GRID_LIVE_MAX_WIDTH, alturaMaxima: GRID_LIVE_MAX_HEIGHT, fpsAlvo: GRID_LIVE_TARGET_FPS };
+      const copiaNaGrade = (deliveryMode === 'grid' || (deliveryMode === 'grid-audio' && usingSubStream))
         ? decidirCopiaDeVideo(
             {
               codec: sourceVideoCodec,
@@ -2461,7 +2478,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
               altura: sourceHeight,
               fps: sourceFps,
             },
-            { larguraMaxima: GRID_LIVE_MAX_WIDTH, alturaMaxima: GRID_LIVE_MAX_HEIGHT, fpsAlvo: GRID_LIVE_TARGET_FPS },
+            copyCeiling,
           )
         : { copiar: false, motivo: 'nao-e-grade' as const };
       if (copiaNaGrade.copiar) {
@@ -2475,7 +2492,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         sourceHeight,
         outputWidth: GRID_LIVE_MAX_WIDTH,
         outputHeight: GRID_LIVE_MAX_HEIGHT,
-        ceilingKbps: GRID_LIVE_BITRATE_KBPS,
+        ceilingKbps: INSTANT_LIVE_MAX_BITRATE_KBPS,
       });
       const deliveryBitrateKbps = deliveryMode === 'grid-audio'
         ? instantBitrateKbps
@@ -2484,8 +2501,9 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         ? '-c:v copy'
         :
         // `veryfast`, não `ultrafast`: o preset mais rápido do x264 degradava
-        // visivelmente a grade (aspecto lavado e fantasma). O teto continua em
-        // 900 kbps, porém com CRF (qualidade variável), não bitrate médio fixo.
+        // visivelmente a grade (aspecto lavado e fantasma). O teto é 900 kbps
+        // na grade e 700 kbps no Instantâneo, com CRF (qualidade variável),
+        // não bitrate médio fixo.
         // Forçar `-b:v 900k` fazia uma cena parada do Instantâneo gastar perto
         // de 900 kbps enquanto o original VBR da própria câmera caía a 100 kbps
         // — exatamente o inverso do propósito do modo leve. CRF reduz a taxa
