@@ -37,6 +37,7 @@ import {
   GRID_LIVE_MAX_HEIGHT,
   GRID_LIVE_MAX_WIDTH,
   GRID_LIVE_TARGET_FPS,
+  resolveInstantBitrateKbps,
   type LiveViewMode,
 } from './helpers/live-delivery-profile.helper';
 import { liveViewModeToSourceProfile } from './helpers/source-profile.helper';
@@ -2340,6 +2341,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const sourceWidth = Number(('width' in selected ? selected.width : null) ?? camera.streamWidth) || null;
     const sourceHeight = Number(('height' in selected ? selected.height : null) ?? camera.streamHeight) || null;
     const sourceFps = Number(('fps' in selected ? selected.fps : null) ?? camera.streamFps) || null;
+    const sourceBitrateKbps = Number(('bitrateKbps' in selected ? selected.bitrateKbps : null)) || null;
     const sanitizeGridSource =
       (deliveryMode === 'grid' || deliveryMode === 'grid-audio') &&
       !isHevc &&
@@ -2445,7 +2447,13 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       // intocada. Medido nas 4 câmeras do dono — substream 640×360 @20 H.264,
       // exatamente o teto — decodificava e reencodava para produzir o mesmo
       // vídeo. "isso é retrabalho e jogar % da cpu no lixo!!!" (14/08/2026)
-      const copiaNaGrade = deliveryMode === 'grid' || deliveryMode === 'grid-audio'
+      // A grade muda copia H.264 leve para poupar CPU. O Instantâneo com áudio
+      // (`grid-audio`, usado na câmera única) precisa cumprir outro contrato:
+      // ser realmente mais leve que a Máxima. Como o FFmpeg já está aberto para
+      // AAC→Opus, também reduzimos o vídeo e controlamos sua banda. Copiá-lo
+      // permitiria que um substream mal configurado consumisse tanto quanto o
+      // principal.
+      const copiaNaGrade = deliveryMode === 'grid'
         ? decidirCopiaDeVideo(
             {
               codec: sourceVideoCodec,
@@ -2459,8 +2467,20 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       if (copiaNaGrade.copiar) {
         this.logger.log(`Grade de ${cameraId} COPIA o vídeo (${sourceWidth}x${sourceHeight} H.264 já cabe) — sem reencode.`);
       }
-      const videoJaServe = !isHevc && ((deliveryMode !== 'grid' && deliveryMode !== 'grid-audio') || copiaNaGrade.copiar);
-      const videoArgs = sanitizeGridSource || videoJaServe
+      const videoJaServe = !isHevc
+        && ((deliveryMode !== 'grid' && deliveryMode !== 'grid-audio') || copiaNaGrade.copiar);
+      const instantBitrateKbps = resolveInstantBitrateKbps({
+        sourceBitrateKbps,
+        sourceWidth,
+        sourceHeight,
+        outputWidth: GRID_LIVE_MAX_WIDTH,
+        outputHeight: GRID_LIVE_MAX_HEIGHT,
+        ceilingKbps: GRID_LIVE_BITRATE_KBPS,
+      });
+      const deliveryBitrateKbps = deliveryMode === 'grid-audio'
+        ? instantBitrateKbps
+        : GRID_LIVE_BITRATE_KBPS;
+      const videoArgs = (sanitizeGridSource && deliveryMode === 'grid') || videoJaServe
         ? '-c:v copy'
         :
         // `veryfast`, não `ultrafast`: o preset mais rápido do x264 degradava
@@ -2476,8 +2496,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         // `-refs 2` (era 1) devolve a referência que o x264 usa
         // para não borrar objeto em movimento — o "fantasma" da queixa.
           '-threads 2 -c:v libx264 -preset veryfast -tune zerolatency -profile:v main ' +
-          `-crf 25 -maxrate ${GRID_LIVE_BITRATE_KBPS}k ` +
-          `-bufsize ${GRID_LIVE_BITRATE_KBPS}k -pix_fmt yuv420p ` +
+          `-crf 25 -maxrate ${deliveryBitrateKbps}k ` +
+          `-bufsize ${deliveryBitrateKbps}k -pix_fmt yuv420p ` +
           `-g 30 -keyint_min 15 -sc_threshold 0 -bf 0 -refs 2 -vf "${gridScaleFilter}"`;
       // `?` não falha em câmeras sem microfone. Quando há áudio, Opus garante
       // reprodução WebRTC em Chrome, Firefox, Edge e Safari; sem isto o AAC da

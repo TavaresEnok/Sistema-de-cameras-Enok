@@ -1915,6 +1915,12 @@ export function LiveStreamPlayer({
         let bytes = 0;
         stats.forEach((report) => {
           if (report.type === 'inbound-rtp' && report.kind === 'video' && !report.isRemote) {
+            // Chrome expõe retransmissões RTX/FEC como outro inbound-rtp de
+            // vídeo. Somá-lo ao fluxo principal podia quase duplicar o número
+            // mostrado em redes com perda, embora não fossem pixels adicionais.
+            const codec = report.codecId ? stats.get(report.codecId) : null;
+            const mimeType = String(codec?.mimeType ?? '').toLowerCase();
+            if (mimeType.includes('/rtx') || mimeType.includes('/red') || mimeType.includes('/ulpfec')) return;
             bytes += Number(report.bytesReceived ?? 0);
           }
         });

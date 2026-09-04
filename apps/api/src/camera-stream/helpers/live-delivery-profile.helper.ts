@@ -59,6 +59,42 @@ export const GRID_LIVE_BITRATE_KBPS = envNumber('GRID_LIVE_BITRATE_KBPS', 900, {
   min: 200, max: 8000, integer: true,
 });
 
+/**
+ * Orçamento do modo Instantâneo.
+ *
+ * Um teto fixo não basta: uma câmera VBR pode reduzir o original durante uma
+ * cena parada e tornar um encode leve de taxa fixa maior que o Full HD. Quando
+ * conhecemos a taxa da fonte, reduzimos pela raiz da proporção de pixels (uma
+ * aproximação conservadora para H.264) e ainda exigimos pelo menos 30% de
+ * economia. Sem telemetria da fonte usamos 600 kbps, nunca os 900 kbps máximos.
+ */
+export function resolveInstantBitrateKbps(input: {
+  sourceBitrateKbps?: number | null;
+  sourceWidth?: number | null;
+  sourceHeight?: number | null;
+  outputWidth?: number;
+  outputHeight?: number;
+  ceilingKbps?: number;
+}) {
+  const ceiling = Math.max(64, Math.round(Number(input.ceilingKbps) || GRID_LIVE_BITRATE_KBPS));
+  const sourceBitrate = Number(input.sourceBitrateKbps);
+  if (!Number.isFinite(sourceBitrate) || sourceBitrate <= 0) {
+    return Math.min(600, ceiling);
+  }
+
+  const sourcePixels = Number(input.sourceWidth) * Number(input.sourceHeight);
+  const outputPixels = Number(input.outputWidth ?? GRID_LIVE_MAX_WIDTH)
+    * Number(input.outputHeight ?? GRID_LIVE_MAX_HEIGHT);
+  const pixelFactor = Number.isFinite(sourcePixels) && sourcePixels > 0
+    && Number.isFinite(outputPixels) && outputPixels > 0
+    ? Math.min(0.65, Math.max(0.2, Math.sqrt(Math.min(1, outputPixels / sourcePixels))))
+    : 0.5;
+  const proportional = Math.floor(sourceBitrate * pixelFactor);
+  const belowOriginal = Math.floor(sourceBitrate * 0.7);
+
+  return Math.max(48, Math.min(ceiling, proportional, belowOriginal));
+}
+
 export function normalizeLiveViewMode(value?: string | null): LiveViewMode {
   const v = String(value ?? '').trim().toLowerCase();
   if (v === 'grid') return 'grid';
