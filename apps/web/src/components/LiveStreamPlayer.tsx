@@ -466,6 +466,7 @@ export function LiveStreamPlayer({
   // O gesto explícito no ícone de volume troca SOMENTE esta câmera para o
   // perfil com áudio, preservando o último frame durante a renegociação.
   const [gridAudioRequested, setGridAudioRequested] = useState(false);
+  const [audioSwitchMessage, setAudioSwitchMessage] = useState<string | null>(null);
   // A grade começa sempre pelo bitstream original do substream. Só muda para o
   // path H.264 depois que este cliente realmente falhar em WebRTC/H.265 (e no
   // HLS/H.265, quando MSE estiver disponível). A detecção declarativa de codec
@@ -475,6 +476,7 @@ export function LiveStreamPlayer({
     setQualityMode(getStoredLiveQuality(cameraId));
     setGridUsesH264Fallback(false);
     setGridAudioRequested(false);
+    setAudioSwitchMessage(null);
     retryAttemptRef.current = 0;
     rtmpBackgroundRecoveryRef.current = false;
   }, [cameraId]);
@@ -515,6 +517,20 @@ export function LiveStreamPlayer({
     : retryMessage
       ? friendlyLiveText(retryMessage, 'Reconectando à câmera…')
       : 'Aguardando vídeo';
+
+  // A troca de perfil para incluir/remover Opus exige uma renegociação WebRTC.
+  // O último frame pode desaparecer por um instante durante a substituição do
+  // MediaStream; o aviso evita que isso pareça uma falha da câmera. Há limite
+  // para uma anomalia de rede nunca deixar o selo preso na tela.
+  useEffect(() => {
+    if (!audioSwitchMessage) return;
+    const timeout = window.setTimeout(() => setAudioSwitchMessage(null), 15_000);
+    return () => window.clearTimeout(timeout);
+  }, [audioSwitchMessage]);
+
+  useEffect(() => {
+    if (error) setAudioSwitchMessage(null);
+  }, [error]);
   const compactErrorLabel = error && TECHNICAL_LIVE_MESSAGE_REGEX.test(error)
     ? 'Reconectando…'
     : 'Sem vídeo';
@@ -870,6 +886,7 @@ export function LiveStreamPlayer({
       retryAttemptRef.current = 0;
       rtmpBackgroundRecoveryRef.current = false;
       setRetryMessage(null);
+      setAudioSwitchMessage(null);
       setError(null);
       setActiveProtocol(protocol);
       activeProtocolRef.current = protocol;
@@ -2401,13 +2418,13 @@ export function LiveStreamPlayer({
         />
       )}
 
-      {showOverlay && isLoading && (
+      {showOverlay && (isLoading || audioSwitchMessage) && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20 backdrop-blur-[1px]">
           <div className={`flex items-center gap-2 rounded-md border border-white/10 bg-black/45 text-white/75 ${
             compactLiveOverlay ? 'px-2 py-1 text-[10px]' : 'px-3 py-2 text-xs'
           }`}>
             <LoaderCircle className={`${compactLiveOverlay ? 'h-3 w-3' : 'h-4 w-4'} animate-spin`} />
-            {loadingLabel}
+            {audioSwitchMessage ?? loadingLabel}
           </div>
         </div>
       )}
@@ -2603,7 +2620,7 @@ export function LiveStreamPlayer({
               // Só o clique que liga/desliga áudio reconecta este tile. A
               // grade inteira continua no H.264 em passthrough, sem áudio.
               if (hasFrameRef.current) preserveFrameOnReloadRef.current = true;
-              setRetryMessage(nextMuted ? 'Desativando áudio…' : 'Ativando áudio…');
+              setAudioSwitchMessage(nextMuted ? 'Desativando áudio…' : 'Ativando áudio…');
               setGridAudioRequested(!nextMuted);
             }
             setIsMuted(nextMuted);
