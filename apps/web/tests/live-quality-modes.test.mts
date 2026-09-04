@@ -16,8 +16,13 @@ test('câmera individual oferece somente Instantâneo e Máxima resolução', as
 
 test('backend não mantém o perfil transcodificado da câmera individual', async () => {
   const source = await readFile(apiProfilePath, 'utf8');
-  assert.match(source, /LiveViewMode = 'grid' \| 'grid-hevc' \| 'original'/);
-  assert.doesNotMatch(source, /'selected'/);
+  assert.match(source, /export type LiveViewMode =/);
+  assert.match(source, /'grid'/);
+  assert.match(source, /'original'/);
+  // Os perfis `*-audio` só mudam a trilha de áudio. Não representam a antiga
+  // qualidade intermediária e precisam continuar disponíveis para o botão de
+  // som sem reintroduzir o modo Equilibrado.
+  assert.doesNotMatch(source, /'selected'|'balanced'/);
 });
 
 test('cadastro RTMP nasce com gravação manual e desligada', async () => {

@@ -268,6 +268,62 @@ export function normalizeIngestPath(path: string): string {
   return path.trim();
 }
 
+// ── PERFIS GERADOS PELO PRÓPRIO EQUIPAMENTO ───────────────────────────────
+//
+// Intelbras, Dahua e alguns modelos Positivo derivados dessa plataforma não
+// usam a URL completa informada pelo operador. Eles publicam caminhos como:
+//
+//   live/liveStream_DHK0003252944_0_0   (canal 0, stream principal)
+//   live/liveStream_DHK0003252944_0_1   (canal 0, stream secundário)
+//   live/liveStream_H3ZL2802830WB_0_0C  (variante de firmware com sufixo)
+//
+// Os dois últimos números são parte do protocolo do equipamento, não duas
+// câmeras diferentes. Guardar apenas o caminho observado fazia o produto
+// rejeitar o perfil irmão e obrigava o instalador a adivinhar qual deles o
+// firmware manteria conectado. A família abaixo mantém o vínculo estreito no
+// mesmo serial/canal/sufixo, mas permite escolher automaticamente o perfil que
+// realmente está entregando quadros.
+
+type VendorProfilePath = {
+  prefix: string;
+  channel: number;
+  profile: number;
+  suffix: string;
+};
+
+const VENDOR_PROFILE_PATH_PATTERN = /^(.*\/liveStream_[A-Za-z0-9._-]+)_(\d+)_(\d+)([A-Za-z]*)$/i;
+const MAX_VENDOR_PROFILE_INDEX = 7;
+
+function parseVendorProfilePath(path: string): VendorProfilePath | null {
+  const match = VENDOR_PROFILE_PATH_PATTERN.exec(normalizeIngestPath(path));
+  if (!match) return null;
+  const channel = Number(match[2]);
+  const profile = Number(match[3]);
+  if (!Number.isSafeInteger(channel) || !Number.isSafeInteger(profile)) return null;
+  if (profile < 0 || profile > MAX_VENDOR_PROFILE_INDEX) return null;
+  return { prefix: match[1], channel, profile, suffix: match[4] };
+}
+
+/**
+ * Caminhos equivalentes, sempre em ordem de qualidade: principal, secundário
+ * e, quando existir, o perfil adicional observado.
+ *
+ * Para qualquer formato ainda desconhecido a função devolve SOMENTE o caminho
+ * original. Assim ampliar compatibilidade não transforma a porta RTMP pública
+ * numa autorização por prefixo.
+ */
+export function ingestProfilePathCandidates(path: string): string[] {
+  const normalized = normalizeIngestPath(path);
+  const parsed = parseVendorProfilePath(normalized);
+  if (!parsed) return [normalized];
+
+  const indexes = [0, 1];
+  if (!indexes.includes(parsed.profile)) indexes.push(parsed.profile);
+  return indexes.map((profile) => (
+    `${parsed.prefix}_${parsed.channel}_${profile}${parsed.suffix}`
+  ));
+}
+
 /** Modos de origem aceitos. String, e não enum do Prisma, para migrar sem downtime. */
 export const SOURCE_MODE_PULL = 'rtsp_pull';
 export const SOURCE_MODE_PUSH = 'rtmp_push';

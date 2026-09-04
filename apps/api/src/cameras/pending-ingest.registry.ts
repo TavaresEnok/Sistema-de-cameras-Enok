@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { envNumber } from '../common/config/env-number.helper';
-import { isAcceptableIngestPath, normalizeIngestPath } from './helpers/rtmp-ingest.helper';
+import {
+  ingestProfilePathCandidates,
+  isAcceptableIngestPath,
+  normalizeIngestPath,
+} from './helpers/rtmp-ingest.helper';
 
 // ── EQUIPAMENTOS BATENDO NA PORTA ──────────────────────────────────────────
 //
@@ -100,7 +104,9 @@ export class PendingIngestRegistry {
 
   /** Some da lista quando o caminho é vinculado a uma câmera. */
   clear(path: string) {
-    this.pendentes.delete(normalizeIngestPath(path));
+    for (const candidate of ingestProfilePathCandidates(normalizeIngestPath(path))) {
+      this.pendentes.delete(candidate);
+    }
   }
 
   private expirarAntigas(agora: number) {

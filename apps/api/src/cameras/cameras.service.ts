@@ -17,6 +17,7 @@ import {
   generateIngestKey,
   hashIngestKey,
   ingestHashMatches,
+  ingestProfilePathCandidates,
   ingestPathNames,
   isAcceptableIngestPath,
   isPushSourced,
@@ -2071,10 +2072,15 @@ export class CamerasService implements OnApplicationBootstrap {
    */
   async findCameraByIngestPath(path: unknown) {
     if (!isAcceptableIngestPath(path)) return null;
-    const camera = await this.prisma.camera.findUnique({
-      where: { rtmpIngestPath: normalizeIngestPath(path) },
+    const paths = ingestProfilePathCandidates(normalizeIngestPath(path));
+    const cameras = await this.prisma.camera.findMany({
+      where: { rtmpIngestPath: { in: paths } },
       select: { id: true, name: true, enabled: true, sourceMode: true },
+      take: 2,
     });
+    // Se uma base antiga já tiver dois perfis irmãos vinculados a câmeras
+    // diferentes, negar é mais seguro do que escolher pela ordem do banco.
+    const camera = cameras.length === 1 ? cameras[0] : null;
     if (!camera || camera.enabled === false || !isPushSourced(camera)) return null;
     return camera;
   }
@@ -2092,12 +2098,14 @@ export class CamerasService implements OnApplicationBootstrap {
       throw new BadRequestException('Caminho de publicação inválido.');
     }
     const normalizado = normalizeIngestPath(path);
-    const dono = await this.prisma.camera.findUnique({
-      where: { rtmpIngestPath: normalizado },
+    const donos = await this.prisma.camera.findMany({
+      where: { rtmpIngestPath: { in: ingestProfilePathCandidates(normalizado) } },
       select: { id: true, name: true },
+      take: 2,
     });
+    const dono = donos.find((item) => item.id !== cameraId);
     if (dono && dono.id !== cameraId) {
-      throw new BadRequestException(`Este caminho já pertence à câmera "${dono.name}".`);
+      throw new BadRequestException(`Um perfil deste equipamento já pertence à câmera "${dono.name}".`);
     }
     const camera = await this.prisma.camera.update({
       where: { id: cameraId },
