@@ -479,7 +479,12 @@ export class CameraStreamController {
         const ensured = await this.mediamtxProxyService.ensurePathForCamera(cameraId, viewMode);
         mediaBridge = this.mediamtxProxyService.buildPublicUrls(req, ensured.pathName, ensured.sourceUrl);
         measuredLiveCodec = ensured.sourceVideoCodec;
-        liveTranscodedForBrowser = ensured.transcodedForLive;
+        // `transcodedForLive` também cobre AAC→Opus: há um publisher, mas o
+        // vídeo H.264 continua em cópia. O selo do painel é exclusivamente
+        // sobre H.265→H.264 (o custo de vídeo que chega a ~5×), portanto não
+        // pode usar esse booleano amplo e assustar o operador sem motivo.
+        liveTranscodedForBrowser = ensured.transcodedForLive
+          && isHevcCodec(ensured.sourceVideoCodec);
         effectiveDeliveryProfile = ensured.liveProfile ?? effectiveDeliveryProfile;
       } catch (error) {
         // Uma câmera RTMP só existe enquanto o equipamento/app está publicando.
