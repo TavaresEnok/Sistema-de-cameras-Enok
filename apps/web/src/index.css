@@ -365,14 +365,14 @@
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--primary) / 0.62) transparent;
   }
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar { width: 3px; height: 3px; }
   ::-webkit-scrollbar-track {
     background: transparent;
     border-radius: 999px;
   }
   ::-webkit-scrollbar-thumb {
-    min-width: 18px;
-    min-height: 18px;
+    min-width: 14px;
+    min-height: 14px;
     background: hsl(var(--primary) / 0.58);
     border: 0;
     border-radius: 999px;
