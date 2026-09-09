@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import axios from 'axios';
 import { useLocation } from 'wouter';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -70,6 +70,20 @@ const GRID_MIN = 1;
 const GRID_MAX = 8; // limite por dimensão
 const GRID_CELL_WARN = 16; // acima disso, avisa sobre CPU (transcode H.265)
 const LIVE_PANEL_AUTO_COLLAPSE_WIDTH = 1100;
+const LIVE_PANEL_WIDTH_STORAGE_KEY = 'drac.live.camera-panel-width.v1';
+const LIVE_PANEL_MIN_WIDTH = 220;
+const LIVE_PANEL_MAX_WIDTH = 480;
+
+function loadLivePanelWidth() {
+  try {
+    const stored = Number(window.localStorage.getItem(LIVE_PANEL_WIDTH_STORAGE_KEY));
+    return Number.isFinite(stored)
+      ? Math.max(LIVE_PANEL_MIN_WIDTH, Math.min(LIVE_PANEL_MAX_WIDTH, Math.round(stored)))
+      : 280;
+  } catch {
+    return 280;
+  }
+}
 
 /** Colunas × linhas de uma grade "CxL", com limites (1..8). */
 function gridDims(size: string): { cols: number; rows: number } {
@@ -205,6 +219,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   const muralControles = useAutoHideControls(wallMode);
   const [selectedCam, setSelectedCam] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [panelWidth, setPanelWidth] = useState(loadLivePanelWidth);
   const [search, setSearch] = useState('');
   const [groupFilter, setGroupFilter] = useState('__all__');
   const [zoneFilter, setZoneFilter] = useState('__all__');
@@ -217,6 +232,27 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   const [deleteTarget, setDeleteTarget] = useState<SavedLayout | null>(null);
   const [sidebarPosterUrls, setSidebarPosterUrls] = useState<Record<string, string>>({});
   const lastSidebarPosterRetryAtRef = useRef(0);
+
+  const beginPanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = panelWidth;
+    const onMove = (moveEvent: PointerEvent) => {
+      // A alça fica na borda esquerda: arrastar para a esquerda alarga o painel.
+      const next = Math.max(LIVE_PANEL_MIN_WIDTH, Math.min(LIVE_PANEL_MAX_WIDTH, startWidth + startX - moveEvent.clientX));
+      setPanelWidth(next);
+    };
+    // O valor final precisa ser lido no encerramento, não o capturado pelo hook.
+    const onUp = (upEvent: PointerEvent) => {
+      const finalWidth = Math.max(LIVE_PANEL_MIN_WIDTH, Math.min(LIVE_PANEL_MAX_WIDTH, startWidth + startX - upEvent.clientX));
+      setPanelWidth(finalWidth);
+      try { window.localStorage.setItem(LIVE_PANEL_WIDTH_STORAGE_KEY, String(finalWidth)); } catch { /* preferência local */ }
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
+  }, [panelWidth]);
 
   const sidebarPosterCameraIdsKey = useMemo(
     () => cameras
@@ -1030,11 +1066,19 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
         {panelOpen && !wallMode && (
           <motion.aside
             initial={{ width: 0, opacity: 0 }}
-            animate={{ width: 224, opacity: 1 }}
+            animate={{ width: panelWidth, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 32 }}
-            className="border-l border-border bg-card flex flex-col overflow-hidden shrink-0"
+            className="relative border-l border-border bg-card flex flex-col overflow-hidden shrink-0"
           >
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Redimensionar painel de câmeras"
+              title="Arraste para ajustar a largura do painel"
+              onPointerDown={beginPanelResize}
+              className="absolute -left-1 top-0 z-50 h-full w-2 cursor-col-resize touch-none before:absolute before:left-[3px] before:top-0 before:h-full before:w-px before:bg-transparent hover:before:bg-[hsl(var(--primary)_/_0.75)] active:before:bg-[hsl(var(--primary))]"
+            />
             <div className="px-2 py-2.5 border-b border-border shrink-0 space-y-2.5">
               <div className="flex items-center justify-between">
                 <div>
