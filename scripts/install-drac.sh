@@ -42,7 +42,10 @@ DRAC_INSTALLER_COMMIT="${DRAC_INSTALLER_COMMIT:-}"
 # `drac` quando não dá para saber.
 DRAC_INSTALL_DIR="${DRAC_INSTALL_DIR:-/opt/drac}"
 DRAC_OPERATING_USER="${DRAC_OPERATING_USER:-${SUDO_USER:-drac}}"
-DRAC_CENTRAL_URL="${DRAC_CENTRAL_URL:-https://ajustcam.ajustconsulting.com.br/central}"
+# Central pública da infraestrutura atual. Instalações existentes podem manter
+# sua URL registrada; novas instalações não devem nascer apontando para o
+# domínio temporário anterior.
+DRAC_CENTRAL_URL="${DRAC_CENTRAL_URL:-https://central.s2cam.com.br}"
 DRAC_ENVIRONMENT="${DRAC_ENVIRONMENT:-prod}"
 DRAC_AUTO_YES="${DRAC_AUTO_YES:-false}"
 DRAC_WATCHDOG_ENABLED="${DRAC_WATCHDOG_ENABLED:-true}"

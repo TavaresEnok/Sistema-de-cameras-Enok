@@ -16,6 +16,7 @@ interface CameraTileProps {
   streamStartDelayMs?: number;
   showDetectionOverlay?: boolean;
   liveViewMode?: 'selected' | 'grid';
+  wallMode?: boolean;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -38,10 +39,12 @@ export function CameraTile({
   streamStartDelayMs = 0,
   showDetectionOverlay = false,
   liveViewMode = 'grid',
+  wallMode: wallModeProp,
 }: CameraTileProps) {
   const [hovered, setHovered] = useState(false);
   const [playerStatus, setPlayerStatus] = useState<LivePlayerStatus | null>(null);
-  const wallMode = useGridStore((state) => state.wallMode);
+  const storedWallMode = useGridStore((state) => state.wallMode);
+  const wallMode = wallModeProp ?? storedWallMode;
 
   // Câmera privada que ESTE usuário não pode ver (ex.: admin numa câmera do
   // cliente). O player NÃO é montado — mostramos um aviso de privacidade limpo
@@ -115,7 +118,7 @@ export function CameraTile({
       {/* Offline overlay — só quando o player também não tem imagem viva (status
           "offline" com stream tocando = sondagem desatualizada; mostra o vídeo). */}
       {showOfflineOverlay && (
-        <div className="absolute inset-0 z-20 bg-black/60 flex items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 z-20 bg-black/60 flex items-center justify-center">
           <div className="text-center">
             <AlertTriangle className="w-4 h-4 text-[hsl(var(--status-offline))] mx-auto mb-1" />
             <div className="font-mono text-[9px] text-[hsl(var(--muted-foreground))] tracking-widest uppercase">

@@ -459,9 +459,10 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           <>
             <div className="flex-1 overflow-y-auto">
               <Tabs defaultValue="geral" className="flex flex-col">
-                <TabsList className="mx-4 mt-4 grid h-10 shrink-0 grid-cols-3 gap-1 rounded-lg border border-border bg-muted/45 p-1">
+                <TabsList className="mx-4 mt-4 grid h-10 shrink-0 grid-cols-4 gap-1 rounded-lg border border-border bg-muted/45 p-1">
                   <TabsTrigger value="geral" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Geral</TabsTrigger>
-                  <TabsTrigger value="stream" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Stream</TabsTrigger>
+                  <TabsTrigger value="conexao" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Conexão</TabsTrigger>
+                  <TabsTrigger value="stream" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Vídeo</TabsTrigger>
                   <TabsTrigger value="gravacao" className="rounded-md text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Gravação</TabsTrigger>
                 </TabsList>
 
@@ -494,7 +495,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                   <div className="space-y-3 rounded-lg border border-border bg-background/55 p-3">
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4 text-primary" />
-                      <div><p className="text-[12px] font-semibold">Localização no mapa</p><p className="text-[10px] leading-relaxed text-muted-foreground">Sem endereço, o mapa posiciona a câmera por <strong>estimativa da rede</strong> — que cai na saída do provedor, não onde a câmera está. O endereço é independente do IP.</p></div>
+                      <div><p className="text-[12px] font-semibold">Localização no mapa</p><p className="text-xs text-muted-foreground">Verifique o endereço da câmera.</p></div>
                     </div>
                     <FormField label="Endereço físico" hint="rua, número, cidade e estado">
                       <div className="flex gap-2">
@@ -505,6 +506,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                         </Button>
                       </div>
                     </FormField>
+                    <details className="text-xs text-muted-foreground">
+                    <summary className="cursor-pointer py-2">Informar coordenadas</summary>
                     <div className="grid grid-cols-2 gap-2">
                       <FormField label="Latitude" hint="opcional">
                         <Input value={form.latitude} onChange={(e) => upd('latitude', e.target.value)} placeholder="-8.05428" inputMode="decimal" className="font-mono text-xs" />
@@ -513,9 +516,11 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                         <Input value={form.longitude} onChange={(e) => upd('longitude', e.target.value)} placeholder="-34.88130" inputMode="decimal" className="font-mono text-xs" />
                       </FormField>
                     </div>
+                    </details>
                   </div>
-                  <Separator />
-                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Como o vídeo chega</p>
+                </TabsContent>
+                <TabsContent value="conexao" className="px-5 py-4 space-y-4 mt-0">
+                  <p className="text-xs text-muted-foreground">Configure como a câmera envia o vídeo ao sistema.</p>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -580,26 +585,20 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                       ) : null}
                       {ingest?.fullUrl && (
                         <div className="space-y-3">
-                          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
-                            <p className="text-[11px] font-semibold text-amber-500">Intelbras/Positivo: use endereço Personalizado</p>
+                          <details className="rounded-md border border-border p-3">
+                            <summary className="cursor-pointer text-xs font-medium">Ajuda para Intelbras e Positivo</summary>
                             <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
                               Selecione <strong className="text-foreground">Tipo de endereço → Personalizado</strong> e cole
                               {' '}a URL completa abaixo. Não use “Não personalizado” com apenas IP/porta: esse modo gera
                               {' '}o caminho por serial e pode encerrar sem transmitir quadros para servidores genéricos.
                             </p>
-                          </div>
+                          </details>
                           {usaEnderecoCompacto && (
-                            <div className="rounded-md border border-[hsl(var(--status-online)_/_0.35)] bg-[hsl(var(--status-online)_/_0.08)] p-3">
-                              <p className="text-[11px] font-semibold text-[hsl(var(--status-online))]">Endereço compacto selecionado</p>
-                              <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
-                                Usa o endereço público curto e a porta RTMP explícita, mantendo os 128 bits da chave e o limite de{' '}
-                                {ingest?.singleFieldMaxLength ?? 63} caracteres da Intelbras.
-                              </p>
-                            </div>
+                            <p className="text-xs text-muted-foreground">Endereço compacto selecionado, pronto para copiar.</p>
                           )}
                           {urlCompletaCompativel ? (
                             <CampoCopiavel
-                              rotulo="Endereço completo para campo único"
+                              rotulo="Endereço RTMP"
                               valor={ingest?.fullUrl ?? ''}
                               copiado={copiado === 'completa'}
                               onCopiar={() => copiar(ingest?.fullUrl ?? '', 'completa')}
@@ -608,7 +607,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                             <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
                               <p className="text-[11px] font-semibold text-amber-500">URL maior que o campo da câmera</p>
                               <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
-                                Não recorte a chave. Use servidor e chave separados ou o modo não personalizado por IP e porta.
+                                Não recorte a chave. Se o equipamento oferecer dois campos, use Servidor + Chave.
+                                Em campo único, use endereço Personalizado somente se ele aceitar a URL inteira;
+                                o modo “Não personalizado” por IP e porta não substitui a URL completa.
                               </p>
                             </div>
                           )}
@@ -637,8 +638,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                       )}
 
                       {pendentes.length > 0 && (
-                        <>
-                          <Separator />
+                        <details className="rounded-md border border-border p-3">
+                          <summary className="cursor-pointer text-xs font-medium">Vincular equipamento pendente</summary>
                           <div className="space-y-2">
                             <p className="text-[11px] font-semibold">Equipamentos tentando publicar</p>
                             <p className="text-[10px] leading-relaxed text-muted-foreground">
@@ -665,12 +666,12 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                               </div>
                             ))}
                           </div>
-                        </>
+                        </details>
                       )}
 
                       {!ingest?.ingestPath && (
-                        <>
-                          <Separator />
+                        <details className="rounded-md border border-border p-3">
+                          <summary className="cursor-pointer text-xs font-medium">Informar caminho manualmente</summary>
                           <div className="space-y-2 rounded-md border border-border bg-background/40 p-3">
                             <p className="text-[11px] font-semibold">Câmera usa um caminho próprio?</p>
                             <p className="text-[10px] leading-relaxed text-muted-foreground">
@@ -702,7 +703,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                               </Button>
                             </div>
                           </div>
-                        </>
+                        </details>
                       )}
 
                       <Separator />
@@ -922,7 +923,8 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                   <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
                 </button>
 
-                <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Zona de perigo</p>
+                <details>
+                <summary className="cursor-pointer text-xs text-muted-foreground py-2">Remover câmera</summary>
                 {!confirmDelete ? (
                   <Button variant="outline" size="sm" className="text-destructive border-destructive/30 hover:bg-destructive/10" onClick={() => setConfirmDelete(true)}>
                     <Trash2 className="w-3.5 h-3.5 mr-2" /> Remover câmera
@@ -939,6 +941,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                     </div>
                   </div>
                 )}
+                </details>
               </div>
             </div>
 

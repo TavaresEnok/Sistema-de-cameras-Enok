@@ -17,6 +17,7 @@ import {
   generateIngestKey,
   hashIngestKey,
   ingestHashMatches,
+  ingestKeyFromPathName,
   ingestProfilePathCandidates,
   ingestPathNames,
   isAcceptableIngestPath,
@@ -2098,6 +2099,11 @@ export class CamerasService implements OnApplicationBootstrap {
       throw new BadRequestException('Caminho de publicação inválido.');
     }
     const normalizado = normalizeIngestPath(path);
+    const key = ingestKeyFromPathName(normalizado);
+    if (key) {
+      const owner = await this.prisma.camera.findUnique({ where: { rtmpIngestKeyHash: hashIngestKey(key) }, select: { id: true } });
+      if (owner && owner.id !== cameraId) throw new BadRequestException('Esta chave já pertence a outra câmera.');
+    }
     const donos = await this.prisma.camera.findMany({
       where: { rtmpIngestPath: { in: ingestProfilePathCandidates(normalizado) } },
       select: { id: true, name: true },
@@ -2112,7 +2118,7 @@ export class CamerasService implements OnApplicationBootstrap {
       data: { sourceMode: SOURCE_MODE_PUSH, rtmpIngestPath: normalizado },
       select: { id: true, name: true },
     });
-    this.logger.log(`Caminho de publicação "${normalizado}" vinculado a ${camera.name}.`);
+    this.logger.log(`Caminho de publicação vinculado à câmera ${camera.id}.`);
     return { sourceMode: SOURCE_MODE_PUSH, ingestPath: normalizado };
   }
 

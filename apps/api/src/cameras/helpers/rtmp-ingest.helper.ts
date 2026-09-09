@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { isIP } from 'net';
 
 // ── INGESTÃO POR RTMP: quando a câmera é que disca ─────────────────────────
 //
@@ -39,8 +40,10 @@ import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 
 /** Prefixo do path de ingestão. Curto porque vai na tela, digitado por humano. */
 export const RTMP_INGEST_APP = 'drac';
-/** Alias para equipamentos cujo campo único não comporta o path canônico. */
+/** Alias histórico Base64URL; permanece aceito para câmeras já configuradas. */
 export const RTMP_INGEST_COMPACT_APP = 'd';
+/** Alias novo, curto e compatível com firmwares que recusam `-` e `_`. */
+export const RTMP_INGEST_ALPHANUM_APP = 'd2';
 /** Limite medido no campo "Endereço personalizado" de câmeras Intelbras. */
 export const RTMP_SINGLE_FIELD_MAX_LENGTH = 63;
 
@@ -48,11 +51,15 @@ export const RTMP_SINGLE_FIELD_MAX_LENGTH = 63;
 const KEY_BYTES = 16;
 const KEY_PATTERN = /^[0-9a-f]{32}$/;
 const COMPACT_KEY_PATTERN = /^[A-Za-z0-9_-]{22}$/;
+const ALPHANUM_KEY_PATTERN = /^[A-Za-z0-9]{22}$/;
+const ALPHANUM_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const ALPHANUM_BASE = BigInt(ALPHANUM_ALPHABET.length);
 
 /** `drac/<32 hex>` e nada mais — sem subcaminho, sem query, sem travessia. */
 const INGEST_PATH_PATTERN = new RegExp(`^${RTMP_INGEST_APP}/([0-9a-f]{32})$`);
 /** `d/<22 base64url>` representa os mesmos 128 bits, sem reduzir a entropia. */
 const COMPACT_INGEST_PATH_PATTERN = new RegExp(`^${RTMP_INGEST_COMPACT_APP}/([A-Za-z0-9_-]{22})$`);
+const ALPHANUM_INGEST_PATH_PATTERN = new RegExp(`^${RTMP_INGEST_ALPHANUM_APP}/([A-Za-z0-9]{22})$`);
 
 export type RtmpPublishTarget = {
   /** Cole no campo "Servidor"/"URL" da câmera. */
@@ -101,6 +108,26 @@ export function decodeCompactIngestKey(key: unknown): string | null {
   return bytes.toString('hex');
 }
 
+/** Base62 fixa de 22 caracteres: 62^22 é maior que 2^128, sem perda de entropia. */
+export function encodeAlphanumericIngestKey(key: unknown): string | null {
+  if (!isValidIngestKey(key)) return null;
+  let value = BigInt(`0x${key}`);
+  const encoded = Array<string>(22);
+  for (let index = encoded.length - 1; index >= 0; index -= 1) {
+    encoded[index] = ALPHANUM_ALPHABET[Number(value % ALPHANUM_BASE)];
+    value /= ALPHANUM_BASE;
+  }
+  return value === 0n ? encoded.join('') : null;
+}
+
+export function decodeAlphanumericIngestKey(key: unknown): string | null {
+  if (typeof key !== 'string' || !ALPHANUM_KEY_PATTERN.test(key)) return null;
+  let value = 0n;
+  for (const char of key) value = (value * ALPHANUM_BASE) + BigInt(ALPHANUM_ALPHABET.indexOf(char));
+  if (value >= (1n << BigInt(KEY_BYTES * 8))) return null;
+  return value.toString(16).padStart(KEY_BYTES * 2, '0');
+}
+
 /**
  * Hash de busca/autenticação. SHA-256 puro (sem sal) é correto AQUI e seria
  * errado para senha de usuário: a chave tem 128 bits de entropia própria, então
@@ -133,9 +160,9 @@ export function ingestPathName(key: string): string {
 
 /** Nome compacto do mesmo segredo no MediaMTX. */
 export function compactIngestPathName(key: string): string {
-  const compactKey = encodeCompactIngestKey(key);
-  if (!compactKey) throw new Error('Chave de ingestão inválida para codificação compacta.');
-  return `${RTMP_INGEST_COMPACT_APP}/${compactKey}`;
+  const compactKey = encodeAlphanumericIngestKey(key);
+  if (!compactKey) throw new Error('Chave de ingestão inválida para codificação alfanumérica.');
+  return `${RTMP_INGEST_ALPHANUM_APP}/${compactKey}`;
 }
 
 /**
@@ -143,7 +170,8 @@ export function compactIngestPathName(key: string): string {
  * o path histórico permanece durante toda a migração da frota.
  */
 export function ingestPathNames(key: string): string[] {
-  return [compactIngestPathName(key), ingestPathName(key)];
+  const legacyCompact = encodeCompactIngestKey(key);
+  return [compactIngestPathName(key), ...(legacyCompact ? [`${RTMP_INGEST_COMPACT_APP}/${legacyCompact}`] : []), ingestPathName(key)];
 }
 
 /**
@@ -157,6 +185,8 @@ export function ingestKeyFromPathName(pathName: unknown): string | null {
   if (typeof pathName !== 'string') return null;
   const canonical = INGEST_PATH_PATTERN.exec(pathName);
   if (canonical) return canonical[1];
+  const alphanumeric = ALPHANUM_INGEST_PATH_PATTERN.exec(pathName);
+  if (alphanumeric) return decodeAlphanumericIngestKey(alphanumeric[1]);
   const compact = COMPACT_INGEST_PATH_PATTERN.exec(pathName);
   return compact ? decodeCompactIngestKey(compact[1]) : null;
 }
@@ -184,12 +214,10 @@ export function buildPublishTarget(input: {
   // levava o operador a copiar o destino maior para a câmera.
   const canonicalServerUrl = `${scheme}://${input.host}:${input.port}/${RTMP_INGEST_APP}`;
   const canonicalFullUrl = `${canonicalServerUrl}/${input.key}`;
-  const compactKey = encodeCompactIngestKey(input.key);
+  const compactPath = compactIngestPathName(input.key);
   const portaPadrao = (scheme === 'rtmp' && input.port === 1935)
     || (scheme === 'rtmps' && input.port === 443);
-  const domainCompactFullUrl = compactKey
-    ? `${scheme}://${input.host}${portaPadrao ? '' : `:${input.port}`}/${RTMP_INGEST_COMPACT_APP}/${compactKey}`
-    : null;
+  const domainCompactFullUrl = `${scheme}://${input.host}${portaPadrao && !isIP(input.host) ? '' : `:${input.port}`}/${compactPath}`;
   const compactHost = String(input.compactHost ?? '').trim();
   const compactHostSeguro = compactHost !== input.host
     && /^[a-z0-9.-]+$/i.test(compactHost)
@@ -197,24 +225,22 @@ export function buildPublishTarget(input: {
     && !compactHost.endsWith('.');
   const serverHost = compactHostSeguro ? compactHost : input.host;
   const serverUrl = `${scheme}://${serverHost}:${input.port}/${RTMP_INGEST_APP}`;
-  const compactHostFullUrl = compactHostSeguro && compactKey
-    ? `${scheme}://${compactHost}:${input.port}/${RTMP_INGEST_COMPACT_APP}/${compactKey}`
+  const compactHostFullUrl = compactHostSeguro
+    ? `${scheme}://${compactHost}:${input.port}/${compactPath}`
     : null;
   // Quando o operador configurou um host compacto, ele é uma decisão explícita
   // de compatibilidade e tem precedência sobre encurtar o path no domínio
   // principal. Isso mantém a porta visível para firmwares que não aplicam a
   // porta padrão do RTMP corretamente. A representação Base64URL reduz apenas
   // o texto (32 → 22 caracteres), preservando os mesmos 16 bytes/128 bits.
-  // Host curto configurado é uma preferência operacional explícita: usa IP e
-  // porta mesmo que o domínio também coubesse. Sem host curto, preservamos o
-  // comportamento histórico e só compactamos quando necessário.
+  // A URL copiada usa sempre a chave compacta. O caminho canônico continua
+  // aceito para não interromper câmeras já configuradas com links antigos.
   const compactFullUrl = [compactHostFullUrl, domainCompactFullUrl]
     .find((url): url is string => Boolean(
       url
       && url !== canonicalFullUrl
       && url.length <= RTMP_SINGLE_FIELD_MAX_LENGTH
-      && (compactHostSeguro || canonicalFullUrl.length > RTMP_SINGLE_FIELD_MAX_LENGTH),
-    )) ?? null;
+    )) ?? domainCompactFullUrl;
   const fullUrl = compactFullUrl ?? canonicalFullUrl;
   return {
     serverUrl,

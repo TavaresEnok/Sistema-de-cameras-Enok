@@ -2441,7 +2441,7 @@ export function LiveStreamPlayer({
       )}
 
       {showOverlay && (isLoading || audioSwitchMessage) && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20 backdrop-blur-[1px]">
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/20 backdrop-blur-[1px]">
           <div className={`flex items-center gap-2 rounded-md border border-white/10 bg-black/45 text-white/75 ${
             compactLiveOverlay ? 'px-2 py-1 text-[10px]' : 'px-3 py-2 text-xs'
           }`}>
@@ -2452,7 +2452,7 @@ export function LiveStreamPlayer({
       )}
 
       {showOverlay && error && compactLiveOverlay && (
-        <div className="absolute inset-x-1 bottom-1 z-20 flex justify-center">
+        <div className="pointer-events-none absolute inset-x-1 bottom-1 z-20 flex justify-center">
           <div className="flex max-w-[92%] items-center gap-1.5 rounded border border-white/10 bg-black/68 px-2 py-1 text-[10px] text-white/75 backdrop-blur-[2px]">
             <AlertTriangle className="h-3 w-3 shrink-0 text-[hsl(var(--status-warning))]" />
             <span className="truncate">{compactErrorLabel}</span>

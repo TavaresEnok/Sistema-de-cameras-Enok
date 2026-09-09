@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   buildPublishTarget,
   compactIngestPathName,
+  decodeAlphanumericIngestKey,
   decodeCompactIngestKey,
+  encodeAlphanumericIngestKey,
   encodeCompactIngestKey,
   generateIngestKey,
   hashIngestKey,
@@ -15,6 +17,7 @@ import {
   isPushSourced,
   isValidIngestKey,
   RTMP_INGEST_APP,
+  RTMP_INGEST_ALPHANUM_APP,
   RTMP_INGEST_COMPACT_APP,
   RTMP_SINGLE_FIELD_MAX_LENGTH,
   SOURCE_MODE_PUSH,
@@ -85,6 +88,15 @@ test('Base64URL compacta os mesmos 128 bits em 22 caracteres', () => {
   assert.equal(decodeCompactIngestKey('a'.repeat(22)), null, 'Base64URL não canônico não pode passar');
 });
 
+test('alias novo Base62 usa só letras e números sem perder os 128 bits', () => {
+  const chave = generateIngestKey();
+  const compacta = encodeAlphanumericIngestKey(chave);
+  assert.ok(compacta);
+  assert.match(compacta, /^[A-Za-z0-9]{22}$/);
+  assert.equal(decodeAlphanumericIngestKey(compacta), chave);
+  assert.equal(decodeAlphanumericIngestKey('z'.repeat(22)), null);
+});
+
 test('a comparação de hash aceita o correto e recusa o resto', () => {
   const chave = generateIngestKey();
   const hash = hashIngestKey(chave);
@@ -103,8 +115,12 @@ test('o path de ingestão devolve a chave', () => {
   assert.equal(ingestKeyFromPathName(ingestPathName(chave)), chave);
   assert.equal(ingestPathName(chave), `${RTMP_INGEST_APP}/${chave}`);
   assert.equal(ingestKeyFromPathName(compactIngestPathName(chave)), chave);
-  assert.match(compactIngestPathName(chave), new RegExp(`^${RTMP_INGEST_COMPACT_APP}/[A-Za-z0-9_-]{22}$`));
-  assert.deepEqual(ingestPathNames(chave), [compactIngestPathName(chave), ingestPathName(chave)]);
+  assert.match(compactIngestPathName(chave), new RegExp(`^${RTMP_INGEST_ALPHANUM_APP}/[A-Za-z0-9]{22}$`));
+  assert.deepEqual(ingestPathNames(chave), [
+    compactIngestPathName(chave),
+    `${RTMP_INGEST_COMPACT_APP}/${encodeCompactIngestKey(chave)}`,
+    ingestPathName(chave),
+  ]);
 });
 
 test('publicador NÃO consegue mirar um path de câmera', () => {
@@ -175,9 +191,9 @@ test('a URL de publicação sai pronta nos dois formatos de interface', () => {
   const alvo = buildPublishTarget({ host: '203.0.113.10', port: 1935, key: 'a'.repeat(32) });
   assert.equal(alvo.serverUrl, 'rtmp://203.0.113.10:1935/drac');
   assert.equal(alvo.streamKey, 'a'.repeat(32));
-  assert.equal(alvo.fullUrl, `rtmp://203.0.113.10:1935/drac/${'a'.repeat(32)}`);
-  assert.equal(alvo.canonicalFullUrl, alvo.fullUrl);
-  assert.equal(alvo.compactFullUrl, null);
+  assert.equal(alvo.fullUrl, `rtmp://203.0.113.10:1935/${compactIngestPathName('a'.repeat(32))}`);
+  assert.equal(alvo.canonicalFullUrl, `rtmp://203.0.113.10:1935/drac/${'a'.repeat(32)}`);
+  assert.equal(alvo.compactFullUrl, alvo.fullUrl);
   assert.equal(alvo.fullUrlFitsSingleField, true);
   assert.equal(alvo.singleFieldMaxLength, 63);
   // Câmera com um campo só recebe a concatenação exata que o path espera.
@@ -186,7 +202,6 @@ test('a URL de publicação sai pronta nos dois formatos de interface', () => {
 
 test('host curto configurado prevalece, mantém porta explícita e os 128 bits', () => {
   const chave = 'c'.repeat(32);
-  const compacta = encodeCompactIngestKey(chave)!;
   const alvo = buildPublishTarget({
     host: 'ajustcam.ajustconsulting.com.br',
     compactHost: '168.194.13.70',
@@ -196,8 +211,8 @@ test('host curto configurado prevalece, mantém porta explícita e os 128 bits',
 
   assert.ok(alvo.canonicalFullUrl.length > RTMP_SINGLE_FIELD_MAX_LENGTH);
   assert.equal(alvo.serverUrl, 'rtmp://168.194.13.70:1935/drac');
-  assert.equal(alvo.fullUrl, `rtmp://168.194.13.70:1935/d/${compacta}`);
-  assert.equal(alvo.fullUrl.length, 50);
+  assert.equal(alvo.fullUrl, `rtmp://168.194.13.70:1935/${compactIngestPathName(chave)}`);
+  assert.equal(alvo.fullUrl.length, 51);
   assert.equal(alvo.fullUrlFitsSingleField, true);
   assert.equal(alvo.streamKey, chave, 'o formato separado continua compatível com a chave hexadecimal');
   assert.equal(ingestKeyFromPathName(alvo.fullUrl.split(':1935/')[1]), chave);
@@ -214,28 +229,26 @@ test('host curto também prevalece no campo separado Servidor RTMP', () => {
   });
 
   assert.equal(alvo.serverUrl, 'rtmp://192.0.2.25:1935/drac');
-  assert.equal(alvo.fullUrl, `rtmp://192.0.2.25:1935/d/${encodeCompactIngestKey(chave)}`);
+  assert.equal(alvo.fullUrl, `rtmp://192.0.2.25:1935/${compactIngestPathName(chave)}`);
   assert.equal(alvo.canonicalFullUrl, `rtmp://rtmp.exemplo.test:1935/drac/${chave}`);
 });
 
-test('sem host curto, domínio do AjustCam usa alias Base64URL sem reduzir os 128 bits', () => {
+test('domínio histórico longo sinaliza quando o alias alfanumérico excede o campo', () => {
   const chave = 'c'.repeat(32);
-  const compacta = encodeCompactIngestKey(chave)!;
   const alvo = buildPublishTarget({
     host: 'ajustcam.ajustconsulting.com.br',
     port: 1935,
     key: chave,
   });
 
-  assert.equal(alvo.fullUrl, `rtmp://ajustcam.ajustconsulting.com.br/d/${compacta}`);
-  assert.equal(alvo.fullUrl.length, RTMP_SINGLE_FIELD_MAX_LENGTH);
-  assert.equal(alvo.fullUrlFitsSingleField, true);
+  assert.equal(alvo.fullUrl, `rtmp://ajustcam.ajustconsulting.com.br/${compactIngestPathName(chave)}`);
+  assert.equal(alvo.fullUrl.length, RTMP_SINGLE_FIELD_MAX_LENGTH + 1);
+  assert.equal(alvo.fullUrlFitsSingleField, false);
   assert.equal(ingestKeyFromPathName(alvo.fullUrl.split('.br/')[1]), chave);
 });
 
 test('IP curto e alias Base64URL permanecem como fallback para domínio ainda maior', () => {
   const chave = 'c'.repeat(32);
-  const compacta = encodeCompactIngestKey(chave)!;
   const alvo = buildPublishTarget({
     host: 'dominio-publico-extremamente-comprido.empresa.exemplo.test',
     compactHost: '168.194.13.70',
@@ -243,8 +256,8 @@ test('IP curto e alias Base64URL permanecem como fallback para domínio ainda ma
     key: chave,
   });
 
-  assert.equal(alvo.fullUrl, `rtmp://168.194.13.70:1935/d/${compacta}`);
-  assert.equal(alvo.fullUrl.length, 50);
+  assert.equal(alvo.fullUrl, `rtmp://168.194.13.70:1935/${compactIngestPathName(chave)}`);
+  assert.equal(alvo.fullUrl.length, 51);
   assert.equal(alvo.fullUrlFitsSingleField, true);
 });
 
@@ -256,7 +269,7 @@ test('sem host compacto a API sinaliza que a URL não cabe, sem fingir compatibi
     key: chave,
   });
 
-  assert.equal(alvo.fullUrl, alvo.canonicalFullUrl);
+  assert.equal(alvo.fullUrl, `rtmp://dominio-publico-muito-longo.exemplo.test/${compactIngestPathName(chave)}`);
   assert.equal(alvo.fullUrlFitsSingleField, false);
   assert.equal(alvo.streamKey.length, 32);
 });
@@ -269,8 +282,8 @@ test('host compacto malformado é ignorado em vez de gerar URL enganosa', () => 
     key: 'e'.repeat(32),
   });
 
-  assert.equal(alvo.compactFullUrl, null);
-  assert.equal(alvo.fullUrl, alvo.canonicalFullUrl);
+  assert.equal(alvo.compactFullUrl, alvo.fullUrl);
+  assert.equal(alvo.fullUrl, `rtmp://dominio-publico-muito-longo.exemplo.test/${compactIngestPathName('e'.repeat(32))}`);
   assert.equal(alvo.fullUrlFitsSingleField, false);
 });
 

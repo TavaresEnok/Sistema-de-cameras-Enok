@@ -26,7 +26,8 @@ import {
 } from 'lucide-react';
 import { CameraTile } from '../components/CameraTile';
 import { Camera, SavedLayout, useVmsDataStore } from '../store/vmsDataStore';
-import { useGridStore, GridSize } from '../store/gridStore';
+import { getLiveDisplayId, liveDisplayLabel, useGridStore, GridSize, type LiveDisplayId } from '../store/gridStore';
+import { useLiveDisplays } from '../hooks/use-live-displays';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -147,17 +148,66 @@ function persistSavedLayouts(layouts: SavedLayout[]) {
 
 export default function LiveViewPage({ pageActive = true }: { pageActive?: boolean }) {
   const API_URL = getApiBaseUrl();
+  const { toast } = useToast();
   const accessToken = useAuthStore((state) => state.accessToken);
   const allCameras = useVmsDataStore((state) => state.cameras);
   // Câmeras desativadas não aparecem no ao vivo (continuam na página Câmeras p/ reativar).
   const cameras = useMemo(() => allCameras.filter((camera) => camera.enabled !== false), [allCameras]);
   const loadData = useVmsDataStore((state) => state.load);
   const generatedLayouts = useVmsDataStore((state) => state.layouts);
-  const { gridSize, cameraIds, wallMode, prevLayout, setGridSize, setCameraIds, toggleWallMode, savePrevLayout, clearPrevLayout } = useGridStore();
+  const displayId = getLiveDisplayId();
+  const displayIndex = displayId === 'main' ? 0 : Number(displayId.slice(-1));
+  const {
+    gridSize: storedGridSize,
+    cameraIds: storedCameraIds,
+    wallMode,
+    prevLayout,
+    setGridSize: storeGridSize,
+    setCameraIds: storeCameraIds,
+    toggleWallMode,
+    clearPrevLayout,
+  } = useGridStore();
+  // A ampliação é um estado visual temporário. A grade persistida nunca é
+  // substituída por 1x1, portanto voltar restaura os mesmos quadros e posições.
+  const [focusedCameraId, setFocusedCameraId] = useState<string | null>(null);
+  const gridSize = storedGridSize;
+  const cameraIds = storedCameraIds;
+  const setGridSize = useCallback((size: GridSize) => { setFocusedCameraId(null); storeGridSize(size); }, [storeGridSize]);
+  const setCameraIds = useCallback((ids: string[]) => { setFocusedCameraId(null); storeCameraIds(ids); }, [storeCameraIds]);
+  const removeCameraById = useCallback((cameraId: string) => {
+    storeCameraIds(useGridStore.getState().cameraIds.map(id => id === cameraId ? '' : id));
+  }, [storeCameraIds]);
+  const displayCoordination = useLiveDisplays(displayId, storedCameraIds, removeCameraById);
+  const openAuxiliaryDisplay = useCallback((target: Exclude<LiveDisplayId, 'main'>) => {
+    const storageKey = `drac.live.grid.${target}.v1`;
+    if (!window.localStorage.getItem(storageKey)) {
+      window.localStorage.setItem(storageKey, JSON.stringify({ gridSize: '3x2', cameraIds: [] }));
+    }
+    const url = new URL('/live', window.location.origin);
+    url.searchParams.set('display', target);
+    const popup = window.open(url.toString(), `drac-${target}`, 'popup=yes,width=1280,height=720');
+    if (!popup) {
+      toast({ title: 'O navegador bloqueou a tela auxiliar', description: 'Permita pop-ups para este endereço e tente novamente.', variant: 'destructive' });
+      return;
+    }
+    popup.focus();
+  }, [toast]);
+  const handleWallMode = useCallback(() => {
+    if (wallMode && !document.fullscreenElement) {
+      void document.documentElement.requestFullscreen?.().catch(() => undefined);
+      return;
+    }
+    if (!wallMode) {
+      void document.documentElement.requestFullscreen?.().catch(() => undefined);
+      toggleWallMode();
+      return;
+    }
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    toggleWallMode();
+  }, [wallMode, toggleWallMode]);
   const [, setLocation] = useLocation();
   // Selo e botão do mural somem sozinhos depois de 3s parado.
   const muralControles = useAutoHideControls(wallMode);
-  const { toast } = useToast();
   const [selectedCam, setSelectedCam] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const [search, setSearch] = useState('');
@@ -308,12 +358,22 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
 
   const isRecording = isCameraRecording(selectedCameraObj);
 
+  // Migra uma ampliação antiga que tenha sobrescrito a grade antes desta
+  // versão. O snapshot em sessionStorage recupera a composição original.
   useEffect(() => {
-    if (!cameraIds.length && cameras.length) {
+    if (!prevLayout) return;
+    storeGridSize(prevLayout.gridSize);
+    storeCameraIds(prevLayout.cameraIds);
+    clearPrevLayout();
+  }, [prevLayout, storeGridSize, storeCameraIds, clearPrevLayout]);
+
+  useEffect(() => {
+    if (!storedCameraIds.length && cameras.length) {
       const onlineFirst = [...cameras].sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
-      setCameraIds(onlineFirst.slice(0, 4).map((camera) => camera.id));
+      const initialCount = displayId === 'main' ? 4 : 6;
+      if (displayId === 'main') storeCameraIds(onlineFirst.slice(0, initialCount).map((camera) => camera.id));
     }
-  }, [cameraIds.length, cameras, setCameraIds]);
+  }, [storedCameraIds.length, cameras, displayId, storeCameraIds]);
 
   useEffect(() => {
     // Colapsa só ao CRUZAR o limiar (largo→estreito). A versão anterior rodava
@@ -351,6 +411,8 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
 
   const { cols: gridCols, rows: gridRows } = gridDims(gridSize);
   const count = gridCols * gridRows;
+  const visibleGridCols = focusedCameraId ? 1 : gridCols;
+  const visibleGridRows = focusedCameraId ? 1 : gridRows;
   const cameraById = useMemo(() => new Map(cameras.map((camera) => [camera.id, camera])), [cameras]);
   const displayedCams = useMemo<(Camera | null)[]>(() => {
     // Dedupe: layouts antigos podem repetir a mesma câmera; a 2ª ocorrência vira
@@ -369,13 +431,17 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   // "Preencher": escolhe a MENOR grade que cabe todas as câmeras (até 5x5) e
   // preenche os quadros — online primeiro. Otimiza o espaço automaticamente.
   const fillGrid = useCallback(() => {
-    const ordered = [...cameras].sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
+    const usedOnOtherDisplays = new Set(Object.values(displayCoordination.displays)
+      .filter(item => item.displayId !== displayId && Date.now() - item.updatedAt <= 8_000)
+      .flatMap(item => item.cameraIds));
+    const available = cameras.filter(camera => !usedOnOtherDisplays.has(camera.id));
+    const ordered = [...available].sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
     const n = ordered.length;
     const size: GridSize = n <= 1 ? '1x1' : n <= 4 ? '2x2' : n <= 9 ? '3x3' : n <= 16 ? '4x4' : n <= 25 ? '5x5' : '6x6';
     const { cols, rows } = gridDims(size);
     setGridSize(size);
     setCameraIds(ordered.slice(0, cols * rows).map((c) => c.id));
-  }, [cameras, setGridSize, setCameraIds]);
+  }, [cameras, displayCoordination.displays, displayId, setGridSize, setCameraIds]);
 
   const onlineCount = useMemo(() => cameras.filter((c) => c.isOnline).length, [cameras]);
   const recordingCount = useMemo(() => cameras.filter((c) => c.status === 'recording').length, [cameras]);
@@ -391,22 +457,13 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     });
   }, [cameras, search, zoneFilter, statusFilter]);
 
-  // Zoom para 1x1 guardando o layout anterior, para poder VOLTAR à grade.
-  // prevLayout agora vem do Zustand store (gridStore) com persistência em
-  // sessionStorage — sobrevive re-renders, re-mounts e page refresh.
-
   const zoomToCamera = useCallback((cameraId: string) => {
-    if (gridSize !== '1x1') savePrevLayout({ gridSize, cameraIds });
-    setGridSize('1x1');
-    setCameraIds([cameraId]);
-  }, [gridSize, cameraIds, setGridSize, setCameraIds, savePrevLayout]);
+    setFocusedCameraId(cameraId);
+  }, []);
 
   const restoreLayout = useCallback(() => {
-    if (!prevLayout) return;
-    setGridSize(prevLayout.gridSize);
-    setCameraIds(prevLayout.cameraIds);
-    clearPrevLayout();
-  }, [prevLayout, setGridSize, setCameraIds, clearPrevLayout]);
+    setFocusedCameraId(null);
+  }, []);
 
   // Esc volta para a grade anterior — exceto digitando num campo ou com diálogo
   // aberto (nesses casos o Esc pertence ao campo/diálogo).
@@ -417,6 +474,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       if (layoutDialog || deleteTarget) return;
       // No mural em tela cheia, Esc é a primeira tecla que todo operador tenta
       // — e não fazia nada (o botão "Sair" é pequeno e fica no canto).
+      if (focusedCameraId) { restoreLayout(); return; }
       if (wallMode) { toggleWallMode(); return; }
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
@@ -428,7 +486,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [pageActive, restoreLayout, layoutDialog, deleteTarget, wallMode, toggleWallMode]);
+  }, [pageActive, restoreLayout, layoutDialog, deleteTarget, focusedCameraId, wallMode, toggleWallMode]);
 
   const handleCamAction = useCallback((action: string, camera: Camera) => {
     if (action === 'playback') setLocation(`/playback?cameraId=${encodeURIComponent(camera.id)}`);
@@ -476,10 +534,9 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   }, []);
 
   const handleCamDoubleClick = useCallback((camera: Camera) => {
-    // Já ampliado (1x1) com layout salvo → duplo-clique VOLTA para a grade.
-    if (gridSize === '1x1' && prevLayout) { restoreLayout(); return; }
+    if (focusedCameraId) { restoreLayout(); return; }
     zoomToCamera(camera.id);
-  }, [gridSize, prevLayout, restoreLayout, zoomToCamera]);
+  }, [focusedCameraId, restoreLayout, zoomToCamera]);
 
   const loadLayout = (layoutId: string) => {
     const layout = availableLayouts.find(l => l.id === layoutId);
@@ -498,43 +555,64 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     setSelectedSlotIndex(null);
   }, [gridSize]);
 
-  const addCameraToGrid = (camId: string) => {
-    const newIds = [...cameraIds.slice(0, count)];
-    while (newIds.length < count) newIds.push('');
+  const placeCameraInGrid = useCallback((camId: string) => {
+    const currentGridSize = useGridStore.getState().gridSize;
+    const currentCount = (() => { const d = gridDims(currentGridSize); return d.cols * d.rows; })();
+    const currentCameraIds = useGridStore.getState().cameraIds;
+    const newIds = [...currentCameraIds.slice(0, currentCount)];
+    while (newIds.length < currentCount) newIds.push('');
     const previousIdx = newIds.findIndex((id) => id === camId);
     if (previousIdx >= 0) newIds[previousIdx] = '';
     // O slot selecionado pode ter ficado FORA da grade (operador selecionou o
     // quadro 15 numa 5×5 e depois trocou para 2×2): escrever nele criaria um
     // array esparso e a câmera "sumia" sem nenhum feedback — o slice(0, count)
     // do render cortava o índice fantasma.
-    const slotValido = selectedSlotIndex != null && selectedSlotIndex < count ? selectedSlotIndex : null;
+    const slotValido = selectedSlotIndex != null && selectedSlotIndex < currentCount ? selectedSlotIndex : null;
     const targetIdx = slotValido != null
       ? slotValido
       : newIds.findIndex(id => !id || !cameras.find(c => c.id === id));
     // GRADE CHEIA SEM QUADRO ESCOLHIDO: `targetIdx` vira -1 e o código escrevia
     // no ÚLTIMO quadro, apagando a câmera que estava lá sem aviso nem desfazer.
     // Agora o operador é avisado de quem saiu (e por quê), com como voltar.
-    const indiceFinal = targetIdx >= 0 ? targetIdx : count - 1;
+    const indiceFinal = targetIdx >= 0 ? targetIdx : currentCount - 1;
     const substituida = targetIdx >= 0 ? null : newIds[indiceFinal];
     newIds[indiceFinal] = camId;
-    setCameraIds(newIds);
+    storeCameraIds(newIds);
     setSelectedSlotIndex(null);
     if (substituida) {
       const anterior = cameras.find((camera) => camera.id === substituida);
-      const idsAntes = [...cameraIds.slice(0, count)];
+      const idsAntes = [...currentCameraIds.slice(0, currentCount)];
       toast({
         title: 'A grade estava cheia',
         description: `"${anterior?.name ?? 'A câmera do último quadro'}" saiu para abrir espaço. Escolha um quadro antes de clicar para decidir onde entra.`,
         action: (
-          <ToastAction altText="Desfazer" onClick={() => setCameraIds(idsAntes)}>
+          <ToastAction altText="Desfazer" onClick={() => storeCameraIds(idsAntes)}>
             Desfazer
           </ToastAction>
         ),
       });
     }
+  }, [cameras, selectedSlotIndex, storeCameraIds, toast]);
+
+  const addCameraToGrid = (camId: string) => {
+    const other = displayCoordination.findCameraDisplay(camId);
+    if (!other) { placeCameraInGrid(camId); return; }
+    toast({
+      title: `Câmera já aberta na ${liveDisplayLabel(other.displayId)}`,
+      description: 'Para evitar duas conexões iguais e travamentos, mova a câmera ou escolha outra.',
+      action: (
+        <ToastAction altText="Mover para esta tela" onClick={() => {
+          displayCoordination.moveFromOtherDisplay(other.displayId, camId);
+          window.setTimeout(() => placeCameraInGrid(camId), 150);
+        }}>
+          Mover para esta tela
+        </ToastAction>
+      ),
+    });
   };
 
   const removeCameraFromSlot = (slotIndex: number) => {
+    if (focusedCameraId) { restoreLayout(); return; }
     const newIds = [...cameraIds.slice(0, count)];
     while (newIds.length < count) newIds.push('');
     newIds[slotIndex] = '';
@@ -702,6 +780,17 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   // raiz até cada <CameraTile> não muda, então o React só re-estiliza — nenhum
   // player desmonta, nenhum stream cai. Toolbar e painel ficam com `hidden`
   // (montados, invisíveis) para não deslocar os irmãos na reconciliação.
+  if (displayCoordination.isSuperseded) {
+    return <div className="flex h-full min-h-[360px] items-center justify-center p-6">
+      <div className="max-w-md rounded-xl border border-border bg-card p-6 text-center shadow-lg">
+        <Monitor className="mx-auto mb-3 h-9 w-9 text-muted-foreground" />
+        <h2 className="text-base font-semibold">{displayCoordination.label} já está aberta</h2>
+        <p className="mt-2 text-sm text-muted-foreground">A janela mais recente assumiu esta tela. Os vídeos foram encerrados aqui para não duplicar conexões e causar travamentos.</p>
+        <Button className="mt-4" onClick={() => window.location.reload()}>Usar esta janela</Button>
+      </div>
+    </div>;
+  }
+
   return (
     <div className={wallMode ? 'fixed inset-0 z-50 flex bg-black' : 'live-workspace relative flex h-full min-h-0'}>
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
@@ -763,7 +852,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             </Tooltip>
           ) : null}
 
-          {gridSize === '1x1' && prevLayout ? (
+          {focusedCameraId ? (
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
                 <button onClick={restoreLayout} className="btn btn-secondary btn-sm" data-testid="button-restore-grid">
@@ -845,6 +934,32 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             </PopoverContent>
           </Popover>
 
+          {displayId === 'main' ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="btn btn-secondary btn-sm" data-testid="button-live-displays">
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span className="toolbar-label">Telas</span>
+                  <ChevronDown className="w-3 h-3 text-[hsl(var(--muted-foreground))]" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-72 p-2">
+                <div className="px-2 py-1.5">
+                  <p className="text-xs font-semibold">Central multi-monitor</p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">Uma tela principal e até três auxiliares, cada uma com sua própria grade.</p>
+                </div>
+                {(['aux-1', 'aux-2', 'aux-3'] as const).map(target => {
+                  const presence = displayCoordination.displays[target];
+                  const active = presence && Date.now() - presence.updatedAt <= 8_000;
+                  return <button key={target} onClick={() => openAuxiliaryDisplay(target)} className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left hover:bg-accent">
+                    <span><span className="block text-xs font-medium">{liveDisplayLabel(target)}</span><span className="block text-[10px] text-muted-foreground">{active ? `${presence.cameraIds.length} câmeras abertas` : 'Abrir janela independente'}</span></span>
+                    <span className={`h-2 w-2 rounded-full ${active ? 'bg-[hsl(var(--status-online))]' : 'bg-muted-foreground/35'}`} />
+                  </button>;
+                })}
+              </PopoverContent>
+            </Popover>
+          ) : <span className="rounded-md border border-border px-2 py-1 text-xs font-medium">{displayCoordination.label}</span>}
+
           <div className="live-status-summary ml-auto flex min-w-0 items-center gap-1.5">
             {selectedCameraObj ? (
               <>
@@ -890,7 +1005,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
           <Tooltip delayDuration={0}>
             <TooltipTrigger asChild>
               <button
-                onClick={toggleWallMode}
+                onClick={handleWallMode}
                 className="btn btn-secondary btn-sm btn-icon"
                 data-testid="button-wall-mode"
               >
@@ -923,15 +1038,15 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
         <div
           className={wallMode ? 'grid gap-0.5 max-w-full max-h-full' : 'cam-grid-bg flex-1 p-1 grid gap-1 min-h-0'}
           style={wallMode
-            ? { gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gridTemplateRows: `repeat(${gridRows}, 1fr)`, aspectRatio: `${gridCols * 16} / ${gridRows * 9}`, width: '100%', maxWidth: '100%', maxHeight: '100%' }
-            : { gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gridTemplateRows: `repeat(${gridRows}, 1fr)` }}
+            ? { gridTemplateColumns: `repeat(${visibleGridCols}, 1fr)`, gridTemplateRows: `repeat(${visibleGridRows}, 1fr)`, aspectRatio: `${visibleGridCols * 16} / ${visibleGridRows * 9}`, width: '100%', maxWidth: '100%', maxHeight: '100%' }
+            : { gridTemplateColumns: `repeat(${visibleGridCols}, 1fr)`, gridTemplateRows: `repeat(${visibleGridRows}, 1fr)` }}
         >
           {displayedCams.map((cam, i) => (
             <div
               // Key por id de câmera: mover uma câmera de quadro MOVE o nó no DOM
               // (stream preservado) em vez de desmontar/remontar o player.
               key={cam ? `cam-${cam.id}` : `empty-${i}`}
-              className={`group relative min-h-0 rounded-md ${!wallMode && selectedSlotIndex === i ? 'ring-2 ring-[hsl(var(--primary))]' : ''}`}
+              className={`group relative min-h-0 rounded-md ${focusedCameraId && cam?.id !== focusedCameraId ? 'hidden' : ''} ${!wallMode && selectedSlotIndex === i ? 'ring-2 ring-[hsl(var(--primary))]' : ''}`}
               style={{ minHeight: 80 }}
             >
               {cam ? (
@@ -948,14 +1063,15 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                     // Full HD só quando há exatamente 1 câmera na tela.
                     // Em grade 2x2 ou maior, até a câmera selecionada permanece
                     // no perfil reduzido para preservar CPU/banda.
-                    liveViewMode={count === 1 ? 'selected' : 'grid'}
+                    liveViewMode={focusedCameraId === cam.id || count === 1 ? 'selected' : 'grid'}
+                    wallMode={wallMode}
                     onClick={() => {
                       handleCamClick(cam.id);
                       setSelectedSlotIndex(i);
                     }}
                     onDoubleClick={() => handleCamDoubleClick(cam)}
                     onAction={handleCamAction}
-                    streamStartDelayMs={streamStartDelay(i, count)}
+                    streamStartDelayMs={displayIndex * 700 + streamStartDelay(i, count)}
                   />
                   <div // Aparecem também quando o quadro está SELECIONADO: em tela sensível
                     // ao toque não existe hover, e "Trocar"/"Remover" ficavam
@@ -1182,17 +1298,17 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             }`}
           >
             <Video className="w-3.5 h-3.5 text-[hsl(var(--status-online))]" />
-            Ao Vivo / Modo Mural
+            {displayCoordination.label} / Modo Mural
           </div>
           <button
-            onClick={toggleWallMode}
+            onClick={handleWallMode}
             {...muralControles.propsDoControle}
             className={`ops-button fixed top-3 right-3 z-50 flex items-center gap-1.5 border-white/10 bg-black/72 px-3 text-xs text-white transition-opacity duration-300 motion-reduce:transition-none ${
               muralControles.visivel ? 'opacity-100' : 'opacity-0 pointer-events-none'
             }`}
           >
             <Maximize2 className="w-3.5 h-3.5" />
-            Sair do Modo Mural
+            {wallMode && !document.fullscreenElement ? 'Usar tela cheia' : 'Sair do Modo Mural'}
           </button>
         </>
       )}
