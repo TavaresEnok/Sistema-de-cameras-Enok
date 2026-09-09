@@ -58,7 +58,10 @@ export function CameraTile({
   const showOfflineOverlay = isOffline && playerStatus?.state !== 'playing';
   const isAlarm    = camera.status === 'alarm';
   const isMotion   = camera.status === 'motion';
-  const isManualRecordingActive = camera.status === 'recording';
+  // Regras de movimento/objeto podem estar gravando automaticamente; elas não
+  // são o REC acionado na grade e não devem pintar o botão de vermelho.
+  const isManualRecordingActive = camera.manualRecordingActive === true
+    || (camera.recordingMode === 'manual' && camera.status === 'recording');
 
   return (
     <motion.div
@@ -148,6 +151,11 @@ export function CameraTile({
             {isMotion && (
               <span className="text-[9px] text-[hsl(var(--status-motion))] bg-[hsl(var(--status-motion)_/_0.15)] border border-[hsl(var(--status-motion)_/_0.35)] px-1.5 py-px rounded-sm">
                 Movimento
+              </span>
+            )}
+            {isManualRecordingActive && (
+              <span className="text-[9px] font-medium text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)_/_0.18)] border border-[hsl(var(--destructive)_/_0.45)] px-1.5 py-px rounded-sm rec-pulse">
+                Gravação manual
               </span>
             )}
           </div>

@@ -56,7 +56,8 @@ import { useToast } from '../hooks/use-toast';
 import { useAutoHideControls } from '../hooks/use-auto-hide-controls';
 import { ToastAction } from '@/components/ui/toast';
 
-// Presets (atalhos rápidos). Qualquer CxL livre também é aceito via campo custom.
+// Grades aprovadas para operação. Manter os formatos previsíveis evita layouts
+// improvisados que viram uma parede ilegível em monitores menores.
 const GRID_PRESETS: { size: GridSize; icon: ReactNode }[] = [
   { size: '1x1', icon: <Monitor className="w-3.5 h-3.5" /> },
   { size: '2x2', icon: <Grid2X2 className="w-3.5 h-3.5" /> },
@@ -76,12 +77,6 @@ function gridDims(size: string): { cols: number; rows: number } {
   const clamp = (n: number) => Math.min(GRID_MAX, Math.max(GRID_MIN, n || GRID_MIN));
   return { cols: clamp(m ? parseInt(m[1], 10) : 2), rows: clamp(m ? parseInt(m[2], 10) : 2) };
 }
-function makeGridSize(cols: number, rows: number): GridSize {
-  const c = Math.min(GRID_MAX, Math.max(GRID_MIN, Math.round(cols) || GRID_MIN));
-  const r = Math.min(GRID_MAX, Math.max(GRID_MIN, Math.round(rows) || GRID_MIN));
-  return `${c}x${r}`;
-}
-
 const STATUS_FILTERS = ['all', 'online', 'recording', 'motion', 'alarm', 'offline', 'no_signal', 'maintenance'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 const STATUS_FILTER_LABEL: Record<StatusFilter, string> = {
@@ -211,9 +206,9 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   const [selectedCam, setSelectedCam] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const [search, setSearch] = useState('');
+  const [groupFilter, setGroupFilter] = useState('__all__');
   const [zoneFilter, setZoneFilter] = useState('__all__');
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]>('all');
-  const [recordingActionLoading, setRecordingActionLoading] = useState<'start' | 'stop' | null>(null);
   const [recordingOverrides, setRecordingOverrides] = useState<Record<string, boolean>>({});
   const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>(() => loadSavedLayouts());
   const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null);
@@ -343,20 +338,18 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     () => ['__all__', ...Array.from(new Set(cameras.map((camera) => camera.zone)))],
     [cameras],
   );
+  // `floor` é o nome do grupo operacional exposto pelo contrato de câmeras.
+  // Filtrar antes da lista impede que uma instalação com centenas de ativos
+  // obrigue o operador a percorrer a lista inteira para montar uma grade.
+  const groupFilters = useMemo(
+    () => ['__all__', ...Array.from(new Set(cameras.map((camera) => camera.floor).filter((group) => group && group !== '-')))],
+    [cameras],
+  );
   const selectedCameraObj = useMemo(
     () => (selectedCam ? cameras.find((camera) => camera.id === selectedCam) ?? null : null),
     [cameras, selectedCam],
   );
   const availableLayouts = savedLayouts.length ? savedLayouts : generatedLayouts;
-
-  const isCameraRecording = useCallback((camera: Camera | null | undefined) => {
-    if (!camera) return false;
-    const override = recordingOverrides[camera.id];
-    if (typeof override === 'boolean') return override;
-    return camera.status === 'recording';
-  }, [recordingOverrides]);
-
-  const isRecording = isCameraRecording(selectedCameraObj);
 
   // Migra uma ampliação antiga que tenha sobrescrito a grade antes desta
   // versão. O snapshot em sessionStorage recupera a composição original.
@@ -444,18 +437,18 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   }, [cameras, displayCoordination.displays, displayId, setGridSize, setCameraIds]);
 
   const onlineCount = useMemo(() => cameras.filter((c) => c.isOnline).length, [cameras]);
-  const recordingCount = useMemo(() => cameras.filter((c) => c.status === 'recording').length, [cameras]);
   const alarmCount = useMemo(() => cameras.filter((c) => c.status === 'alarm').length, [cameras]);
 
   const filteredList = useMemo(() => {
-    const q = search.toLowerCase();
-    return cameras.filter((c) => {
-      const matchSearch = !q || c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || c.ipAddress.includes(q);
+      const q = search.toLowerCase();
+      return cameras.filter((c) => {
+        const matchSearch = !q || c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || c.ipAddress.includes(q);
+      const matchGroup = groupFilter === '__all__' || c.floor === groupFilter;
       const matchZona = zoneFilter === '__all__' || c.zone === zoneFilter;
       const matchStatus = statusFilter === 'all' || c.status === statusFilter;
-      return matchSearch && matchZona && matchStatus;
+      return matchSearch && matchGroup && matchZona && matchStatus;
     });
-  }, [cameras, search, zoneFilter, statusFilter]);
+  }, [cameras, search, groupFilter, zoneFilter, statusFilter]);
 
   const zoomToCamera = useCallback((cameraId: string) => {
     setFocusedCameraId(cameraId);
@@ -501,7 +494,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             headers: { Authorization: `Bearer ${accessToken}` },
           });
           void loadData();
-          toast({ title: 'Gravação iniciada', description: camera.name });
+          toast({ title: 'Gravação manual iniciada', description: `${camera.name} · para automaticamente em até 10 minutos.` });
         } catch (error) {
           setRecordingOverrides((current) => ({ ...current, [camera.id]: camera.status === 'recording' }));
           toast({ title: 'Erro ao iniciar gravação', description: error instanceof Error ? error.message : 'Falha ao iniciar gravação manual.', variant: 'destructive' });
@@ -732,42 +725,6 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     setDeleteTarget(null);
   };
 
-  const startManualRecording = async () => {
-    if (!selectedCameraObj?.id || !accessToken) return;
-    setRecordingActionLoading('start');
-    setRecordingOverrides((current) => ({ ...current, [selectedCameraObj.id]: true }));
-    try {
-      await axios.post(`${API_URL}/cameras/${selectedCameraObj.id}/recording/start`, {}, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      void loadData();
-      toast({ title: 'Gravação iniciada', description: selectedCameraObj.name });
-    } catch (error) {
-      setRecordingOverrides((current) => ({ ...current, [selectedCameraObj.id]: selectedCameraObj.status === 'recording' }));
-      toast({ title: 'Erro ao iniciar gravação', description: error instanceof Error ? error.message : 'Falha ao iniciar gravação manual.', variant: 'destructive' });
-    } finally {
-      setRecordingActionLoading(null);
-    }
-  };
-
-  const stopManualRecording = async () => {
-    if (!selectedCameraObj?.id || !accessToken) return;
-    setRecordingActionLoading('stop');
-    setRecordingOverrides((current) => ({ ...current, [selectedCameraObj.id]: false }));
-    try {
-      await axios.post(`${API_URL}/cameras/${selectedCameraObj.id}/recording/stop`, {}, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      void loadData();
-      toast({ title: 'Gravação parada', description: selectedCameraObj.name });
-    } catch (error) {
-      setRecordingOverrides((current) => ({ ...current, [selectedCameraObj.id]: selectedCameraObj.status === 'recording' }));
-      toast({ title: 'Erro ao parar gravação', description: error instanceof Error ? error.message : 'Falha ao parar gravação manual.', variant: 'destructive' });
-    } finally {
-      setRecordingActionLoading(null);
-    }
-  };
-
   // ── MODO MURAL SEM DERRUBAR NENHUM PLAYER ─────────────────────────────────
   //
   // O mural era um `return` separado com uma árvore JSX própria. Alternar
@@ -813,34 +770,6 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             ))}
           </div>
 
-          {/* Grade LIVRE: colunas × linhas (ex.: 4x6, 6x4). Aplica ao digitar. */}
-          <Tooltip delayDuration={0}>
-            <TooltipTrigger asChild>
-              <div className="live-grid-custom flex items-center gap-1 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-1.5 py-0.5" data-testid="grid-custom">
-                <input
-                  type="number"
-                  min={GRID_MIN}
-                  max={GRID_MAX}
-                  value={gridCols}
-                  onChange={(e) => setGridSize(makeGridSize(Number(e.target.value), gridRows))}
-                  className="w-9 bg-transparent text-center text-xs outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-                  aria-label="Colunas"
-                />
-                <span className="text-[10px] text-[hsl(var(--muted-foreground))]">×</span>
-                <input
-                  type="number"
-                  min={GRID_MIN}
-                  max={GRID_MAX}
-                  value={gridRows}
-                  onChange={(e) => setGridSize(makeGridSize(gridCols, Number(e.target.value)))}
-                  className="w-9 bg-transparent text-center text-xs outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-                  aria-label="Linhas"
-                />
-              </div>
-            </TooltipTrigger>
-            <TooltipContent className="text-xs">Grade livre: colunas × linhas (1 a {GRID_MAX})</TooltipContent>
-          </Tooltip>
-
           {count > GRID_CELL_WARN ? (
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
@@ -855,7 +784,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
           {focusedCameraId ? (
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
-                <button onClick={restoreLayout} className="btn btn-secondary btn-sm" data-testid="button-restore-grid">
+                <button onClick={restoreLayout} className="btn btn-sm border-[hsl(var(--status-warning)_/_0.72)] bg-[hsl(var(--status-warning)_/_0.15)] text-[hsl(var(--status-warning))] hover:bg-[hsl(var(--status-warning)_/_0.25)]" data-testid="button-restore-grid">
                   <ChevronLeft className="w-3.5 h-3.5" />
                   Voltar à grade
                 </button>
@@ -961,39 +890,10 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
           ) : <span className="rounded-md border border-border px-2 py-1 text-xs font-medium">{displayCoordination.label}</span>}
 
           <div className="live-status-summary ml-auto flex min-w-0 items-center gap-1.5">
-            {selectedCameraObj ? (
-              <>
-                <button
-                  onClick={() => void (isRecording ? stopManualRecording() : startManualRecording())}
-                  disabled={recordingActionLoading !== null}
-                  className={`btn btn-secondary btn-sm ${
-                    isRecording
-                      ? 'border-[hsl(var(--destructive)_/_0.7)] text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)_/_0.1)]'
-                      : 'border-[hsl(var(--status-online)_/_0.7)] text-[hsl(var(--status-online))] bg-[hsl(var(--status-online)_/_0.1)] hover:bg-[hsl(var(--status-online)_/_0.2)]'
-                  }`}
-                  title={isRecording ? 'Parar gravação manual' : 'Iniciar gravação manual'}
-                >
-                  {recordingActionLoading ? (
-                    <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
-                  ) : isRecording ? (
-                    <span className="w-2 h-2 rounded-full bg-[hsl(var(--destructive))] rec-pulse" />
-                  ) : (
-                    <Circle className="w-3 h-3" />
-                  )}
-                  {isRecording ? 'Gravando' : 'Gravar'}
-                </button>
-              </>
-            ) : null}
             <span className="hdr-chip">
               <span className="hdr-chip-dot status-online" />
               {onlineCount}/{cameras.length} online
             </span>
-            {recordingCount > 0 && (
-              <span className="hdr-chip">
-                <span className="hdr-chip-dot status-recording rec-pulse" />
-                {recordingCount} REC
-              </span>
-            )}
             {alarmCount > 0 && (
               <span className="hdr-chip">
                 <span className="hdr-chip-dot status-alarm alarm-glow" />
@@ -1054,9 +954,11 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                   <CameraTile
                     camera={{
                       ...cam,
-                      status: isCameraRecording(cam)
-                        ? 'recording'
-                        : (cam.status === 'recording' ? 'online' : cam.status),
+                      // Só a ação manual do operador usa o estado visual vermelho.
+                      // Gravação por movimento/objeto é uma política automática e
+                      // não pode parecer que alguém apertou REC na grade.
+                      manualRecordingActive: recordingOverrides[cam.id] ?? (cam.recordingMode === 'manual' && cam.status === 'recording'),
+                      status: cam.status === 'recording' && cam.recordingMode !== 'manual' ? 'online' : cam.status,
                     }}
                     selected={selectedCam === cam.id}
                     showDetectionOverlay={!wallMode || selectedCam === cam.id}
@@ -1156,6 +1058,15 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
               </div>
 
               <div className="grid grid-cols-2 gap-1.5">
+                <Select value={groupFilter} onValueChange={setGroupFilter}>
+                  <SelectTrigger className="col-span-2 h-8 min-w-0 px-2 text-[10px]">
+                    <Filter className="mr-1.5 h-3 w-3 shrink-0 text-[hsl(var(--muted-foreground))]" />
+                    <SelectValue placeholder="Todos os grupos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {groupFilters.map(group => <SelectItem key={group} value={group} className="text-xs">{group === '__all__' ? 'Todos os grupos' : group}</SelectItem>)}
+                  </SelectContent>
+                </Select>
                 <Select value={zoneFilter} onValueChange={setZoneFilter}>
                   <SelectTrigger className="h-8 min-w-0 px-2 text-[10px]">
                     <Filter className="mr-1.5 h-3 w-3 shrink-0 text-[hsl(var(--muted-foreground))]" />

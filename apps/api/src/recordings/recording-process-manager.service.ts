@@ -170,6 +170,8 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   private readonly minFreePercent: number;
   private redisPublisher: Redis | null = null;
   private readonly motionStopTimers = new Map<string, NodeJS.Timeout>();
+  /** REC iniciado pelo operador não pode ficar gravando por esquecimento. */
+  private readonly manualStopTimers = new Map<string, NodeJS.Timeout>();
   private lastMotionRecordingFailureEventAt = new Map<string, number>();
 
   /**
@@ -2485,7 +2487,36 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
     };
   }
 
+  /**
+   * REC do Ao Vivo é uma captura manual temporária. Só agenda a parada quando
+   * a câmera é realmente manual: movimento/objeto têm política própria e não
+   * devem ser interrompidos por um clique do operador no mosaico.
+   */
+  async startManual(cameraId: string, segmentSeconds: number, maxDurationSeconds = 600) {
+    const camera = await this.camerasService.getCameraOrThrow(cameraId);
+    const result = await this.start(cameraId, segmentSeconds, { recordingMode: 'manual' });
+    if (camera.recordingMode !== 'manual') return { ...result, manualTimeoutSeconds: null };
+
+    const duration = Math.max(10, Math.min(600, maxDurationSeconds));
+    const previous = this.manualStopTimers.get(cameraId);
+    if (previous) clearTimeout(previous);
+    const timer = setTimeout(() => {
+      this.manualStopTimers.delete(cameraId);
+      void this.stop(cameraId, { recordingMode: 'manual' }).catch((error) => {
+        this.logger.warn(`Falha ao encerrar REC manual camera=${cameraId}: ${String(error?.message ?? error)}`);
+      });
+    }, duration * 1000);
+    timer.unref();
+    this.manualStopTimers.set(cameraId, timer);
+    return { ...result, manualTimeoutSeconds: duration };
+  }
+
   async stop(cameraId: string, options?: { recordingMode?: Camera['recordingMode'] }) {
+    const manualTimer = this.manualStopTimers.get(cameraId);
+    if (manualTimer) {
+      clearTimeout(manualTimer);
+      this.manualStopTimers.delete(cameraId);
+    }
     if (this.controlMode === 'worker') {
       await this.camerasService.getCameraOrThrow(cameraId).catch(() => {
         throw new NotFoundException('Camera não encontrada.');

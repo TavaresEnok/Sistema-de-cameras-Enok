@@ -82,6 +82,8 @@ export interface Camera {
   lastMotion?: string;
   thumbnailColor: string;
   recordingStatusDetail?: string;
+  /** Estado transitório do botão REC do operador, separado de regras automáticas. */
+  manualRecordingActive?: boolean;
   recordingStale?: boolean;
   lastSegmentAt?: string | null;
   lastSegmentAgeSeconds?: number | null;
@@ -498,13 +500,14 @@ function mapCameraStatus(
   runtime?: RecordingRuntimeStatus,
 ): Camera['status'] {
   if (status === 'ONLINE') {
-    if (runtime?.isRecording ?? recordingEnabled) return 'recording';
     // Em modo motion, recordingEnabled indica processo FFmpeg ativo, não se a
     // regra está armada. Exibir "Movimento" evita chamar uma câmera ociosa mas
     // armada de "gravação desabilitada".
     // `object` é armada igual a `motion` — cair no 'online' faria a lista
     // mostrar como ociosa uma câmera que está de guarda esperando pessoa.
-    return recordingMode === 'motion' || recordingMode === 'object' ? 'motion' : 'online';
+    if (recordingMode === 'motion' || recordingMode === 'object') return 'motion';
+    if (runtime?.isRecording ?? recordingEnabled) return 'recording';
+    return 'online';
   }
   if (status === 'ERROR') return 'alarm';
   if (status === 'OFFLINE') return 'offline';

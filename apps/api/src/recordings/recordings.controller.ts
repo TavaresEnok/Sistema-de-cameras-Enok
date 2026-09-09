@@ -93,7 +93,9 @@ export class RecordingsController {
     await this.commercialPolicy.assertFeature('localRecording', user);
     const defaultSegment = envNumber('RECORDING_SEGMENT_SECONDS', 300, { min: 5, max: 3600, integer: true });
     const segmentSeconds = dto.segmentSeconds ?? defaultSegment;
-    const result = await this.recordingManager.start(cameraId, segmentSeconds, { recordingMode: 'manual' });
+    // REC do Ao Vivo tem teto de dez minutos para não consumir disco por
+    // esquecimento. Regras por movimento/objeto continuam independentes.
+    const result = await this.recordingManager.startManual(cameraId, segmentSeconds, 600);
     await this.auditService.log(user.id, 'recording.start', 'Camera', cameraId, { status: result.status }, req);
     return result;
   }
