@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const playerPath = new URL('../src/components/LiveStreamPlayer.tsx', import.meta.url);
+const livePagePath = new URL('../src/pages/LiveViewPage.tsx', import.meta.url);
 const apiProfilePath = new URL('../../api/src/camera-stream/helpers/live-delivery-profile.helper.ts', import.meta.url);
 const pushDialogPath = new URL('../src/components/AddPushCameraDialog.tsx', import.meta.url);
 
@@ -12,6 +13,19 @@ test('câmera individual oferece somente Instantâneo e Máxima resolução', as
   assert.match(source, /\['instant', 'Instantâneo'/);
   assert.match(source, /'max',[\s\S]*'Máxima resolução'/);
   assert.doesNotMatch(source, /Equilibrado|qualityMode === 'balanced'|\['balanced'/i);
+});
+
+test('duplo clique vindo da grade sempre reinicia em Máxima resolução', async () => {
+  const source = await readFile(playerPath, 'utf8');
+  assert.match(source, /useState<LiveQualityMode>\('max'\)/);
+  assert.match(source, /if \(liveViewMode === 'selected'\) setQualityMode\('max'\)/);
+  assert.doesNotMatch(source, /drac-live-quality|getStoredLiveQuality|storeLiveQuality/);
+});
+
+test('sinal vermelho da grade é exclusivo de gravação manual', async () => {
+  const source = await readFile(livePagePath, 'utf8');
+  assert.match(source, /camera\.recordingMode === 'manual' && camera\.status === 'recording'/);
+  assert.match(source, /status: isManualRecording\(cam\)/);
 });
 
 test('backend não mantém o perfil transcodificado da câmera individual', async () => {

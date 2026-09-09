@@ -10,6 +10,8 @@ test('escolhe a unidade pelo tamanho, em vez de forçar GB', () => {
   assert.equal(formatarBytes(900), '900 B');
   assert.equal(formatarBytes(30 * 1024 * 1024), '30 MB');
   assert.match(formatarBytes(1024 ** 4), /TB$/);
+  assert.equal(formatarBytes(96 * 1024 ** 3), '96 GB');
+  assert.equal(formatarBytes(49 * 1024 ** 3), '49 GB');
 });
 
 test('usa vírgula decimal e separador de milhar do pt-BR', () => {
