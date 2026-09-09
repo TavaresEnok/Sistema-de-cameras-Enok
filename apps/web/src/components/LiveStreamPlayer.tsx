@@ -88,7 +88,6 @@ const WEBRTC_RTP_STALL_RECONNECT_MS = 30000;
 const LIVE_BLACK_FRAME_FAILOVER_MS = 6000;
 const LIVE_VIEW_LEASE_TTL_SECONDS = 20;
 const LIVE_VIEW_HEARTBEAT_MS = 7000;
-const LIVE_QUALITY_STORAGE_PREFIX = 'drac-live-quality';
 const WEBRTC_HEVC_PROOF_STORAGE_KEY = 'drac-live-capability:webrtc-hevc:v1';
 const WEBRTC_HEVC_PROOF_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const STREAM_URL_CACHE_TTL_MS = 60 * 1000;
@@ -110,25 +109,6 @@ function hasWebrtcHevcProof() {
 function storeWebrtcHevcProof() {
   try {
     window.localStorage.setItem(WEBRTC_HEVC_PROOF_STORAGE_KEY, String(Date.now()));
-  } catch {
-  }
-}
-
-function getStoredLiveQuality(cameraId: string): LiveQualityMode {
-  try {
-    const stored = window.localStorage.getItem(`${LIVE_QUALITY_STORAGE_PREFIX}:${cameraId}`);
-    if (stored === 'max') return 'max';
-    // Preferências gravadas por versões antigas, ou qualquer valor inválido,
-    // migram para o único perfil H.264 restante.
-    return 'instant';
-  } catch {
-    return 'instant';
-  }
-}
-
-function storeLiveQuality(cameraId: string, quality: LiveQualityMode) {
-  try {
-    window.localStorage.setItem(`${LIVE_QUALITY_STORAGE_PREFIX}:${cameraId}`, quality);
   } catch {
   }
 }
@@ -465,8 +445,11 @@ export function LiveStreamPlayer({
     setZoom(1);
     setPan({ x: 0, y: 0 });
   }, []);
-  // Qualidade da câmera única (1x1): persistida por câmera; na grade é sempre 'grid'.
-  const [qualityMode, setQualityMode] = useState<LiveQualityMode>(() => getStoredLiveQuality(cameraId));
+  // Câmera única sempre começa na imagem original. Instantâneo é uma escolha
+  // temporária do operador para AQUELE atendimento; persistir essa preferência
+  // fazia um duplo clique posterior na grade abrir uma câmera esquecida em
+  // baixa qualidade.
+  const [qualityMode, setQualityMode] = useState<LiveQualityMode>('max');
   // Grade começa sem trilha de áudio: evita uma conversão AAC→Opus por tile.
   // O gesto explícito no ícone de volume troca SOMENTE esta câmera para o
   // perfil com áudio, preservando o último frame durante a renegociação.
@@ -478,7 +461,7 @@ export function LiveStreamPlayer({
   // dos navegadores é incompleta; o teste real de reprodução é autoritativo.
   const [gridUsesH264Fallback, setGridUsesH264Fallback] = useState(false);
   useEffect(() => {
-    setQualityMode(getStoredLiveQuality(cameraId));
+    setQualityMode('max');
     setGridUsesH264Fallback(false);
     setGridAudioRequested(false);
     setAudioSwitchMessage(null);
@@ -505,7 +488,6 @@ export function LiveStreamPlayer({
     // máquina de estados retorna com segurança ao caminho H.264.
     setQualityMode((current) => {
       if (current === next) return current;
-      storeLiveQuality(cameraId, next);
       failedProtocolsRef.current.clear();
       retryAttemptRef.current = 0;
       setRetryMessage(next === 'max' ? 'Abrindo vídeo original da câmera…' : 'Ajustando qualidade…');
@@ -725,6 +707,10 @@ export function LiveStreamPlayer({
     if (previousLiveViewModeRef.current === liveViewMode) return;
     previousLiveViewModeRef.current = liveViewMode;
     failedProtocolsRef.current.clear();
+    // Grade → câmera única (inclusive duplo clique): reinicia em Máxima.
+    // A escolha por Instantâneo continua existindo, mas apenas até o operador
+    // voltar à grade; ela não pode virar uma preferência esquecida por câmera.
+    if (liveViewMode === 'selected') setQualityMode('max');
     if (liveViewMode === 'grid') setGridUsesH264Fallback(false);
     // O reboot do stream acontece pelo próprio effect de boot (deliveryMode nas
     // dependências). Aqui só preparamos a transição: mensagem amigável e
@@ -858,7 +844,6 @@ export function LiveStreamPlayer({
         }
         if (deliveryMode === 'original-audio' && videoCodecFamily(actualCodec) === 'hevc') {
           failedProtocolsRef.current.clear();
-          storeLiveQuality(cameraId, 'instant');
           setQualityMode('instant');
           setProtocolReason('O teste real de H.265 falhou; usando a contingência H.264.');
           setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');
@@ -1055,7 +1040,6 @@ export function LiveStreamPlayer({
             return;
           }
           if (deliveryMode === 'original-audio' && videoCodecFamily(sourceCodec) === 'hevc') {
-            storeLiveQuality(cameraId, 'instant');
             setQualityMode('instant');
             failedProtocolsRef.current.clear();
             setProtocolReason('Este navegador não decodifica H.265 — usando o modo Instantâneo (H.264).');
@@ -1693,7 +1677,6 @@ export function LiveStreamPlayer({
         if (deliveryMode === 'original-audio' && videoCodecFamily(sourceCodec) === 'hevc') {
           failedProtocolsRef.current.clear();
           streamUrlsCache.clear(cacheKey);
-          storeLiveQuality(cameraId, 'instant');
           setQualityMode('instant');
           setProtocolReason('O teste real de H.265 falhou; usando a contingência H.264.');
           setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');

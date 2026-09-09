@@ -299,14 +299,17 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   );
   const availableLayouts = savedLayouts.length ? savedLayouts : generatedLayouts;
 
-  const isCameraRecording = useCallback((camera: Camera | null | undefined) => {
+  // Só uma ação explícita do operador deve ficar vermelha como "gravação
+  // manual". Gravações por movimento/objeto podem estar escrevendo arquivos
+  // normalmente, mas não podem dar a impressão de que alguém apertou Gravar.
+  const isManualRecording = useCallback((camera: Camera | null | undefined) => {
     if (!camera) return false;
     const override = recordingOverrides[camera.id];
     if (typeof override === 'boolean') return override;
-    return camera.status === 'recording';
+    return camera.recordingMode === 'manual' && camera.status === 'recording';
   }, [recordingOverrides]);
 
-  const isRecording = isCameraRecording(selectedCameraObj);
+  const isRecording = isManualRecording(selectedCameraObj);
 
   useEffect(() => {
     if (!cameraIds.length && cameras.length) {
@@ -939,7 +942,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                   <CameraTile
                     camera={{
                       ...cam,
-                      status: isCameraRecording(cam)
+                      status: isManualRecording(cam)
                         ? 'recording'
                         : (cam.status === 'recording' ? 'online' : cam.status),
                     }}
