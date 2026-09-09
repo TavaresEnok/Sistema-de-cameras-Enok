@@ -5,7 +5,7 @@ Proxmox/firewall e faz DNAT para os serviços da Gateway.
 
 Rotas administrativas:
 
-- Central por hostname: `central.ajustcam.ajustconsulting.com.br` para `10.10.0.11:8080`;
+- Central por hostname: `central.s2cam.com.br` para `10.10.0.11:8080`;
 - rota legada `/central/`: também deve apontar para `10.10.0.11:8080`;
 - `10.10.0.20` pertence à instalação IBtelecom e nunca à Central.
 
