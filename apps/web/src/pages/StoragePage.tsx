@@ -152,9 +152,12 @@ export default function MonitoramentoPage() {
       temp: 0,
     },
   ] : [], [system]);
-  const total = system ? system.disk.totalBytes / 1024 / 1024 / 1024 / 1024 : 0;
-  const used = system ? system.disk.usedBytes / 1024 / 1024 / 1024 / 1024 : 0;
-  const free = system ? system.disk.freeBytes / 1024 / 1024 / 1024 / 1024 : 0;
+  // O endpoint já entrega bytes. Converter tudo para TB e arredondar uma casa
+  // fazia um disco de ~100 GB virar "0,1 TB" e seus valores usados/livres
+  // parecerem "0,0 TB". A unidade deve acompanhar o tamanho real do volume.
+  const totalBytes = system?.disk.totalBytes ?? 0;
+  const usedBytes = system?.disk.usedBytes ?? 0;
+  const freeBytes = system?.disk.freeBytes ?? 0;
   const percent = system?.disk.usagePercent ?? 0;
   const cpuUsage = system ? Math.min(100, Math.round(((system.server.loadAverage[0] ?? 0) / Math.max(system.server.cpuCount, 1)) * 100)) : 0;
   const ramUsage = system ? Math.min(100, Math.round(((system.server.totalMemoryBytes - system.server.freeMemoryBytes) / Math.max(system.server.totalMemoryBytes, 1)) * 100)) : 0;
@@ -188,9 +191,9 @@ export default function MonitoramentoPage() {
           <Ring value={percent} />
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
-          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Total</div><div className="mt-2 text-2xl font-semibold">{total.toFixed(1)} TB</div></div>
-          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Utilizado</div><div className="mt-2 text-2xl font-semibold">{used.toFixed(1)} TB</div></div>
-          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Livre</div><div className="mt-2 text-2xl font-semibold">{free.toFixed(1)} TB</div></div>
+          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Total</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(totalBytes)}</div></div>
+          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Utilizado</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(usedBytes)}</div></div>
+          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Livre</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(freeBytes)}</div></div>
         </div>
       </div>
       <StorageSection title="Saúde do servidor" aria-label="Saúde do servidor" open={openStorageSections.health} onToggle={() => toggleStorageSection('health')}>
