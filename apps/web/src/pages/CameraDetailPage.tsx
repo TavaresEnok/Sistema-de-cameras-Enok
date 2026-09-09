@@ -1776,20 +1776,36 @@ export default function CameraDetailPage() {
                 }}
                 className="space-y-5 pb-2"
               >
-                {/* Barra de ações */}
-                <div className="flex flex-col gap-4 rounded-xl border border-border bg-card px-5 py-4 shadow-sm md:flex-row md:items-center md:justify-between">
-                  <div className="flex items-start gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                      <SlidersHorizontal className="h-4 w-4" />
-                    </span>
-                    <div>
-                      <h2 className="text-[15px] font-semibold tracking-tight text-foreground">Configurações da câmera</h2>
-                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                        Identificação, transmissão ao vivo e gravação. Detalhes técnicos ficam agrupados no final.
-                      </p>
+                {/* Cabeçalho operacional: a primeira leitura responde se a câmera
+                    está pronta, antes de expor qualquer campo de configuração. */}
+                <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <SlidersHorizontal className="h-5 w-5" />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="text-[15px] font-semibold tracking-tight text-foreground">Configuração avançada</h2>
+                          <span className={cn(
+                            'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+                            cam.isOnline
+                              ? 'border-[hsl(var(--status-online)_/_0.35)] bg-[hsl(var(--status-online)_/_0.1)] text-[hsl(var(--status-online))]'
+                              : 'border-[hsl(var(--status-offline)_/_0.35)] bg-[hsl(var(--status-offline)_/_0.1)] text-[hsl(var(--status-offline))]',
+                          )}>
+                            <span className={cn('h-1.5 w-1.5 rounded-full', cam.isOnline ? 'bg-[hsl(var(--status-online))]' : 'bg-[hsl(var(--status-offline))]')} />
+                            {cam.isOnline ? 'Câmera online' : 'Sem vídeo no momento'}
+                          </span>
+                          <span className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                            {modoPush ? 'Entrada RTMP' : 'Entrada RTSP'}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                          Ajuste apenas o que precisa. O restante continua usando o perfil detectado da câmera.
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2">
                     {!modoPush && (
                       <button
                         type="button"
@@ -1798,7 +1814,7 @@ export default function CameraDetailPage() {
                         className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3.5 text-xs font-semibold transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {testingConnection ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Radar className="h-3.5 w-3.5" />}
-                        {testingConnection ? 'Testando...' : 'Testar conexão RTSP'}
+                        {testingConnection ? 'Testando...' : 'Testar RTSP'}
                       </button>
                     )}
                     <button
@@ -1808,7 +1824,7 @@ export default function CameraDetailPage() {
                       className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3.5 text-xs font-semibold transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {diagnosticsLoading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Stethoscope className="h-3.5 w-3.5" />}
-                      {diagnosticsLoading ? 'Diagnosticando...' : 'Diagnóstico detalhado'}
+                        {diagnosticsLoading ? 'Diagnosticando...' : 'Diagnosticar'}
                     </button>
                     <button
                       type="button"
@@ -1817,7 +1833,7 @@ export default function CameraDetailPage() {
                       className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3.5 text-xs font-semibold transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {previewLoading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
-                      {previewLoading ? 'Capturando...' : 'Conferir imagem'}
+                        {previewLoading ? 'Capturando...' : 'Ver imagem'}
                     </button>
                     {!modoPush && (
                       <button
@@ -1827,9 +1843,13 @@ export default function CameraDetailPage() {
                         className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3.5 text-xs font-semibold transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {discoveringEndpoints ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                        {discoveringEndpoints ? 'Detectando...' : 'Detectar RTSP/ONVIF'}
+                        {discoveringEndpoints ? 'Detectando...' : 'Detectar perfis'}
                       </button>
                     )}
+                    </div>
+                  </div>
+                  <div className="border-t border-border/70 bg-muted/25 px-5 py-2.5 text-[11px] text-muted-foreground">
+                    <span className="font-medium text-foreground">Uso recomendado:</span> teste a conexão quando trocar IP, senha ou equipamento; use o diagnóstico somente quando houver falha de vídeo.
                   </div>
                 </div>
 
@@ -1841,22 +1861,34 @@ export default function CameraDetailPage() {
                   <CameraDiagnosticsCard report={liveDiagnostics} />
                 )}
 
-                {/* Stream detectado da câmera */}
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <SettingsStat label="Codec" value={originalCodec || '--'} />
-                  <SettingsStat label="Resolução" value={originalWidth && originalHeight ? `${originalWidth}×${originalHeight}` : '--'} />
-                  <SettingsStat label="FPS" value={originalFps ? `${originalFps}` : '--'} />
-                  <SettingsStat label="Bitrate" value={originalBitrate ? `${originalBitrate} kbps` : '--'} />
+                {/* O que realmente chegou do equipamento. Isso não é editável e
+                    evita confundir perfil detectado com uma promessa do formulário. */}
+                <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Sinal detectado</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">Dados da última conexão recebida pela plataforma.</p>
+                    </div>
+                    <span className="hidden rounded-md border border-border bg-muted/50 px-2 py-1 font-mono text-[10px] text-muted-foreground sm:inline-flex">
+                      {livePlayerStatus.activeProtocol?.toUpperCase() ?? 'AUTO'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                    <SettingsStat label="Codec" value={originalCodec || '--'} />
+                    <SettingsStat label="Resolução" value={originalWidth && originalHeight ? `${originalWidth}×${originalHeight}` : '--'} />
+                    <SettingsStat label="FPS" value={originalFps ? `${originalFps}` : '--'} />
+                    <SettingsStat label="Bitrate" value={originalBitrate ? `${originalBitrate} kbps` : '--'} />
+                  </div>
                 </div>
 
                 {/* Grid principal */}
                 <div className="grid items-start gap-5 xl:grid-cols-2">
                   <SettingsCard
                     icon={KeyRound}
-                    title={modoPush ? 'Identificação e publicação RTMP' : 'Identificação e acesso'}
+                    title={modoPush ? '1. Entrada RTMP' : '1. Conexão com a câmera'}
                     description={modoPush
-                      ? 'A câmera abre a conexão e envia o vídeo ao AjustCam; não existe IP RTSP para o servidor acessar.'
-                      : 'Como o AjustCam encontra e autentica nesta câmera.'}
+                      ? 'O equipamento envia o vídeo ao AjustCam. Não é necessário informar IP, usuário ou senha.'
+                      : 'Informe somente os dados que o AjustCam usa para encontrar e autenticar no equipamento.'}
                   >
                     <div className="grid gap-3 md:grid-cols-2">
                       <SettingsField label="Nome da câmera" wide>
@@ -1865,12 +1897,12 @@ export default function CameraDetailPage() {
                       {modoPush ? (
                         <>
                           <SettingsField label="Modo de entrada">
-                            <SettingsInput value="A câmera envia (RTMP push)" readOnly />
+                            <SettingsInput value="Câmera RTMP" readOnly />
                           </SettingsField>
                           <SettingsField label="Estado do vínculo">
                             <SettingsInput value={caminhoRtmp ? 'Equipamento vinculado' : 'Aguardando vínculo'} readOnly />
                           </SettingsField>
-                          <SettingsField label="Caminho publicado pelo equipamento" hint="Identificador informado pela própria câmera." wide>
+                          <SettingsField label="Identificador recebido" hint="Preenchido automaticamente na primeira publicação." wide>
                             <SettingsInput
                               value={caminhoRtmp ?? 'Aguardando a primeira tentativa de publicação'}
                               readOnly
@@ -1900,14 +1932,14 @@ export default function CameraDetailPage() {
                     </div>
                   </SettingsCard>
 
-                  <SettingsCard icon={Video} title="Transmissão ao vivo" description="O grid entrega no máximo 720p / 20 FPS; a câmera individual usa a resolução original do perfil.">
+                  <SettingsCard icon={Video} title="2. Entrega ao vivo" description="O grid é otimizado para abrir rápido; a câmera única usa a melhor imagem disponível.">
                     <div className="grid gap-3 md:grid-cols-2">
                       {modoPush ? (
                         <SettingsField label="Fonte da imagem" hint="Fluxo recebido diretamente do equipamento.">
                           <SettingsInput value="Publicação RTMP da câmera" readOnly />
                         </SettingsField>
                       ) : (
-                        <SettingsField label="Fonte da imagem" hint="Original usa o perfil principal; Econômico usa o substream.">
+                        <SettingsField label="Perfil da câmera" hint="Original usa o perfil principal; econômico usa o substream, quando existir.">
                           <SettingsSelect value={liveSourceMode} onChange={(event) => applyLiveSourceMode(event.target.value as LiveSourceMode)}>
                             <option value="original">Original da câmera</option>
                             <option value="economical">Econômico</option>
@@ -1915,14 +1947,14 @@ export default function CameraDetailPage() {
                           </SettingsSelect>
                         </SettingsField>
                       )}
-                      <SettingsField label="Resolução no grid" hint="Nunca ultrapassa 720p.">
+                      <SettingsField label="Limite da grade" hint="Protege a CPU e a banda ao abrir muitas câmeras.">
                         <SettingsInput
                           value={`${form.streamWidth || GRID_LIVE_MAX_WIDTH}×${form.streamHeight || GRID_LIVE_MAX_HEIGHT}`}
                           readOnly
                           className="font-mono"
                         />
                       </SettingsField>
-                      <SettingsField label="Protocolo ao vivo">
+                      <SettingsField label="Protocolo preferido" hint="WebRTC é a opção recomendada.">
                         <SettingsSelect value={form.preferredLiveProtocol} onChange={(event) => updateField('preferredLiveProtocol', event.target.value as CameraConfig['preferredLiveProtocol'])}>
                           <option value="webrtc">WebRTC</option>
                           <option value="llhls">LL-HLS</option>
@@ -1941,39 +1973,39 @@ export default function CameraDetailPage() {
                           </SettingsSelect>
                         </SettingsField>
                       )}
-                      <SettingsField label="Codec da live">
+                      <SettingsField label="Codec entregue ao navegador">
                         <SettingsInput value="H.264" readOnly className="font-mono" />
                       </SettingsField>
-                      <SettingsField label="Bitrate da live" hint="kbps · em branco usa o detectado.">
+                      <SettingsField label="Limite de bitrate" hint="kbps · vazio mantém o valor detectado.">
                         <SettingsInput type="number" min={1} value={form.streamBitrateKbps} onChange={(event) => updateField('streamBitrateKbps', event.target.value)} className="font-mono" />
                       </SettingsField>
                     </div>
                   </SettingsCard>
 
-                  <SettingsCard icon={SlidersHorizontal} title="Operação" description="Liga ou desliga recursos desta câmera.">
+                  <SettingsCard icon={SlidersHorizontal} title="3. Recursos da câmera" description="Defina o que esta câmera pode usar sem alterar o sinal de vídeo.">
                     <div className="grid gap-2.5">
                       <SettingsSwitch
                         checked={form.recordingEnabled}
                         onChange={(value) => updateField('recordingEnabled', value)}
-                        label="Gravação habilitada"
-                        description="Permite que o backend grave esta câmera conforme o modo abaixo."
+                        label="Permitir gravações automáticas"
+                        description="Libera a gravação conforme a regra definida ao lado. A gravação manual continua sendo uma ação separada."
                       />
                       <SettingsSwitch
                         checked={form.audioEnabled}
                         onChange={(value) => updateField('audioEnabled', value)}
-                        label="Áudio habilitado"
-                        description="Usa áudio no perfil operacional quando o stream suportar."
+                        label="Áudio disponível"
+                        description="Disponibiliza o áudio na câmera única e quando o operador o ativar na grade."
                       />
                       <SettingsSwitch
                         checked={form.alarmsEnabled}
                         onChange={(value) => updateField('alarmsEnabled', value)}
-                        label="Alarmes habilitados"
-                        description="Quando desligado, esta câmera não abre novos alarmes (eventos continuam registrados)."
+                        label="Gerar alarmes"
+                        description="Quando desligado, novos alarmes não são criados; o histórico existente é preservado."
                       />
                     </div>
                   </SettingsCard>
 
-                  <SettingsCard icon={HardDrive} title="Gravação" description="Quando e por quanto tempo os vídeos são mantidos.">
+                  <SettingsCard icon={HardDrive} title="4. Regra de gravação" description="Escolha quando gravar e por quanto tempo manter os arquivos desta câmera.">
                     <div className="grid gap-3 md:grid-cols-2">
                       <SettingsField label="Modo de gravação">
                         <SettingsSelect value={form.recordingMode} onChange={(event) => updateField('recordingMode', event.target.value as CameraConfig['recordingMode'])}>
