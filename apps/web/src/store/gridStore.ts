@@ -4,8 +4,21 @@ import { create } from 'zustand';
 // atalhos; qualquer CxL válido (1..8 cada) é aceito.
 export type GridSize = `${number}x${number}`;
 
-const GRID_STORAGE_KEY = 'drac.live.grid.v1';
-const PREV_LAYOUT_SESSION_KEY = 'drac.live.prevLayout.v1';
+export type LiveDisplayId = 'main' | 'aux-1' | 'aux-2' | 'aux-3';
+
+export function getLiveDisplayId(): LiveDisplayId {
+  if (typeof window === 'undefined') return 'main';
+  const value = new URLSearchParams(window.location.search).get('display');
+  return value === 'aux-1' || value === 'aux-2' || value === 'aux-3' ? value : 'main';
+}
+
+export function liveDisplayLabel(id: LiveDisplayId) {
+  return id === 'main' ? 'Tela principal' : `Tela auxiliar ${id.slice(-1)}`;
+}
+
+const LIVE_DISPLAY_ID = getLiveDisplayId();
+const GRID_STORAGE_KEY = LIVE_DISPLAY_ID === 'main' ? 'drac.live.grid.v1' : `drac.live.grid.${LIVE_DISPLAY_ID}.v1`;
+const PREV_LAYOUT_SESSION_KEY = `drac.live.prevLayout.${LIVE_DISPLAY_ID}.v1`;
 
 type PersistedGrid = {
   gridSize?: GridSize;
@@ -80,6 +93,8 @@ const persistedGrid = loadPersistedGrid();
 export const useGridStore = create<GridState>((set) => ({
   gridSize: persistedGrid.gridSize ?? '2x2',
   cameraIds: persistedGrid.cameraIds ?? [],
+  // A auxiliar abre em modo de configuração, com lista de câmeras disponível.
+  // Depois o operador aciona o mural/tela cheia na própria janela.
   wallMode: false,
   prevLayout: loadPrevLayout(),
   setGridSize: (gridSize) => {

@@ -1,4 +1,5 @@
 import { PendingIngestRegistry } from './pending-ingest.registry';
+import { RtmpDiscoveryService } from './rtmp-discovery.service';
 import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { UserRole, CameraStatus, AlarmPriority, AlarmSource } from '@prisma/client';
@@ -660,8 +661,9 @@ export class CamerasController {
   @Roles(UserRole.ADMIN)
   @RequirePermission('cameraConfig')
   @Get('rtmp-ingest/pending')
-  listPendingIngest() {
-    return { items: this.pendingIngest.list() };
+  async listPendingIngest() {
+    const { items } = await this.moduleRef.get(RtmpDiscoveryService, { strict: false }).list();
+    return { items };
   }
 
   /** Vincula a esta câmera o caminho que o equipamento usa por conta própria. */

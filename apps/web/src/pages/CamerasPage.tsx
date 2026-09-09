@@ -12,6 +12,7 @@ import { Camera, useVmsDataStore } from '../store/vmsDataStore';
 import { CameraEditSheet } from '../components/CameraEditSheet';
 import { SeletorDeClassesDeGravacao } from '../components/SeletorDeClassesDeGravacao';
 import { AddPushCameraDialog } from '../components/AddPushCameraDialog';
+import { RtmpDiscoveryDialog } from '../components/RtmpDiscoveryDialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   AlertDialog,
@@ -978,6 +979,7 @@ export default function CamerasPage() {
   const [statusFilter, setStatusFilter] = useState<(typeof STATUSES)[number]>('all');
   const [showWizard, setShowWizard] = useState(false);
   const [showPushDialog, setShowPushDialog] = useState(false);
+  const [showDiscovery, setShowDiscovery] = useState(false);
   const [selectedCam, setSelectedCam] = useState<Camera | null>(null);
   const [editCamera, setEditCamera] = useState<Camera | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Camera | null>(null);
@@ -1416,6 +1418,12 @@ export default function CamerasPage() {
             <button onClick={() => setViewMode('card')} className={`w-7 h-7 flex items-center justify-center rounded-[6px] transition-colors ${viewMode === 'card' ? 'ops-segment-active' : 'text-[hsl(var(--muted-foreground))] hover:text-foreground'}`} title="Cards"><LayoutGrid className="w-3.5 h-3.5" /></button>
           </div>
           <button
+            onClick={() => setShowDiscovery(true)}
+            className="btn btn-outline btn-sm"
+          >
+            <Radio className="w-3.5 h-3.5" /> RTMP pendentes
+          </button>
+          <button
             onClick={() => setShowPushDialog(true)}
             className="btn btn-primary btn-sm"
             data-testid="button-add-push-camera"
@@ -1841,6 +1849,7 @@ export default function CamerasPage() {
         onDeleted={(id) => { if (selectedCam?.id === id) setSelectedCam(null); }}
       />
 
+      {showDiscovery && <RtmpDiscoveryDialog open onClose={() => setShowDiscovery(false)} onCreated={loadData} />}
       <AddPushCameraDialog
         open={showPushDialog}
         onClose={() => setShowPushDialog(false)}

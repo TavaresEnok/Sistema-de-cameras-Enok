@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { isIP } from 'net';
 
 // ── INGESTÃO POR RTMP: quando a câmera é que disca ─────────────────────────
 //
@@ -188,7 +189,7 @@ export function buildPublishTarget(input: {
   const portaPadrao = (scheme === 'rtmp' && input.port === 1935)
     || (scheme === 'rtmps' && input.port === 443);
   const domainCompactFullUrl = compactKey
-    ? `${scheme}://${input.host}${portaPadrao ? '' : `:${input.port}`}/${RTMP_INGEST_COMPACT_APP}/${compactKey}`
+    ? `${scheme}://${input.host}${portaPadrao && !isIP(input.host) ? '' : `:${input.port}`}/${RTMP_INGEST_COMPACT_APP}/${compactKey}`
     : null;
   const compactHost = String(input.compactHost ?? '').trim();
   const compactHostSeguro = compactHost !== input.host
@@ -205,16 +206,14 @@ export function buildPublishTarget(input: {
   // principal. Isso mantém a porta visível para firmwares que não aplicam a
   // porta padrão do RTMP corretamente. A representação Base64URL reduz apenas
   // o texto (32 → 22 caracteres), preservando os mesmos 16 bytes/128 bits.
-  // Host curto configurado é uma preferência operacional explícita: usa IP e
-  // porta mesmo que o domínio também coubesse. Sem host curto, preservamos o
-  // comportamento histórico e só compactamos quando necessário.
+  // A URL copiada usa sempre a chave compacta. O caminho canônico continua
+  // aceito para não interromper câmeras já configuradas com links antigos.
   const compactFullUrl = [compactHostFullUrl, domainCompactFullUrl]
     .find((url): url is string => Boolean(
       url
       && url !== canonicalFullUrl
       && url.length <= RTMP_SINGLE_FIELD_MAX_LENGTH
-      && (compactHostSeguro || canonicalFullUrl.length > RTMP_SINGLE_FIELD_MAX_LENGTH),
-    )) ?? null;
+    )) ?? domainCompactFullUrl;
   const fullUrl = compactFullUrl ?? canonicalFullUrl;
   return {
     serverUrl,
@@ -266,6 +265,39 @@ export function isAcceptableIngestPath(path: unknown): path is string {
 /** Normaliza para comparação e armazenamento (a barra e o caso importam ao RTMP). */
 export function normalizeIngestPath(path: string): string {
   return path.trim();
+}
+
+// ── PERFIS GERADOS PELO PRÓPRIO EQUIPAMENTO ───────────────────────────────
+// Intelbras, Dahua e derivados podem alternar entre o perfil principal `_0_0`
+// e o secundário `_0_1` sem mudar de câmera. A família permanece restrita ao
+// mesmo serial, canal e sufixo para não autorizar caminhos por aproximação.
+type VendorProfilePath = {
+  prefix: string;
+  channel: number;
+  profile: number;
+  suffix: string;
+};
+
+const VENDOR_PROFILE_PATH_PATTERN = /^(.*\/liveStream_[A-Za-z0-9._-]+)_(\d+)_(\d+)([A-Za-z]*)$/i;
+const MAX_VENDOR_PROFILE_INDEX = 7;
+
+function parseVendorProfilePath(path: string): VendorProfilePath | null {
+  const match = VENDOR_PROFILE_PATH_PATTERN.exec(normalizeIngestPath(path));
+  if (!match) return null;
+  const channel = Number(match[2]);
+  const profile = Number(match[3]);
+  if (!Number.isSafeInteger(channel) || !Number.isSafeInteger(profile)) return null;
+  if (profile < 0 || profile > MAX_VENDOR_PROFILE_INDEX) return null;
+  return { prefix: match[1], channel, profile, suffix: match[4] };
+}
+
+export function ingestProfilePathCandidates(path: string): string[] {
+  const normalized = normalizeIngestPath(path);
+  const parsed = parseVendorProfilePath(normalized);
+  if (!parsed) return [normalized];
+  const indexes = [0, 1];
+  if (!indexes.includes(parsed.profile)) indexes.push(parsed.profile);
+  return indexes.map((profile) => `${parsed.prefix}_${parsed.channel}_${profile}${parsed.suffix}`);
 }
 
 /** Modos de origem aceitos. String, e não enum do Prisma, para migrar sem downtime. */

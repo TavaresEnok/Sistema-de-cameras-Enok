@@ -49,6 +49,17 @@ server {
         proxy_read_timeout 3s;
     }
 
+    location ~ ^/discovery-srs/(clients/(?:[a-zA-Z0-9_-]+)?)$ {
+        if ($http_x_discovery_token = "") { return 403; }
+        if ($http_x_discovery_token != "${CALLBACK_TOKEN}") { return 403; }
+        limit_except GET DELETE { deny all; }
+        set $destino_srs "http://rtmp-ingest:1985";
+        set $discovery_route $1;
+        proxy_pass $destino_srs/api/v1/$discovery_route$is_args$args;
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 3s;
+    }
+
     location / {
         return 404;
     }
