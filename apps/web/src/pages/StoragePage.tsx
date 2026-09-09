@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import axios from 'axios';
-import { HardDrive, Thermometer, RefreshCw, Trash2, ChevronDown } from 'lucide-react';
+import { HardDrive, RefreshCw, Trash2, ChevronDown } from 'lucide-react';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { useAuthStore } from '../store/authStore';
 import { getApiBaseUrl } from '../lib/api-base';
@@ -179,8 +179,6 @@ export default function MonitoramentoPage() {
       volume: system.recordingsRoot,
       type: 'Local FS',
       use: system.disk.usagePercent,
-      health: system.disk.usagePercent >= 95 ? 'Crítico' : system.disk.usagePercent >= 80 ? 'Aviso' : 'OK',
-      temp: 0,
     },
   ] : [], [system]);
   const percent = system?.disk.usagePercent ?? 0;
@@ -236,8 +234,6 @@ export default function MonitoramentoPage() {
               <th className="text-left px-5 py-3">Volume</th>
               <th className="text-left px-5 py-3">Tipo</th>
               <th className="text-left px-5 py-3">Uso</th>
-              <th className="text-left px-5 py-3">Saúde</th>
-              <th className="text-left px-5 py-3">Temp</th>
             </tr>
           </thead>
           <tbody>
@@ -247,8 +243,6 @@ export default function MonitoramentoPage() {
                 <td className="px-5 py-4 flex items-center gap-2"><HardDrive className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />{row.volume}</td>
                 <td className="px-5 py-4 text-xs text-[hsl(var(--muted-foreground))]">{row.type}</td>
                 <td className="px-5 py-4 w-72"><div className="space-y-2"><Bar value={row.use} /><div className="text-xs text-[hsl(var(--muted-foreground))]">{row.use}%</div></div></td>
-                <td className="px-5 py-4 text-xs"><span className={`px-2 py-1 rounded-full border ${row.health === 'Crítico' ? 'border-[hsl(var(--destructive)_/_0.35)] text-[hsl(var(--destructive))]' : row.health === 'Aviso' ? 'border-[hsl(var(--chart-4)_/_0.35)] text-[hsl(var(--chart-4))]' : 'border-border text-[hsl(var(--primary))]'}`}>{row.health}</span></td>
-                <td className="px-5 py-4 text-xs font-mono flex items-center gap-1"><Thermometer className="w-3.5 h-3.5 text-[hsl(var(--muted-foreground))]" />{row.temp ? `${row.temp}°C` : 'N/D'}</td>
               </tr>
             ))}
           </tbody>
