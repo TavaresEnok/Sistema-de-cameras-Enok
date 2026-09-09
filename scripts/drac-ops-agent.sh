@@ -21,8 +21,8 @@ chmod 700 "$DRAC_OPS_LOG_DIR"
 central="${DRAC_OPS_CENTRAL_URL%/}"
 headers=(-H "X-DRAC-Installation-Id: $DRAC_OPS_INSTALLATION_ID" -H "X-DRAC-License-Key: $DRAC_OPS_LICENSE_KEY")
 
-claim="$(curl --fail --silent --show-error --max-time 20 -X POST "${headers[@]}" "$central/api/agent/operations/claim" || true)"
-[ -n "$claim" ] || exit 0
+claim="$(curl --fail --silent --show-error --max-time 20 -X POST "${headers[@]}" "$central/api/agent/operations/claim")"
+[ -n "$claim" ] || { echo 'Central respondeu sem corpo ao consultar operações.' >&2; exit 1; }
 
 readarray -t fields < <(printf '%s' "$claim" | python3 -c '
 import json, sys
