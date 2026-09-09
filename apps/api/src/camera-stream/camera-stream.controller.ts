@@ -267,7 +267,8 @@ export class CameraStreamController {
     // Único caminho em que publicar é permitido sem a credencial administrativa,
     // e ele é estreito de propósito:
     //  · só a ação 'publish', só nos protocolos rtmp/rtmps;
-    //  · só em `drac/<32 hex>` ou no alias equivalente `d/<22 base64url>` —
+    //  · só em `drac/<32 hex>`, `d2/<22 base62>` ou no alias histórico
+    //    `d/<22 base64url>` —
     //    nenhum nome de path de câmera casa com esses padrões;
     //  · a chave autentica por hash, em tempo constante, e some se a câmera for
     //    desabilitada ou tirada do modo push.
@@ -283,7 +284,7 @@ export class CameraStreamController {
       if (this.discovery?.allows(caminho)) return res.status(200).json({ authorized: true });
 
       // 1ª via: a chave que NÓS geramos, no formato histórico hexadecimal ou
-      // no alias Base64URL que preserva os mesmos 128 bits.
+      // no alias Base62 atual ou Base64URL histórico, ambos com 128 bits.
       const chave = ingestKeyFromPathName(caminho);
       if (chave) {
         const camera = await this.camerasService.findCameraByIngestKey(chave).catch(() => null);
