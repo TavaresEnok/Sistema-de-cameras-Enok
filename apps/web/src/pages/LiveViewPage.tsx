@@ -1079,7 +1079,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
               onPointerDown={beginPanelResize}
               className="group absolute -left-1 top-0 z-50 flex h-full w-3 cursor-col-resize touch-none items-center justify-center"
             >
-              <span className="h-20 w-px rounded-full bg-[hsl(var(--primary)_/_0.5)] opacity-80 shadow-sm transition-all group-hover:h-24 group-hover:w-1 group-hover:bg-[hsl(var(--primary))] group-active:h-28 group-active:bg-[hsl(var(--primary))]" />
+              <span className="h-20 w-1.5 rounded-full bg-[hsl(var(--primary)_/_0.82)] shadow-[0_0_8px_hsl(var(--primary)_/_0.3)] transition-all group-hover:h-24 group-hover:w-2 group-hover:bg-[hsl(var(--primary))] group-active:h-28 group-active:w-2 group-active:bg-[hsl(var(--primary))]" />
             </div>
             <div className="px-2 py-2.5 border-b border-border shrink-0 space-y-2.5">
               <div className="flex items-center justify-between">
