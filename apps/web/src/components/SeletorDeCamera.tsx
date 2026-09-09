@@ -28,6 +28,8 @@ export type CameraDoSeletor = {
   name: string;
   code?: string;
   isOnline?: boolean;
+  /** Grupo operacional. Quando disponível, também entra na busca textual. */
+  floor?: string;
 };
 
 type Props = {
@@ -79,7 +81,7 @@ export function SeletorDeCamera({
       // `value` é o que o cmdk filtra: nome E código, para "21" achar a Cam-21
       // e o nome achar pelo texto. Sem o id junto, duas câmeras homônimas
       // colidiriam na seleção.
-      value={`${camera.name} ${camera.code ?? ''} ${camera.id}`}
+      value={`${camera.name} ${camera.code ?? ''} ${camera.floor ?? ''} ${camera.id}`}
       onSelect={() => { onChange(camera.id); setAberto(false); }}
       className="gap-2 text-xs"
     >
@@ -91,6 +93,7 @@ export function SeletorDeCamera({
         {camera.code ? ' — ' : ''}
         {camera.name}
       </span>
+      {camera.floor && camera.floor !== '-' && <span className="shrink-0 text-[9px] text-[hsl(var(--muted-foreground))]">{camera.floor}</span>}
       {camera.isOnline === false && (
         <span className="shrink-0 text-[10px] uppercase tracking-wide text-[hsl(var(--muted-foreground))]">offline</span>
       )}

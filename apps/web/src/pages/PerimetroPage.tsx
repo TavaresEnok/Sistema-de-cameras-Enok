@@ -4,6 +4,7 @@ import { ShieldAlert, Spline, SquareDashed, EyeOff } from 'lucide-react';
 import { SeletorDeCamera } from '../components/SeletorDeCamera';
 import { IlustracaoPerimetro } from '../components/IlustracaoPerimetro';
 import { DetectionZonesEditor, type DetectionZone } from '../components/DetectionZonesEditor';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuthStore } from '../store/authStore';
 import { useVmsDataStore } from '../store/vmsDataStore';
 
@@ -41,6 +42,7 @@ export default function PerimetroPage() {
   // Estado local do resumo por câmera: começa do store e é atualizado quando o
   // editor salva, para a lista lateral refletir na hora sem recarregar tudo.
   const [zonasPorCamera, setZonasPorCamera] = useState<Record<string, DetectionZone[]>>({});
+  const [groupFilter, setGroupFilter] = useState('__all__');
 
   const lista = useMemo(
     () => cameras
@@ -57,7 +59,14 @@ export default function PerimetroPage() {
         || a.camera.name.localeCompare(b.camera.name, 'pt-BR')),
     [cameras, zonasPorCamera],
   );
-  const camerasSelecionaveis = useMemo(() => lista.map((item) => item.camera), [lista]);
+  const groupFilters = useMemo(
+    () => ['__all__', ...Array.from(new Set(lista.map((item) => item.camera.floor).filter((group) => group && group !== '-')))],
+    [lista],
+  );
+  const listaFiltrada = useMemo(
+    () => groupFilter === '__all__' ? lista : lista.filter((item) => item.camera.floor === groupFilter),
+    [groupFilter, lista],
+  );
 
   const [selectedCamId, setSelectedCamId] = useState('');
 
@@ -68,18 +77,18 @@ export default function PerimetroPage() {
   }, [location]);
 
   useEffect(() => {
-    if (!lista.length) { setSelectedCamId(''); return; }
-    if (requestedCameraId && lista.some((i) => i.camera.id === requestedCameraId)) {
+    if (!listaFiltrada.length) { setSelectedCamId(''); return; }
+    if (requestedCameraId && listaFiltrada.some((i) => i.camera.id === requestedCameraId)) {
       setSelectedCamId((cur) => (cur === requestedCameraId ? cur : requestedCameraId));
       return;
     }
-    if (!selectedCamId || !lista.some((i) => i.camera.id === selectedCamId)) {
-      setSelectedCamId(lista[0].camera.id);
+    if (!selectedCamId || !listaFiltrada.some((i) => i.camera.id === selectedCamId)) {
+      setSelectedCamId(listaFiltrada[0].camera.id);
     }
-  }, [lista, requestedCameraId, selectedCamId]);
+  }, [listaFiltrada, requestedCameraId, selectedCamId]);
 
-  const selecionada = lista.find((i) => i.camera.id === selectedCamId) ?? null;
-  const totalComPerimetro = lista.filter((i) => temPerimetro(i.resumo)).length;
+  const selecionada = listaFiltrada.find((i) => i.camera.id === selectedCamId) ?? null;
+  const totalComPerimetro = listaFiltrada.filter((i) => temPerimetro(i.resumo)).length;
 
   // ── Sem nenhuma câmera ativa ────────────────────────────────────────────
   if (!lista.length) {
@@ -121,12 +130,12 @@ export default function PerimetroPage() {
         <div>
           <p className="page-sub">
             Desenhe a linha de travessia e as zonas sobre a imagem da câmera ·{' '}
-            {totalComPerimetro} de {lista.length} configurada(s)
+            {totalComPerimetro} de {listaFiltrada.length} configurada(s)
           </p>
         </div>
         <div className="w-[min(100%,320px)]">
           <SeletorDeCamera
-            cameras={camerasSelecionaveis}
+            cameras={listaFiltrada.map((item) => item.camera)}
             value={selectedCamId}
             onChange={setSelectedCamId}
             placeholder="Selecione uma câmera"
@@ -159,12 +168,18 @@ export default function PerimetroPage() {
         </div>
 
         {/* Frota: quem já tem perímetro, quem não tem */}
-        <aside className="min-h-0">
-          <div className="mb-2 text-[10px] font-mono uppercase tracking-[0.18em] text-[hsl(var(--muted-foreground))]">
-            Câmeras
+        <aside className="flex min-h-0 flex-col overflow-hidden">
+          <div className="mb-2 shrink-0 space-y-2">
+            <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-[hsl(var(--muted-foreground))]">Câmeras</div>
+            <Select value={groupFilter} onValueChange={setGroupFilter}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Todos os grupos" /></SelectTrigger>
+              <SelectContent>
+                {groupFilters.map((group) => <SelectItem key={group} value={group} className="text-xs">{group === '__all__' ? 'Todos os grupos' : group}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
-          <div className="flex flex-col gap-1.5">
-            {lista.map(({ camera, resumo }) => {
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+            {listaFiltrada.map(({ camera, resumo }) => {
               const ativa = camera.id === selectedCamId;
               return (
                 <button
@@ -197,7 +212,7 @@ export default function PerimetroPage() {
           </div>
 
           {/* Legenda do que cada desenho significa */}
-          <div className="mt-4 space-y-1.5 rounded-lg border border-border bg-background/40 p-3 text-[11px] text-muted-foreground">
+          <div className="mt-3 shrink-0 space-y-1.5 rounded-lg border border-border bg-background/40 p-3 text-[11px] text-muted-foreground">
             <div className="flex items-center gap-2"><Spline className="h-3.5 w-3.5" /> Linha — limite que não se atravessa</div>
             <div className="flex items-center gap-2"><SquareDashed className="h-3.5 w-3.5" /> Monitorar — onde a detecção vale</div>
             <div className="flex items-center gap-2"><EyeOff className="h-3.5 w-3.5" /> Ignorar — o que a detecção descarta</div>
