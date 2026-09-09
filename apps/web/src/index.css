@@ -363,23 +363,23 @@
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--muted-foreground) / 0.52) transparent;
+    scrollbar-color: hsl(var(--primary) / 0.62) transparent;
   }
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track {
     background: transparent;
     border-radius: 999px;
   }
   ::-webkit-scrollbar-thumb {
-    min-width: 24px;
-    min-height: 24px;
-    background: hsl(var(--muted-foreground) / 0.48);
-    border: 1px solid transparent;
+    min-width: 18px;
+    min-height: 18px;
+    background: hsl(var(--primary) / 0.58);
+    border: 0;
     border-radius: 999px;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--foreground) / 0.62);
+    background: hsl(var(--primary));
     border-color: transparent;
     background-clip: padding-box;
   }
