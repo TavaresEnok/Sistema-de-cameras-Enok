@@ -281,6 +281,12 @@ function BrandingSync() {
 function AppRoutes() {
   const [location] = useLocation();
   const isLiveRoute = location === '/live' || location.startsWith('/live?');
+  const hiddenNavPaths = useBrandingStore((state) => state.hiddenNavPaths);
+  const brandingLoaded = useBrandingStore((state) => state.loaded);
+  // Desempenho é um painel do equipamento local do cliente. Na infraestrutura
+  // hospedada, esta telemetria pertence à operação interna — nem o menu nem a
+  // URL direta devem expor a página para o tenant.
+  const performanceAvailable = !hiddenNavPaths.includes('/performance');
 
   return (
     <>
@@ -344,7 +350,9 @@ function AppRoutes() {
         {() => <ProtectedRoute component={EventsPage} minRole="operator" />}
       </Route>
       <Route path="/performance">
-        {() => <ProtectedRoute component={PerformancePage} minRole="operator" />}
+        {() => !brandingLoaded ? <AppFallback /> : performanceAvailable
+          ? <ProtectedRoute component={PerformancePage} minRole="operator" />
+          : <Redirect to="/live" />}
       </Route>
       <Route path="/ia">
         {() => <ProtectedRoute component={AiPage} minRole="operator" />}

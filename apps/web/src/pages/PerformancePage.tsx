@@ -1,9 +1,8 @@
 import axios from 'axios';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Cpu, MemoryStick, HardDrive, Activity, Gauge, RefreshCw,
-  Server, Video, Brain, Wifi, ArrowUp, ArrowDown, Minus, CheckCircle2, AlertTriangle,
-  HeartPulse,
+  Cpu, MemoryStick, HardDrive, Activity, RefreshCw,
+  Server, Video, Brain, ArrowUp, ArrowDown, Minus, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import {
   AlertDialog,
@@ -16,16 +15,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { getApiBaseUrl } from '@/lib/api-base';
-import {
-  buildCameraHealthRows,
-  cameraHealthStateLabel,
-  parseCameraHealthPayload,
-  parseStaleThreshold,
-  recordingDesiredLabel,
-  summarizeCameraHealth,
-  type CameraHealthEntry,
-  type CameraHealthState,
-} from '@/lib/camera-health';
 import { useAuthStore } from '@/store/authStore';
 import { useVmsDataStore } from '@/store/vmsDataStore';
 import { toast } from '../hooks/use-toast';
@@ -39,6 +28,34 @@ type OptimizationReport = {
   optimizationPlan?: { safeActionCount?: number; manualActionCount?: number; canApplySafely?: boolean };
   recommendations?: Array<{ code: string; severity: 'info' | 'warning' | 'critical'; message: string; action: string; cameras: string[] }>;
 };
+
+function recommendationCopy(recommendation: NonNullable<OptimizationReport['recommendations']>[number]) {
+  const common = { cameras: recommendation.cameras, severity: recommendation.severity };
+  switch (recommendation.code) {
+    case 'audio_opus_transcode':
+      return { ...common, title: 'Áudio ao vivo pode aumentar o processamento', detail: 'Esta câmera precisa de processamento adicional quando alguém ativa o áudio. Mantenha o áudio ligado apenas onde a escuta ao vivo for necessária.' };
+    case 'hevc_live_transcode':
+      return { ...common, title: 'Esta câmera pode exigir processamento extra de vídeo', detail: 'Alguns navegadores não exibem este formato diretamente. O sistema mantém uma alternativa para preservar a visualização.' };
+    case 'analytics_reuses_live':
+      return { ...common, title: 'A análise inteligente está dividindo o mesmo vídeo da visualização', detail: 'Separar um perfil mais leve para análise reduz o consumo do servidor sem alterar a imagem principal do operador.' };
+    case 'analytics_hevc_decode':
+      return { ...common, title: 'A análise inteligente pode consumir mais processamento nesta câmera', detail: 'O formato recebido exige mais trabalho do servidor. Um perfil secundário mais leve ajuda a manter a operação fluida.' };
+    case 'live_protocol_not_webrtc':
+      return { ...common, title: 'A visualização pode abrir mais devagar', detail: 'A câmera não está priorizando o modo de vídeo mais rápido. O sistema ainda usa alternativas quando necessário.' };
+    case 'recording_not_main_stream':
+      return { ...common, title: 'A gravação pode estar usando uma imagem menor que a disponível', detail: 'Revisar o perfil de gravação ajuda a preservar a melhor qualidade para consultas futuras.' };
+    case 'recording_not_hevc':
+      return { ...common, title: 'A gravação pode ocupar mais espaço que o necessário', detail: 'O formato atual pode gerar arquivos maiores. Esta é apenas uma sugestão de economia de disco.' };
+    case 'live_metadata_missing':
+      return { ...common, title: 'Ainda faltam dados técnicos desta câmera', detail: 'Abra a câmera ou execute o teste de conexão para o sistema confirmar o perfil de vídeo.' };
+    case 'multi_reader_transcode_pressure':
+      return { ...common, title: 'Muitas pessoas podem estar assistindo esta câmera ao mesmo tempo', detail: 'A visualização continua disponível, mas o servidor pode consumir mais processamento enquanto houver vários acessos.' };
+    case 'repeated_live_failures':
+      return { ...common, title: 'Esta câmera apresentou instabilidade recente', detail: 'Verifique a conexão da câmera e a rede do local. O sistema continua tentando recuperar o vídeo automaticamente.' };
+    default:
+      return { ...common, title: 'Ajuste recomendado', detail: recommendation.message.replace(/Opus/gi, 'processamento de áudio').replace(/WebRTC/gi, 'modo de vídeo rápido') };
+  }
+}
 
 function Sparkline({ data, color }: { data: number[]; color: string }) {
   if (data.length < 2) return <div className="h-10" />;
@@ -77,13 +94,6 @@ function severityTone(s: 'info' | 'warning' | 'critical') {
   return 'border-border bg-[hsl(var(--muted)_/_0.4)] text-muted-foreground';
 }
 
-/** Cor da pílula de estado da tabela de saúde por câmera (mesma paleta de severityTone). */
-function healthStateTone(state: CameraHealthState) {
-  if (state === 'critico') return 'border-[hsl(var(--destructive)_/_0.35)] bg-[hsl(var(--destructive)_/_0.08)] text-[hsl(var(--destructive))]';
-  if (state === 'atencao') return 'border-[hsl(var(--status-warning)_/_0.35)] bg-[hsl(var(--status-warning)_/_0.10)] text-[hsl(var(--status-warning))]';
-  return 'border-[hsl(var(--status-online)_/_0.30)] bg-[hsl(var(--status-online)_/_0.08)] text-[hsl(var(--status-online))]';
-}
-
 function fmtUptime(seconds?: number) {
   if (!seconds) return '—';
   const d = Math.floor(seconds / 86400);
@@ -105,11 +115,6 @@ export default function PerformancePage() {
   const [history, setHistory] = useState<Sample[]>([]);
   const [aiHealth, setAiHealth] = useState<any>(null);
   const [report, setReport] = useState<OptimizationReport | null>(null);
-  // Saúde por câmera (GET /observability/cameras). null = indisponível → a seção
-  // simplesmente não aparece e o resto da página continua idêntico ao de hoje.
-  const [cameraHealth, setCameraHealth] = useState<CameraHealthEntry[] | null>(null);
-  // Limiar de estagnação informado pelo servidor (varia com a duração do segmento).
-  const [staleThreshold, setStaleThreshold] = useState<number | undefined>(undefined);
   const [refreshing, setRefreshing] = useState(false);
   const [auto, setAuto] = useState(true);
   const [applying, setApplying] = useState(false);
@@ -132,16 +137,12 @@ export default function PerformancePage() {
       await load();
       if (accessToken) {
         const headers = { Authorization: `Bearer ${accessToken}` };
-        const [healthRes, diagRes, obsRes] = await Promise.all([
+        const [healthRes, diagRes] = await Promise.all([
           axios.get(`${API_URL}/ai/health`, { headers }).catch(() => null),
           axios.get(`${API_URL}/camera-stream/resource-diagnostics`, { headers }).catch(() => null),
-          // 404/500/timeout aqui NÃO pode afetar nada acima: cai em null e a seção some.
-          axios.get(`${API_URL}/observability/cameras`, { headers }).catch(() => null),
         ]);
         if (healthRes) setAiHealth(healthRes.data);
         if (diagRes) setReport(diagRes.data);
-        setCameraHealth(obsRes ? parseCameraHealthPayload(obsRes.data) : null);
-        setStaleThreshold(obsRes ? parseStaleThreshold(obsRes.data) : undefined);
       }
     } finally {
       refreshRef.current = false;
@@ -185,14 +186,11 @@ export default function PerformancePage() {
   const diskHist = history.map((h) => h.disk);
   const prev = history.length > 1 ? history[history.length - 2] : { cpu, ram, disk };
 
-  const load1 = system?.server.loadAverage[0] ?? 0;
-  const load5 = system?.server.loadAverage[1] ?? 0;
-  const load15 = system?.server.loadAverage[2] ?? 0;
   const totalRamGB = system ? (system.server.totalMemoryBytes / 1024 / 1024 / 1024).toFixed(1) : '0';
   const usedRamGB = system ? ((system.server.totalMemoryBytes - system.server.freeMemoryBytes) / 1024 / 1024 / 1024).toFixed(1) : '0';
 
   const METRICS = [
-    { key: 'cpu', label: 'CPU', value: cpu, sub: `${load1.toFixed(2)} carga · ${system?.server.cpuCount ?? '—'} núcleos`, hist: cpuHist, icon: Cpu },
+    { key: 'cpu', label: 'Processamento', value: cpu, sub: `${system?.server.cpuCount ?? '—'} núcleos · uso estimado agora`, hist: cpuHist, icon: Cpu },
     { key: 'ram', label: 'Memória', value: ram, sub: `${usedRamGB} / ${totalRamGB} GB`, hist: ramHist, icon: MemoryStick },
     { key: 'disk', label: 'Disco', value: disk, sub: system ? `${(system.disk.usedBytes / 1024 ** 4).toFixed(1)} / ${(system.disk.totalBytes / 1024 ** 4).toFixed(1)} TB` : '—', hist: diskHist, icon: HardDrive },
   ];
@@ -200,19 +198,16 @@ export default function PerformancePage() {
   const canApplySafely = isAdmin && Boolean(report?.optimizationPlan?.canApplySafely);
   const recommendations = report?.recommendations ?? [];
 
-  const healthRows = cameraHealth ? buildCameraHealthRows(cameraHealth, staleThreshold) : [];
-  const healthSummary = summarizeCameraHealth(healthRows);
-
   return (
-    // Mesma regra do contrato de rolagem: esta página é longa (3 cartões +
-    // 4 indicadores + 2 tabelas por câmera) e seria cortada sem isto.
+    // A tela é voltada à instalação local: mostra capacidade do equipamento,
+    // sem despejar diagnósticos por câmera que o operador já tem em Ao Vivo.
     <div className="h-full overflow-y-auto">
     <div className="p-4 md:p-6 space-y-5">
       {/* ── Header ── */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Carga do servidor, saúde de streams e processadores de IA em tempo real.
+            Uso de processamento, memória e disco desta instalação em tempo real.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -271,12 +266,11 @@ export default function PerformancePage() {
       </div>
 
       {/* ── Secondary KPIs ── */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-3">
         {[
-          { label: 'Streams ativos', value: `${onlineCams}/${cameras.length}`, icon: Video, hint: 'câmeras online' },
-          { label: 'Processadores IA', value: `${runningProc}/${aiCams || 0}`, icon: Brain, hint: 'rodando / habilitados' },
-          { label: 'Load average', value: `${load1.toFixed(1)} ${load5.toFixed(1)} ${load15.toFixed(1)}`, icon: Gauge, hint: '1m · 5m · 15m', mono: true },
-          { label: 'Uptime', value: fmtUptime(system?.server.uptimeSeconds), icon: Server, hint: system?.server.hostname ?? 'servidor' },
+          { label: 'Câmeras disponíveis', value: `${onlineCams}/${cameras.length}`, icon: Video, hint: 'enviando vídeo agora' },
+          { label: 'Análise inteligente', value: `${runningProc}/${aiCams || 0}`, icon: Brain, hint: 'câmeras sendo analisadas' },
+          { label: 'Servidor ligado há', value: fmtUptime(system?.server.uptimeSeconds), icon: Server, hint: system?.server.hostname ?? 'equipamento local' },
         ].map((k) => {
           const Icon = k.icon;
           return (
@@ -292,159 +286,38 @@ export default function PerformancePage() {
         })}
       </div>
 
-      {/* ── Recomendações de otimização (resource advisor) ── */}
+      {/* Sugestões traduzidas para impacto operacional. Código/codec não é
+          uma decisão que o operador precise conhecer para agir corretamente. */}
       {recommendations.length > 0 && (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="flex items-center gap-2 px-5 py-3.5 border-b border-border">
             <AlertTriangle className="h-4 w-4 text-[hsl(var(--primary))]" />
-            <h2 className="text-[13px] font-semibold">Recomendações de otimização</h2>
+            <div>
+              <h2 className="text-[13px] font-semibold">Ajustes sugeridos</h2>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">São recomendações para reduzir consumo do equipamento; a visualização continua funcionando.</p>
+            </div>
           </div>
           <div className="divide-y divide-border/60">
             {recommendations.map((r) => (
               <div key={r.code} className="px-5 py-3 space-y-1">
+                {(() => {
+                  const copy = recommendationCopy(r);
+                  return <>
                 <div className="flex items-center gap-2">
-                  <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${severityTone(r.severity)}`}>
-                    {r.severity === 'critical' ? 'crítico' : r.severity === 'warning' ? 'atenção' : 'info'}
+                  <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${severityTone(copy.severity)}`}>
+                    {copy.severity === 'critical' ? 'importante' : copy.severity === 'warning' ? 'atenção' : 'informação'}
                   </span>
-                  <span className="text-[12.5px] font-medium">{r.message}</span>
+                  <span className="text-[12.5px] font-medium">{copy.title}</span>
                 </div>
-                <p className="text-[11px] text-muted-foreground">{r.action}</p>
-                {r.cameras?.length ? <p className="truncate text-[10px] text-muted-foreground/80">{r.cameras.join(', ')}</p> : null}
+                <p className="text-[11px] leading-relaxed text-muted-foreground">{copy.detail}</p>
+                {copy.cameras?.length ? <p className="truncate text-[10px] text-muted-foreground/80">Câmeras: {copy.cameras.join(', ')}</p> : null}
+                  </>;
+                })()}
               </div>
             ))}
           </div>
         </div>
       )}
-
-      {/* ── Saúde por câmera (GET /observability/cameras) ──
-          Aditivo: sem o endpoint (404/erro/corpo fora do contrato) healthRows
-          fica vazio e a seção inteira some — a página segue como antes. */}
-      {healthRows.length > 0 && (
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="flex flex-col gap-3 px-5 py-3.5 border-b border-border sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2">
-              <HeartPulse className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-[13px] font-semibold">Saúde por câmera</h2>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {([
-                { state: 'critico' as CameraHealthState, count: healthSummary.critico },
-                { state: 'atencao' as CameraHealthState, count: healthSummary.atencao },
-                { state: 'ok' as CameraHealthState, count: healthSummary.ok },
-              ]).map((c) => (
-                <span
-                  key={c.state}
-                  className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${healthStateTone(c.state)}`}
-                >
-                  {cameraHealthStateLabel(c.state)}
-                  <span className="font-mono text-[11px] tabular-nums">{c.count}</span>
-                </span>
-              ))}
-              <span className="rounded-md border border-border bg-[hsl(var(--muted)_/_0.4)] px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                gravando <span className="font-mono text-[11px] tabular-nums">{healthSummary.recordingActive}/{healthSummary.total}</span>
-              </span>
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  {['Câmera', 'Estado', 'Gravando', 'Último segmento', 'Reinícios (1h)', 'Recuperações (1h)'].map((h) => (
-                    <th key={h} className="px-5 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {healthRows.map((row) => (
-                  <tr key={row.cameraId} className="border-b border-border/60 last:border-0 hover:bg-accent/40 transition-colors">
-                    <td className="px-5 py-3">
-                      <div className="text-[12.5px] font-medium">{row.displayName}</div>
-                      <div className="font-mono text-[10px] text-muted-foreground">
-                        {row.status === 'ONLINE' ? 'online' : row.status === 'OFFLINE' ? 'offline' : 'desconhecido'}
-                        {row.enabled ? '' : ' · desativada'}
-                      </div>
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className={`inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${healthStateTone(row.state)}`}>
-                        {cameraHealthStateLabel(row.state)}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className="inline-flex items-center gap-1.5 text-[11px]">
-                        <span className={`h-1.5 w-1.5 rounded-full ${row.recording.active ? 'bg-[hsl(var(--status-online))]' : 'bg-muted-foreground/40'}`} />
-                        {row.recording.active ? 'Sim' : 'Não'}
-                        <span className="text-muted-foreground">· {recordingDesiredLabel(row.recording.desired)}</span>
-                      </span>
-                    </td>
-                    <td className={`px-5 py-3 font-mono text-[11px] ${row.recording.stalled ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>
-                      {row.sinceLabel}
-                    </td>
-                    <td className={`px-5 py-3 font-mono text-[11px] tabular-nums ${row.recording.restartsLastHour > 0 ? 'text-[hsl(var(--status-warning))]' : 'text-muted-foreground'}`}>
-                      {row.recording.restartsLastHour}
-                    </td>
-                    <td className={`px-5 py-3 font-mono text-[11px] tabular-nums ${row.stream.recoveriesLastHour > 0 ? 'text-[hsl(var(--status-warning))]' : 'text-muted-foreground'}`}>
-                      {row.stream.recoveriesLastHour}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ── Stream health table ── */}
-      <div className="rounded-xl border border-border bg-card overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
-          <div className="flex items-center gap-2">
-            <Wifi className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-[13px] font-semibold">Saúde dos streams</h2>
-          </div>
-          <span className="text-[10px] font-mono text-muted-foreground">{cameras.length} câmeras</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-border">
-                {['Câmera', 'Zona', 'Estado', 'Protocolo', 'IA', 'Processador'].map((h) => (
-                  <th key={h} className="px-5 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {cameras.map((cam) => {
-                const proc = processors[cam.id];
-                const procState = !cam.aiEnabled ? '—' : proc?.running ? 'ativo' : 'parado';
-                const procTone = procState === 'ativo' ? 'text-[hsl(var(--status-online))]' : procState === 'parado' ? 'text-[hsl(var(--status-warning))]' : 'text-muted-foreground';
-                return (
-                  <tr key={cam.id} className="border-b border-border/60 last:border-0 hover:bg-accent/40 transition-colors">
-                    <td className="px-5 py-3">
-                      <div className="text-[12.5px] font-medium">{cam.name}</div>
-                      <div className="font-mono text-[10px] text-muted-foreground">{cam.code ?? cam.id}</div>
-                    </td>
-                    <td className="px-5 py-3 text-[11px] text-muted-foreground">{cam.zone}</td>
-                    <td className="px-5 py-3">
-                      <span className="inline-flex items-center gap-1.5 text-[11px]">
-                        <span className={`h-1.5 w-1.5 rounded-full ${cam.isOnline ? 'bg-[hsl(var(--status-online))]' : 'bg-muted-foreground/40'}`} />
-                        {cam.isOnline ? 'Online' : 'Offline'}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 font-mono text-[11px] text-muted-foreground uppercase">
-                      {(cam as any).preferredLiveProtocol ?? 'webrtc'}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className={`text-[11px] ${cam.aiEnabled ? 'text-foreground' : 'text-muted-foreground'}`}>
-                        {cam.aiEnabled ? 'Sim' : 'Não'}
-                      </span>
-                    </td>
-                    <td className={`px-5 py-3 text-[11px] font-medium ${procTone}`}>{procState}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
       {!system && (
         <p className="text-center text-xs text-muted-foreground py-4">
