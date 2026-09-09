@@ -1064,6 +1064,10 @@
             <svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></svg>
             <span class="nav-label">Apps</span>
           </button>
+          <button data-view-button="atualizacoes" title="Atualizações e recuperação">
+            <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0 2 5.3"/><path d="M20 4v7h-7"/><path d="M12 8v4l2.5 1.5"/></svg>
+            <span class="nav-label">Atualizações</span><b id="nav-count-atualizacoes"></b>
+          </button>
 
           <div class="nav-group-label">Administração</div>
           <button data-view-button="contratos" title="Contratos">
@@ -1400,6 +1404,24 @@
             <div id="apps-list" class="cards-grid"></div>
           </section>
 
+          <!-- ── ATUALIZAÇÕES E RECUPERAÇÃO ─────────────────────────────── -->
+          <section id="atualizacoes-view" class="view">
+            <div class="page-head">
+              <div>
+                <h1>Atualizações e recuperação</h1>
+                <p>Versões aprovadas e ações controladas. A Central não abre SSH nem Docker: cada instalação busca sua própria ordem.</p>
+              </div>
+            </div>
+            <section class="panel">
+              <div class="panel-head"><div><div class="panel-title">Release aprovada</div><div id="updates-release-subtitle" class="panel-subtitle">Carregando estado da frota…</div></div><span id="updates-release-status" class="badge neutral">—</span></div>
+              <div id="updates-release-body" class="detail-body"></div>
+            </section>
+            <section class="panel" style="margin-top:14px">
+              <div class="panel-head"><div><div class="panel-title">Instalações</div><div class="panel-subtitle">Atualize ou reinicie somente o componente necessário. Ações críticas exigem confirmação.</div></div></div>
+              <div class="detail-body" id="updates-list"></div>
+            </section>
+          </section>
+
           <!-- ── CONTRATOS ───────────────────────────────────────────────── -->
           <section id="contratos-view" class="view">
             <div class="page-head">
@@ -1676,10 +1698,10 @@
         : '';
       const centralUrl = (path) => `${CENTRAL_BASE_PATH}${path.startsWith('/') ? path : `/${path}`}`;
       const TECHNICAL_DOCUMENTATION_PERMISSION = 'technical_documentation.read';
-      const VIEWS = ['operacao', 'detalhe', 'clientes', 'instalacao', 'apps', 'contratos', 'alertas', 'auditoria', 'usuarios', 'tecnico'];
+      const VIEWS = ['operacao', 'detalhe', 'clientes', 'instalacao', 'apps', 'atualizacoes', 'contratos', 'alertas', 'auditoria', 'usuarios', 'tecnico'];
       const VIEW_LABELS = {
         operacao: 'Operação', detalhe: 'Instalação', clientes: 'Clientes', instalacao: 'Nova instalação',
-        apps: 'Apps', contratos: 'Contratos', alertas: 'Alertas', auditoria: 'Auditoria', usuarios: 'Usuários',
+        apps: 'Apps', atualizacoes: 'Atualizações', contratos: 'Contratos', alertas: 'Alertas', auditoria: 'Auditoria', usuarios: 'Usuários',
         tecnico: 'Portal técnico',
       };
       const REFRESH_SECONDS = 30;
@@ -1715,6 +1737,7 @@
         auditEvents: [],
         provision: null,
         summary: null,
+        releases: null,
         technicalDocumentation: null,
         technicalArticleId: new URL(window.location.href).searchParams.get('doc') || localStorage.getItem('drac-central-technical-article') || '',
         technicalRoutePending: Boolean(new URL(window.location.href).searchParams.get('doc')),
@@ -4984,6 +5007,97 @@
         showToast(`${items.length} cliente(s) exportado(s).`);
       }
 
+      /* ── Atualizações e recuperação ─────────────────────────────────── */
+      const operationLabels = {
+        update: 'Atualizar versão', restart_web: 'Reiniciar interface', restart_api: 'Reiniciar API',
+        restart_mediamtx: 'Reiniciar vídeo', restart_rtmp: 'Reiniciar RTMP', restart_ai: 'Reiniciar IA',
+        restart_stack: 'Reiniciar aplicação', restart_docker: 'Reiniciar Docker',
+      };
+      const operationStatusLabels = {
+        PENDING: 'Aguardando instalação', RUNNING: 'Em execução', SUCCEEDED: 'Concluída',
+        FAILED: 'Falhou', TIMED_OUT: 'Sem confirmação',
+      };
+      function operationTone(status) {
+        return status === 'SUCCEEDED' ? 'ok' : status === 'FAILED' || status === 'TIMED_OUT' ? 'bad' : status === 'RUNNING' || status === 'PENDING' ? 'warn' : 'neutral';
+      }
+      function agentIsOnline(item) {
+        const at = item.operationsAgentLastSeenAt ? new Date(item.operationsAgentLastSeenAt).getTime() : 0;
+        return at && Date.now() - at <= 90_000;
+      }
+      async function queueOperation(installationId, action) {
+        const item = state.installations.find((entry) => entry.id === installationId);
+        if (!item) return;
+        const label = operationLabels[action] || action;
+        const critical = action === 'restart_docker';
+        const confirmation = window.prompt(`${label} em ${displayName(item)}.\n\n${critical ? 'Isso reinicia o Docker do servidor e interrompe todos os serviços temporariamente.\n\n' : ''}Digite exatamente ${action} para confirmar:`, '');
+        if (confirmation !== action) {
+          showToast('Ação cancelada: a confirmação não confere.', 'warn');
+          return;
+        }
+        try {
+          const response = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(installationId)}/operations`), {
+            method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action, confirmation }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.message || 'Não foi possível registrar a ação.');
+          showToast(`${label} enviada. A instalação deve buscá-la em até 20 segundos.`);
+          await load();
+        } catch (error) {
+          showToast(error?.message || 'Não foi possível registrar a ação.', 'bad');
+        }
+      }
+      function renderUpdates() {
+        const list = document.querySelector('#updates-list');
+        const releaseSubtitle = document.querySelector('#updates-release-subtitle');
+        const releaseStatus = document.querySelector('#updates-release-status');
+        const releaseBody = document.querySelector('#updates-release-body');
+        if (!list || !releaseSubtitle || !releaseStatus || !releaseBody) return;
+        const release = state.releases?.atual || null;
+        const fleet = state.releases?.frota || null;
+        const behind = state.installations.filter((item) => item.versaoSituacao === 'atrasada').length;
+        const pending = state.installations.filter((item) => (item.operations || []).some((op) => op.status === 'PENDING' || op.status === 'RUNNING')).length;
+        const count = document.querySelector('#nav-count-atualizacoes');
+        if (count) count.textContent = behind || pending ? String(behind + pending) : '';
+        if (!release) {
+          releaseSubtitle.textContent = 'Nenhuma versão foi aprovada para a frota ainda.';
+          releaseStatus.className = 'badge warn'; releaseStatus.textContent = 'Aguardando release';
+          releaseBody.innerHTML = '<div class="empty">Promova uma release validada na matriz antes de atualizar instalações.</div>';
+        } else {
+          releaseSubtitle.textContent = `${fleet?.atualizada ?? 0} atualizada(s) · ${fleet?.atrasada ?? 0} com atualização disponível · ${fleet?.desconhecida ?? 0} sem versão confirmada`;
+          releaseStatus.className = `badge ${behind ? 'warn' : 'ok'}`; releaseStatus.textContent = behind ? 'Há atualizações' : 'Frota atualizada';
+          releaseBody.innerHTML = `<div class="kv"><span>Commit aprovado</span><strong class="mono">${escapeHtml(release.commit || '—')}</strong></div>
+            <div class="kv"><span>Promovida em</span><strong>${release.promovidoEm ? escapeHtml(dtf.format(new Date(release.promovidoEm))) : '—'}</strong></div>
+            ${release.notas ? `<div class="subtext" style="margin-top:10px">${escapeHtml(release.notas)}</div>` : ''}`;
+        }
+        if (!state.installations.length) { list.innerHTML = '<div class="empty">Nenhuma instalação cadastrada.</div>'; return; }
+        list.innerHTML = state.installations.slice().sort((a, b) => displayName(a).localeCompare(displayName(b))).map((item) => {
+          const latest = (item.operations || [])[0] || null;
+          const agentOnline = agentIsOnline(item);
+          const opText = latest ? `${operationLabels[latest.action] || latest.action} · ${operationStatusLabels[latest.status] || latest.status}` : 'Nenhuma ação recente';
+          const canUpdate = item.versaoSituacao === 'atrasada' && Boolean(release) && agentOnline;
+          const actionDisabled = agentOnline ? '' : 'disabled title="Agente operacional ainda não confirmou presença"';
+          return `<article class="policy-card" style="margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><h3>${escapeHtml(displayName(item))}</h3><p>${escapeHtml(item.id)} · versão ${escapeHtml((item.version || 'desconhecida').slice(0, 12))}</p></div>
+              <span class="badge ${agentOnline ? 'ok' : 'neutral'}">${agentOnline ? 'Agente conectado' : 'Agente não confirmado'}</span></div>
+            <div class="subtext" style="margin:9px 0">${escapeHtml(opText)}${latest?.error ? ` · ${escapeHtml(latest.error)}` : ''}</div>
+            <div class="license-actions" style="gap:7px;flex-wrap:wrap">
+              <button class="sm primary" data-operation="update" data-installation="${escapeHtml(item.id)}" ${canUpdate ? '' : 'disabled'}>${item.versaoSituacao === 'atualizada' ? 'Na versão aprovada' : 'Atualizar'}</button>
+              <button class="sm" data-operation="restart_web" data-installation="${escapeHtml(item.id)}" ${actionDisabled}>Interface</button>
+              <button class="sm" data-operation="restart_api" data-installation="${escapeHtml(item.id)}" ${actionDisabled}>API</button>
+              <button class="sm" data-operation="restart_mediamtx" data-installation="${escapeHtml(item.id)}" ${actionDisabled}>Vídeo</button>
+              <button class="sm" data-operation="restart_rtmp" data-installation="${escapeHtml(item.id)}" ${actionDisabled}>RTMP</button>
+              <button class="sm" data-operation="restart_ai" data-installation="${escapeHtml(item.id)}" ${actionDisabled}>IA</button>
+              <button class="sm" data-operation="restart_stack" data-installation="${escapeHtml(item.id)}" ${actionDisabled}>Aplicação</button>
+              <button class="sm danger" data-operation="restart_docker" data-installation="${escapeHtml(item.id)}" ${actionDisabled}>Docker</button>
+            </div>
+          </article>`;
+        }).join('');
+        list.querySelectorAll('[data-operation]').forEach((button) => button.addEventListener('click', () => {
+          void queueOperation(button.dataset.installation, button.dataset.operation);
+        }));
+      }
+
       /* ── Render raiz ──────────────────────────────────────────────────── */
       function render() {
         setView(state.view);
@@ -5000,6 +5114,7 @@
         renderAlerts();
         renderAudit();
         renderInstallCommand();
+        renderUpdates();
         renderWall();
         // Depois de todos os blocos: eles emitem o `<span data-idade>` VAZIO
         // (para a assinatura ficar estável) e é aqui que ele ganha texto.
@@ -5065,6 +5180,8 @@
           notifyCommChanges();
           const summaryRes = await fetch(centralUrl('/api/admin/summary'), { credentials: 'include' }).catch(() => null);
           state.summary = summaryRes?.ok ? await summaryRes.json() : null;
+          const releasesRes = await fetch(centralUrl('/api/admin/releases'), { credentials: 'include' }).catch(() => null);
+          state.releases = releasesRes?.ok ? await releasesRes.json() : null;
           if (state.view === 'auditoria') {
             const auditRes = await fetch(centralUrl('/api/admin/audit'), { credentials: 'include' });
             if (auditRes.ok) {

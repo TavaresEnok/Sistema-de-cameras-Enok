@@ -962,6 +962,37 @@ provision_watchdog() {
   return 0
 }
 
+# O agente operacional recebe ordens APENAS pelo canal de saída autenticado da
+# Central. Ele não abre porta, não aceita shell remoto e só conhece ações
+# declaradas no próprio script (atualizar/reiniciar componentes específicos).
+provision_ops_agent() {
+  local script_path="$DRAC_INSTALL_DIR/scripts/drac-ops-agent.sh"
+  local service_source="$DRAC_INSTALL_DIR/infra/systemd/drac-ops-agent.service"
+  local timer_source="$DRAC_INSTALL_DIR/infra/systemd/drac-ops-agent.timer"
+  [ -f "$script_path" ] && [ -f "$service_source" ] && [ -f "$timer_source" ] || {
+    warn "Agente operacional não está presente nesta versão; a Central não poderá enviar atualizações remotas ainda."
+    return 0
+  }
+  command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] || {
+    warn "systemd indisponível; agente operacional não foi agendado."
+    return 0
+  }
+  run_sudo install -d -m 700 /etc/drac /var/log/drac
+  {
+    printf 'DRAC_OPS_CENTRAL_URL=%q\n' "$DRAC_CENTRAL_URL"
+    printf 'DRAC_OPS_INSTALLATION_ID=%q\n' "$DRAC_INSTALLATION_ID"
+    printf 'DRAC_OPS_LICENSE_KEY=%q\n' "$DRAC_LICENSE_KEY"
+    printf 'DRAC_OPS_ROOT_DIR=%q\n' "$DRAC_INSTALL_DIR"
+  } | run_sudo tee /etc/drac/ops-agent.env >/dev/null
+  run_sudo chmod 600 /etc/drac/ops-agent.env
+  run_sudo chmod 750 "$script_path"
+  sed "s|/opt/drac|$DRAC_INSTALL_DIR|g" "$service_source" | run_sudo tee /etc/systemd/system/drac-ops-agent.service >/dev/null
+  run_sudo install -m 644 "$timer_source" /etc/systemd/system/drac-ops-agent.timer
+  run_sudo systemctl daemon-reload
+  run_sudo systemctl enable --now drac-ops-agent.timer
+  log "Agente operacional ativo (consulta a Central a cada ~20 segundos)."
+}
+
 # ── O WATCHDOG PRECISA TER RESPONDIDO UMA VEZ ───────────────────────────────
 #
 # Agendar não é o mesmo que funcionar. Na instalação do D-GUARDIAN o watchdog
@@ -1188,6 +1219,7 @@ main() {
   # monitoramento provou que funciona. Ambos falham alto.
   seed_admin
   provision_watchdog || warn "Watchdog nao pode ser agendado automaticamente; agende scripts/runtime-watchdog.sh manualmente."
+  provision_ops_agent || warn "Agente operacional não pôde ser instalado automaticamente."
   verify_watchdog
   register_central_now
   validate_installation

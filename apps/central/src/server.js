@@ -27,6 +27,7 @@ const {
 } = require('./cloud-storage');
 const alertas = require('./alertas');
 const releases = require('./releases');
+const operations = require('./operations');
 const { testS3Access, measureS3Performance, diagnosticarConexao, localizarServidor } = require('./s3-probe');
 const { resolverEndpoint } = require('./endpoint-scheme');
 const { ReactivationArchiveStore, expiresAfterMonths } = require('./reactivation-archives');
@@ -1081,6 +1082,8 @@ function publicInstallation(item, release = null) {
     policyPending,
     launchProfile: item.launchProfile || item.metrics?.launchProfile || null,
     version: item.version || null,
+    operations: operations.operationList(item).slice().reverse().slice(0, 12).map(operations.publicOperation),
+    operationsAgentLastSeenAt: item.operationsAgentLastSeenAt || null,
     // Onde esta instalação está em relação à versão APROVADA da frota.
     // `desconhecida` (nunca reportou versão) é diferente de `atrasada`: o
     // operador precisa ver que não se sabe, em vez de supor.
@@ -1126,6 +1129,16 @@ function publicInstallation(item, release = null) {
       supports: Array.isArray(item.supportedConfigKeys) ? item.supportedConfigKeys : null,
     },
   };
+}
+
+function authenticateInstallationRequest(req, db) {
+  const installationId = String(req.headers['x-drac-installation-id'] || '').trim();
+  const licenseKey = String(req.headers['x-drac-license-key'] || '').trim();
+  if (!installationId || !licenseKey) return { error: 'missing_installation_or_license', http: 401 };
+  const installation = db.installations?.[installationId];
+  if (!installation) return { error: 'unknown_installation', http: 403 };
+  if (!timingSafeTextEquals(installation.licenseKey || '', licenseKey)) return { error: 'invalid_license_key', http: 403 };
+  return { installationId, installation };
 }
 
 function fleetSummary(installations) {
@@ -1935,6 +1948,90 @@ async function handleAgentStatus(req, res) {
     // GET simples para perguntar "qual é a versão aprovada e eu estou nela?".
     release: releases.releaseParaInstalacao(releaseAtual(db), item),
   });
+}
+
+// ── FILA DE OPERAÇÕES REMOTAS ──────────────────────────────────────────────
+// A instalação busca a ordem; a Central não inicia conexão de volta. Além de
+// funcionar em NAT/CGNAT, isto mantém Docker e SSH fora da superfície pública.
+async function handleClaimOperation(req, res) {
+  const db = await loadDb();
+  const auth = authenticateInstallationRequest(req, db);
+  if (auth.error) return json(req, res, auth.http, { error: auth.error });
+  const leaseToken = crypto.randomBytes(24).toString('hex');
+  auth.installation.operationsAgentLastSeenAt = new Date().toISOString();
+  const operation = operations.claim(auth.installation, { leaseToken });
+  if (operation) {
+    auth.installation.updatedAt = new Date().toISOString();
+    addAuditEvent(db, req, {
+      type: 'operation.claimed', actor: auth.installationId, result: 'accepted', installationId: auth.installationId,
+      action: operation.action, operationId: operation.id,
+    });
+  }
+  await saveDb(db);
+  return json(req, res, 200, {
+    operation: operation ? {
+      id: operation.id, action: operation.action, targetCommit: operation.targetCommit || null,
+      leaseToken, expiresAt: operation.expiresAt,
+    } : null,
+  });
+}
+
+async function handleOperationResult(req, res, operationId) {
+  const db = await loadDb();
+  const auth = authenticateInstallationRequest(req, db);
+  if (auth.error) return json(req, res, auth.http, { error: auth.error });
+  const body = await readBody(req);
+  const outcome = operations.finish(auth.installation, operationId, {
+    leaseToken: body.leaseToken,
+    status: String(body.status || ''),
+    result: body.result,
+    error: body.error,
+  });
+  if (!outcome.ok) return json(req, res, 409, { error: outcome.error });
+  auth.installation.updatedAt = new Date().toISOString();
+  addAuditEvent(db, req, {
+    type: 'operation.finished', actor: auth.installationId,
+    result: outcome.operation.status === operations.SUCCEEDED ? 'accepted' : 'failed',
+    installationId: auth.installationId, action: outcome.operation.action, operationId,
+  });
+  await saveDb(db);
+  return json(req, res, 200, { ok: true, operation: operations.publicOperation(outcome.operation) });
+}
+
+async function handleQueueOperation(req, res, db, actor, installationId) {
+  const installation = db.installations[installationId];
+  if (!installation) return json(req, res, 404, { error: 'installation_not_found' });
+  const body = await readBody(req);
+  const action = operations.normalizeAction(body.action);
+  if (!action) return json(req, res, 400, { error: 'invalid_operation', message: 'Ação operacional inválida.' });
+  const info = operations.actionInfo(action);
+  // Confirmação explícita na API, não só na interface: evita automação ou aba
+  // antiga reiniciar mídia/Docker por engano.
+  if (String(body.confirmation || '') !== action) {
+    return json(req, res, 400, { error: 'operation_confirmation_required', message: 'Confirmação da ação não confere.' });
+  }
+  const release = releaseAtual(db);
+  if (action === 'update' && !release?.commit) {
+    return json(req, res, 409, { error: 'no_approved_release', message: 'Não há uma versão aprovada para atualizar.' });
+  }
+  operations.expireTimedOut(installation);
+  const queued = operations.enqueue(installation, {
+    id: crypto.randomUUID(), action, requestedBy: actor.email,
+    targetCommit: action === 'update' ? release.commit : null,
+  });
+  if (!queued.ok) {
+    return json(req, res, 409, {
+      error: queued.error,
+      message: 'Já existe uma operação aguardando ou em execução nesta instalação. Aguarde o resultado antes de iniciar outra.',
+    });
+  }
+  installation.updatedAt = new Date().toISOString();
+  addAuditEvent(db, req, {
+    type: 'operation.queued', actor: actor.email, result: 'accepted', installationId,
+    action, operationId: queued.operation.id, critical: Boolean(info?.critical),
+  });
+  await saveDb(db);
+  return json(req, res, 202, { operation: operations.publicOperation(queued.operation) });
 }
 
 // ── PROMOVER UMA VERSÃO PARA A FROTA ────────────────────────────────────────
@@ -3606,6 +3703,13 @@ async function route(req, res) {
     if (req.method === 'GET' && url.pathname === '/api/agent/status') {
       return handleAgentStatus(req, res);
     }
+    if (req.method === 'POST' && url.pathname === '/api/agent/operations/claim') {
+      return handleClaimOperation(req, res);
+    }
+    const operationResultMatch = url.pathname.match(/^\/api\/agent\/operations\/([^/]+)\/result$/);
+    if (req.method === 'POST' && operationResultMatch) {
+      return handleOperationResult(req, res, decodeURIComponent(operationResultMatch[1]));
+    }
     const installerMatch = url.pathname.match(/^\/install\/([^/]+)$/);
     if (req.method === 'GET' && installerMatch) {
       return handleQuickInstaller(req, res, decodeURIComponent(installerMatch[1]));
@@ -3640,6 +3744,11 @@ async function route(req, res) {
       }
       if (req.method === 'POST' && url.pathname === '/api/admin/releases') {
         return handlePromoverRelease(req, res, db, actor);
+      }
+
+      const operationMatch = url.pathname.match(/^\/api\/admin\/installations\/([^/]+)\/operations$/);
+      if (req.method === 'POST' && operationMatch) {
+        return handleQueueOperation(req, res, db, actor, decodeURIComponent(operationMatch[1]));
       }
 
       // O documento técnico não faz parte dos assets públicos e exige sessão
