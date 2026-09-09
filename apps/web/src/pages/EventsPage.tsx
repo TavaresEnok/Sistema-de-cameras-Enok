@@ -29,6 +29,8 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   HEALTH_RECORDING_RECONNECT_REQUESTED: 'Reconexão de Gravação Solicitada',
   HEALTH_RECORDING_RECONNECT_SUCCESS: 'Reconexão de Gravação Concluída',
   HEALTH_RECORDING_RECONNECT_FAILED: 'Falha na Reconexão de Gravação',
+  HEALTH_MOTION_DETECTOR_STALE: 'Detecção de Movimento sem Sinal',
+  HEALTH_MOTION_DETECTOR_RECOVERED: 'Detecção de Movimento Normalizada',
 };
 
 const SEV_STYLES: Record<string, string> = {

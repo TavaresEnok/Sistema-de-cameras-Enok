@@ -14,7 +14,6 @@ import {
   ChevronLeft,
   ChevronDown,
   Crosshair,
-  ExternalLink,
   HardDrive,
   KeyRound,
   LoaderCircle,
@@ -31,7 +30,6 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { DetectionZonesEditor, type DetectionZone } from '../components/DetectionZonesEditor';
 import { useClassesLiberadas } from '../hooks/use-classes-liberadas';
 import { rotuloDoGatilhoDeObjeto, podeUsarGatilhoDeObjeto } from '../lib/gatilho-de-objeto';
 import { cn } from '@/lib/utils';
@@ -271,6 +269,22 @@ function SettingsCard({
       <div className="flex-1 px-5 py-4">{children}</div>
     </section>
   );
+}
+
+function cameraEventLabel(type: string) {
+  if (type === 'HEALTH_MOTION_DETECTOR_STALE') return 'Detecção de movimento sem sinal';
+  if (type === 'HEALTH_MOTION_DETECTOR_RECOVERED') return 'Detecção de movimento normalizada';
+  return type.replace(/_/g, ' ');
+}
+
+function cameraEventDescription(type: string, description: string) {
+  if (type === 'HEALTH_MOTION_DETECTOR_STALE') {
+    return 'A análise de movimento está sem sinal recente. A gravação de segurança foi mantida ativa.';
+  }
+  if (type === 'HEALTH_MOTION_DETECTOR_RECOVERED') {
+    return 'A análise de movimento voltou a receber imagens normalmente.';
+  }
+  return description;
 }
 
 function SettingsField({ label, hint, children, wide = false }: { label: string; hint?: string; children: ReactNode; wide?: boolean }) {
@@ -612,11 +626,11 @@ export default function CameraDetailPage() {
 
   const initialTabs = useMemo(() => {
     if (typeof window === 'undefined') {
-      return { main: 'playback' as const };
+      return { main: 'events' as const };
     }
     const tab = new URLSearchParams(window.location.search).get('tab');
-    if (tab === 'events' || tab === 'settings' || tab === 'zones') return { main: tab };
-    return { main: 'playback' as const };
+    if (tab === 'events' || tab === 'settings') return { main: tab };
+    return { main: 'events' as const };
   }, []);
 
   useEffect(() => {
@@ -1667,9 +1681,7 @@ export default function CameraDetailPage() {
         <Tabs defaultValue={initialTabs.main} className="w-full">
           <TabsList className="h-8 border border-border bg-card">
             {[
-              ['playback', 'Reprodução'],
               ['events', 'Eventos'],
-              ['zones', 'Onde olhar'],
               ['settings', 'Configurações'],
             ].map(([tab, label]) => (
               <TabsTrigger key={tab} value={tab} className="h-6 px-3 text-xs capitalize">
@@ -1677,44 +1689,6 @@ export default function CameraDetailPage() {
               </TabsTrigger>
             ))}
           </TabsList>
-
-          <TabsContent value="playback" className="mt-4">
-            <div className="rounded-lg border border-border bg-card/60 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Reprodução</p>
-                  <p className="mt-1 text-sm font-semibold">Revisão forense desta câmera</p>
-                </div>
-                <Link
-                  href={`/playback?cameraId=${encodeURIComponent(cam.id)}`}
-                  className="inline-flex h-9 items-center gap-2 rounded-xl border border-border px-3 text-xs hover:bg-[hsl(var(--accent))]"
-                >
-                  Abrir reprodução
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </Link>
-              </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                <div className="rounded-xl border border-border bg-background/55 p-4">
-                  <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Modo de gravação</div>
-                  <div className={cn('mt-2 inline-flex rounded-md border px-2 py-1 text-xs font-semibold', recordingModeCopy.className)}>
-                    {recordingModeCopy.label}
-                  </div>
-                  <div className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{recordingModeCopy.detail}</div>
-                </div>
-                <div className="rounded-xl border border-border bg-background/55 p-4">
-                  <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Retenção</div>
-                  <div className="mt-2 text-sm font-semibold">{cam.retentionDays} dias</div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">
-                    {cam.retentionFollowsGroup === false ? 'Prazo próprio desta câmera' : 'Herdado do grupo'}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border bg-background/55 p-4">
-                  <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Armazenamento</div>
-                  <div className="mt-2 text-sm font-semibold">{cam.storage}</div>
-                </div>
-              </div>
-            </div>
-          </TabsContent>
 
           <TabsContent value="events" className="mt-4">
             <div className="space-y-2">
@@ -1725,41 +1699,11 @@ export default function CameraDetailPage() {
                   <div key={event.id} className="flex items-center gap-3 rounded border border-border bg-card/40 px-4 py-2 text-xs">
                     <span className="font-mono text-muted-foreground">{format(new Date(event.timestamp), 'HH:mm:ss')}</span>
                     <Badge variant="outline" className="border-border bg-muted text-[10px] text-muted-foreground">
-                      {event.type}
+                      {cameraEventLabel(event.type)}
                     </Badge>
-                    <span className="font-mono text-muted-foreground">{event.description}</span>
+                    <span className="text-muted-foreground">{cameraEventDescription(event.type, event.description)}</span>
                   </div>
                 ))}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="zones" className="mt-4">
-            <div className="rounded-lg border border-border bg-card/60 p-5">
-              <div className="mb-3">
-                <h3 className="text-sm font-semibold">Onde olhar</h3>
-                <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
-                  Desenhe sobre a imagem: a <strong className="font-medium">linha</strong> que não se
-                  atravessa, as <strong className="font-medium">áreas monitoradas</strong> e as
-                  <strong className="font-medium"> áreas ignoradas</strong> (rua, árvores, céu).
-                  Reduz alarme falso sem perder o que importa.
-                </p>
-                {/* Mesmo desenho, mesmo campo, duas portas — a de dentro da
-                    câmera e a da aba Câmeras da Inteligência. Dizer isso evita
-                    o operador achar que precisa desenhar duas vezes (era a
-                    queixa: /perimetro e esta aba pareciam telas diferentes). */}
-                <p className="mt-1 text-[11px] text-[hsl(var(--muted-foreground))]">
-                  É o mesmo desenho que aparece em Inteligência › Câmeras — desenhar aqui ou lá dá no mesmo.
-                </p>
-              </div>
-              {cam?.id ? (
-                <DetectionZonesEditor
-                  cameraId={cam.id}
-                  cameraName={cam.name}
-                  initialZones={(cameraMeta as { detectionZones?: DetectionZone[] } | null)?.detectionZones ?? null}
-                />
-              ) : (
-                <p className="text-xs text-[hsl(var(--muted-foreground))]">Carregando câmera…</p>
-              )}
             </div>
           </TabsContent>
 
