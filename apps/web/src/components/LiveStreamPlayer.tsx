@@ -117,12 +117,13 @@ function storeWebrtcHevcProof() {
 function getStoredLiveQuality(cameraId: string): LiveQualityMode {
   try {
     const stored = window.localStorage.getItem(`${LIVE_QUALITY_STORAGE_PREFIX}:${cameraId}`);
-    if (stored === 'max') return 'max';
-    // Preferências gravadas por versões antigas, ou qualquer valor inválido,
-    // migram para o único perfil H.264 restante.
-    return 'instant';
+    // A câmera aberta sozinha deve mostrar a fonte original. "Instantâneo" é
+    // uma escolha explícita para link/tela com restrição, não o padrão que
+    // reduz a imagem logo depois de um duplo-clique na grade.
+    if (stored === 'instant' || stored === 'max') return stored;
+    return 'max';
   } catch {
-    return 'instant';
+    return 'max';
   }
 }
 

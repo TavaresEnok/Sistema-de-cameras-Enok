@@ -145,6 +145,7 @@ function ProtectedRoute({
   active = true,
   layoutContentKey,
   pageActive,
+  bare = false,
 }: {
   component: React.ComponentType;
   minRole?: UiRole;
@@ -152,6 +153,8 @@ function ProtectedRoute({
   layoutContentKey?: string;
   /** Encaminhado somente às páginas que precisam pausar listeners invisíveis. */
   pageActive?: boolean;
+  /** Janela operacional independente: não leva navegação/administração junto. */
+  bare?: boolean;
 }) {
   const { isAuthenticated, isBootstrapped, isLoading, user } = useAuthStore();
   const [, setLocation] = useLocation();
@@ -170,15 +173,20 @@ function ProtectedRoute({
 
   const PageWithActivity = Page as React.ComponentType<{ pageActive?: boolean }>;
 
-  return (
-    <AppLayout active={active} contentKey={layoutContentKey}>
-      <PageErrorBoundary resetKey={window.location.pathname}>
-        <Suspense fallback={<ContentFallback />}>
-          {pageActive === undefined ? <Page /> : <PageWithActivity pageActive={pageActive} />}
-        </Suspense>
-      </PageErrorBoundary>
-    </AppLayout>
+  const page = (
+    <PageErrorBoundary resetKey={window.location.pathname}>
+      <Suspense fallback={<ContentFallback />}>
+        {pageActive === undefined ? <Page /> : <PageWithActivity pageActive={pageActive} />}
+      </Suspense>
+    </PageErrorBoundary>
   );
+
+  // As telas auxiliares existem para outro monitor. Mantê-las dentro do
+  // AppLayout carregava sidebar, cabeçalho, atalhos e itens administrativos
+  // que não têm utilidade numa parede de vídeo e roubavam área da grade.
+  if (bare) return <div className="h-[100dvh] w-full overflow-hidden bg-background">{page}</div>;
+
+  return <AppLayout active={active} contentKey={layoutContentKey}>{page}</AppLayout>;
 }
 
 /**
@@ -218,6 +226,8 @@ function LiveRouteWithGrace({ active }: { active: boolean }) {
   }, []);
 
   if (!retained) return null;
+  const auxiliaryDisplay = new URLSearchParams(window.location.search).get('display');
+  const isAuxiliary = auxiliaryDisplay === 'aux-1' || auxiliaryDisplay === 'aux-2' || auxiliaryDisplay === 'aux-3';
   return (
     <div hidden={!active} aria-hidden={!active}>
       <ProtectedRoute
@@ -225,6 +235,7 @@ function LiveRouteWithGrace({ active }: { active: boolean }) {
         active={active}
         layoutContentKey="retained-live"
         pageActive={active}
+        bare={isAuxiliary}
       />
     </div>
   );
