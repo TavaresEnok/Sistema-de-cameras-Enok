@@ -93,7 +93,7 @@ export class RecordingsController {
     await this.commercialPolicy.assertFeature('localRecording', user);
     const defaultSegment = envNumber('RECORDING_SEGMENT_SECONDS', 300, { min: 5, max: 3600, integer: true });
     const segmentSeconds = dto.segmentSeconds ?? defaultSegment;
-    const result = await this.recordingManager.start(cameraId, segmentSeconds, { recordingMode: 'manual' });
+    const result = await this.recordingManager.startManualRecording(cameraId, segmentSeconds);
     await this.auditService.log(user.id, 'recording.start', 'Camera', cameraId, { status: result.status }, req);
     return result;
   }
@@ -102,7 +102,7 @@ export class RecordingsController {
   @Post('cameras/:cameraId/recording/stop')
   async stopRecording(@CurrentUser() user: AuthUser, @Param('cameraId') cameraId: string, @Body() _dto: StopRecordingDto, @Req() req: Request) {
     await this.accessControlService.assertCanRecordCamera(user, cameraId);
-    const result = await this.recordingManager.stop(cameraId, { recordingMode: 'manual' });
+    const result = await this.recordingManager.stopManualRecording(cameraId);
     await this.auditService.log(user.id, 'recording.stop', 'Camera', cameraId, { status: result.status }, req);
     return result;
   }

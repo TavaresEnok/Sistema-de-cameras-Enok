@@ -3,7 +3,6 @@ import axios from 'axios';
 import { useLocation } from 'wouter';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Circle,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -163,7 +162,6 @@ export default function LiveViewPage() {
   const [search, setSearch] = useState('');
   const [zoneFilter, setZoneFilter] = useState('__all__');
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]>('all');
-  const [recordingActionLoading, setRecordingActionLoading] = useState<'start' | 'stop' | null>(null);
   const [recordingOverrides, setRecordingOverrides] = useState<Record<string, boolean>>({});
   const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>(() => loadSavedLayouts());
   const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null);
@@ -298,15 +296,14 @@ export default function LiveViewPage() {
   );
   const availableLayouts = savedLayouts.length ? savedLayouts : generatedLayouts;
 
-  const isCameraRecording = useCallback((camera: Camera | null | undefined) => {
+  // Gravação por movimento/objeto não é a ação manual do operador e não pode
+  // pintar o tile de vermelho. O destaque vermelho fica reservado ao REC manual.
+  const isManualRecording = useCallback((camera: Camera | null | undefined) => {
     if (!camera) return false;
     const override = recordingOverrides[camera.id];
     if (typeof override === 'boolean') return override;
-    return camera.status === 'recording';
+    return camera.recordingMode === 'manual' && camera.status === 'recording';
   }, [recordingOverrides]);
-
-  const isRecording = isCameraRecording(selectedCameraObj);
-
   useEffect(() => {
     if (!cameraIds.length && cameras.length) {
       const onlineFirst = [...cameras].sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
@@ -652,42 +649,6 @@ export default function LiveViewPage() {
     setDeleteTarget(null);
   };
 
-  const startManualRecording = async () => {
-    if (!selectedCameraObj?.id || !accessToken) return;
-    setRecordingActionLoading('start');
-    setRecordingOverrides((current) => ({ ...current, [selectedCameraObj.id]: true }));
-    try {
-      await axios.post(`${API_URL}/cameras/${selectedCameraObj.id}/recording/start`, {}, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      void loadData();
-      toast({ title: 'Gravação iniciada', description: selectedCameraObj.name });
-    } catch (error) {
-      setRecordingOverrides((current) => ({ ...current, [selectedCameraObj.id]: selectedCameraObj.status === 'recording' }));
-      toast({ title: 'Erro ao iniciar gravação', description: error instanceof Error ? error.message : 'Falha ao iniciar gravação manual.', variant: 'destructive' });
-    } finally {
-      setRecordingActionLoading(null);
-    }
-  };
-
-  const stopManualRecording = async () => {
-    if (!selectedCameraObj?.id || !accessToken) return;
-    setRecordingActionLoading('stop');
-    setRecordingOverrides((current) => ({ ...current, [selectedCameraObj.id]: false }));
-    try {
-      await axios.post(`${API_URL}/cameras/${selectedCameraObj.id}/recording/stop`, {}, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      void loadData();
-      toast({ title: 'Gravação parada', description: selectedCameraObj.name });
-    } catch (error) {
-      setRecordingOverrides((current) => ({ ...current, [selectedCameraObj.id]: selectedCameraObj.status === 'recording' }));
-      toast({ title: 'Erro ao parar gravação', description: error instanceof Error ? error.message : 'Falha ao parar gravação manual.', variant: 'destructive' });
-    } finally {
-      setRecordingActionLoading(null);
-    }
-  };
-
   // ── MODO MURAL SEM DERRUBAR NENHUM PLAYER ─────────────────────────────────
   //
   // O mural era um `return` separado com uma árvore JSX própria. Alternar
@@ -844,29 +805,6 @@ export default function LiveViewPage() {
           </Popover>
 
           <div className="live-status-summary ml-auto flex min-w-0 items-center gap-1.5">
-            {selectedCameraObj ? (
-              <>
-                <button
-                  onClick={() => void (isRecording ? stopManualRecording() : startManualRecording())}
-                  disabled={recordingActionLoading !== null}
-                  className={`btn btn-secondary btn-sm ${
-                    isRecording
-                      ? 'border-[hsl(var(--destructive)_/_0.7)] text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)_/_0.1)]'
-                      : 'border-[hsl(var(--status-online)_/_0.7)] text-[hsl(var(--status-online))] bg-[hsl(var(--status-online)_/_0.1)] hover:bg-[hsl(var(--status-online)_/_0.2)]'
-                  }`}
-                  title={isRecording ? 'Parar gravação manual' : 'Iniciar gravação manual'}
-                >
-                  {recordingActionLoading ? (
-                    <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
-                  ) : isRecording ? (
-                    <span className="w-2 h-2 rounded-full bg-[hsl(var(--destructive))] rec-pulse" />
-                  ) : (
-                    <Circle className="w-3 h-3" />
-                  )}
-                  {isRecording ? 'Gravando' : 'Gravar'}
-                </button>
-              </>
-            ) : null}
             <span className="hdr-chip">
               <span className="hdr-chip-dot status-online" />
               {onlineCount}/{cameras.length} online
@@ -937,7 +875,7 @@ export default function LiveViewPage() {
                   <CameraTile
                     camera={{
                       ...cam,
-                      status: isCameraRecording(cam)
+                      status: isManualRecording(cam)
                         ? 'recording'
                         : (cam.status === 'recording' ? 'online' : cam.status),
                     }}

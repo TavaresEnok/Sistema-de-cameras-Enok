@@ -2277,17 +2277,21 @@ export class RecordingsService implements OnModuleInit, OnModuleDestroy {
       }),
       this.prisma.camera.findMany({
         where: cameraWhere ? { id: cameraWhere } : {},
-        select: { id: true, name: true },
+        select: { id: true, name: true, group: { select: { name: true } } },
       }),
     ]);
 
-    const cameraNameById = new Map(cameras.map((camera) => [camera.id, camera.name]));
+    const cameraMetaById = new Map(cameras.map((camera) => [camera.id, {
+      name: camera.name,
+      groupName: camera.group?.name ?? 'Sem grupo',
+    }]));
     const dayKey = (date: Date) => date.toISOString().slice(0, 10);
     const bucket = new Map<
       string,
       {
         cameraId: string;
         cameraName: string;
+        groupName: string;
         day: string;
         recordingsBytes: bigint;
         clipsBytes: bigint;
@@ -2302,7 +2306,8 @@ export class RecordingsService implements OnModuleInit, OnModuleDestroy {
       if (current) return current;
       const created = {
         cameraId,
-        cameraName: cameraNameById.get(cameraId) ?? cameraId,
+        cameraName: cameraMetaById.get(cameraId)?.name ?? cameraId,
+        groupName: cameraMetaById.get(cameraId)?.groupName ?? 'Sem grupo',
         day,
         recordingsBytes: BigInt(0),
         clipsBytes: BigInt(0),
@@ -2329,6 +2334,7 @@ export class RecordingsService implements OnModuleInit, OnModuleDestroy {
       .map((row) => ({
         cameraId: row.cameraId,
         cameraName: row.cameraName,
+        groupName: row.groupName,
         day: row.day,
         recordingsCount: row.recordingsCount,
         clipsCount: row.clipsCount,

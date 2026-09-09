@@ -170,6 +170,10 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
   private readonly minFreePercent: number;
   private redisPublisher: Redis | null = null;
   private readonly motionStopTimers = new Map<string, NodeJS.Timeout>();
+  // Gravação manual é uma ação pontual do operador, nunca uma alteração
+  // permanente da política da câmera. Este timer garante que um clique esquecido
+  // não transforme uma câmera em gravação contínua indefinida.
+  private readonly manualStopTimers = new Map<string, NodeJS.Timeout>();
   private lastMotionRecordingFailureEventAt = new Map<string, number>();
 
   /**
@@ -795,6 +799,42 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       clearTimeout(timer);
       this.motionStopTimers.delete(cameraId);
     }
+  }
+
+  private clearManualStopTimer(cameraId: string) {
+    const timer = this.manualStopTimers.get(cameraId);
+    if (timer) {
+      clearTimeout(timer);
+      this.manualStopTimers.delete(cameraId);
+    }
+  }
+
+  /**
+   * Inicia uma gravação pedida no Ao vivo e agenda a parada obrigatória.
+   * `segmentSeconds` continua controlando o tamanho dos arquivos; não é e nunca
+   * foi o limite da sessão. A política de dez minutos mora aqui, junto do
+   * processo que realmente grava, e portanto não depende de o navegador ficar
+   * aberto.
+   */
+  async startManualRecording(cameraId: string, segmentSeconds: number, maxDurationSeconds = 600) {
+    const duration = Math.min(600, Math.max(10, Math.round(maxDurationSeconds) || 600));
+    this.clearMotionStopTimer(cameraId);
+    this.clearManualStopTimer(cameraId);
+    const result = await this.start(cameraId, segmentSeconds, { recordingMode: 'manual' });
+    const timer = setTimeout(() => {
+      void this.stopManualRecording(cameraId).catch((error) => {
+        this.logger.error(`Falha ao encerrar gravação manual camera=${cameraId}: ${sanitizeSensitiveText(error)}`);
+      });
+    }, duration * 1000);
+    timer.unref();
+    this.manualStopTimers.set(cameraId, timer);
+    return { ...result, manualStopAfterSeconds: duration };
+  }
+
+  /** Parada explícita ou automática da gravação manual; mantém o modo armado. */
+  async stopManualRecording(cameraId: string) {
+    this.clearManualStopTimer(cameraId);
+    return this.stop(cameraId, { recordingMode: 'manual' });
   }
 
   private scheduleMotionStop(cameraId: string, postRollSeconds: number) {
@@ -2768,6 +2808,10 @@ export class RecordingProcessManagerService implements OnModuleInit, OnApplicati
       clearTimeout(timer);
     }
     this.motionStopTimers.clear();
+    for (const timer of this.manualStopTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.manualStopTimers.clear();
     if (this.diskGuardTimer) {
       clearInterval(this.diskGuardTimer);
       this.diskGuardTimer = null;

@@ -179,15 +179,16 @@ export function CameraTile({
             <button
               type="button"
               aria-label={`${isManualRecordingActive ? 'Parar' : 'Iniciar'} gravação manual de ${camera.name}`}
-              className={`w-6 h-6 flex items-center justify-center rounded border transition-colors ${
+              className={`flex h-6 items-center justify-center gap-1 rounded border px-1.5 text-[9px] font-medium transition-colors ${
                 isManualRecordingActive
                   ? 'border-[hsl(var(--destructive)_/_0.6)] bg-[hsl(var(--destructive)_/_0.1)] text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)_/_0.2)]'
                   : 'border-[hsl(var(--status-online)_/_0.6)] bg-[hsl(var(--status-online)_/_0.1)] text-[hsl(var(--status-online))] hover:bg-[hsl(var(--status-online)_/_0.2)]'
               }`}
               onClick={() => onAction?.(isManualRecordingActive ? 'record-stop' : 'record-start', camera)}
-              title={isManualRecordingActive ? 'Parar gravação manual' : 'Iniciar gravação manual'}
+              title={isManualRecordingActive ? 'Parar gravação manual' : 'Iniciar gravação manual (máximo de 10 minutos)'}
             >
               <Circle className={`w-3 h-3 ${isManualRecordingActive ? 'fill-current' : ''}`} />
+              <span>{isManualRecordingActive ? 'Manual' : 'Gravar'}</span>
             </button>
             <button
               type="button"
