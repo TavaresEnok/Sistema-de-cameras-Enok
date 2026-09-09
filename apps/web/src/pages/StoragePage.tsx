@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import axios from 'axios';
-import { HardDrive, Thermometer, RefreshCw, Cpu, MemoryStick, Activity, Trash2, Server, ShieldAlert, ChevronDown } from 'lucide-react';
+import { HardDrive, Thermometer, RefreshCw, Trash2, ChevronDown } from 'lucide-react';
 import { useVmsDataStore } from '../store/vmsDataStore';
 import { useAuthStore } from '../store/authStore';
 import { getApiBaseUrl } from '../lib/api-base';
@@ -51,6 +51,25 @@ function StorageSection({ title, open, onToggle, children }: { title: string; op
   );
 }
 
+const USAGE_PAGE_SIZE = 20;
+
+function UsagePagination({ page, total, onChange }: { page: number; total: number; onChange: (page: number) => void }) {
+  const pages = Math.max(1, Math.ceil(total / USAGE_PAGE_SIZE));
+  if (pages <= 1) return null;
+  const firstPage = Math.min(Math.max(1, page - 2), Math.max(1, pages - 5));
+  const visible = Array.from({ length: Math.min(pages, 6) }, (_, index) => firstPage + index);
+  return (
+    <nav className="flex flex-wrap items-center justify-end gap-1.5 px-5 py-3" aria-label="Paginação do consumo de armazenamento">
+      <button type="button" onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1} className="h-7 rounded-md border border-border px-2 text-[11px] disabled:opacity-40">Anterior</button>
+      {visible.map((item) => (
+        <button key={item} type="button" onClick={() => onChange(item)} aria-current={page === item ? 'page' : undefined} className={`h-7 min-w-7 rounded-md border px-2 text-[11px] ${page === item ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-accent'}`}>{item}</button>
+      ))}
+      {pages > 6 ? <span className="px-1 text-[11px] text-muted-foreground">de {pages}</span> : null}
+      <button type="button" onClick={() => onChange(Math.min(pages, page + 1))} disabled={page === pages} className="h-7 rounded-md border border-border px-2 text-[11px] disabled:opacity-40">Próxima</button>
+    </nav>
+  );
+}
+
 export default function MonitoramentoPage() {
   const API_URL = getApiBaseUrl();
   const accessToken = useAuthStore((state) => state.accessToken);
@@ -77,11 +96,21 @@ export default function MonitoramentoPage() {
       clipsBytes: string;
       totalBytes: string;
     }>;
+    byCamera?: Array<{
+      cameraId: string; cameraName: string; groupId: string | null; groupName: string;
+      recordingsCount: number; clipsCount: number; recordingsBytes: string; clipsBytes: string; totalBytes: string;
+    }>;
+    byGroup?: Array<{
+      groupId: string | null; groupName: string; camerasCount: number;
+      recordingsCount: number; clipsCount: number; recordingsBytes: string; clipsBytes: string; totalBytes: string;
+    }>;
   } | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  const [usageView, setUsageView] = useState<'camera' | 'group'>('camera');
+  const [cameraUsagePage, setCameraUsagePage] = useState(1);
+  const [groupUsagePage, setGroupUsagePage] = useState(1);
   const [openStorageSections, setOpenStorageSections] = useState({
-    health: true,
     volumes: true,
     cameras: true,
     cloud: true,
@@ -105,6 +134,8 @@ export default function MonitoramentoPage() {
     }).then(({ data }) => {
       if (cancelled) return;
       setAnalytics(data);
+      setCameraUsagePage(1);
+      setGroupUsagePage(1);
     }).catch((error) => {
       if (cancelled) return;
       setAnalytics(null);
@@ -152,13 +183,7 @@ export default function MonitoramentoPage() {
       temp: 0,
     },
   ] : [], [system]);
-  const total = system ? system.disk.totalBytes / 1024 / 1024 / 1024 / 1024 : 0;
-  const used = system ? system.disk.usedBytes / 1024 / 1024 / 1024 / 1024 : 0;
-  const free = system ? system.disk.freeBytes / 1024 / 1024 / 1024 / 1024 : 0;
   const percent = system?.disk.usagePercent ?? 0;
-  const cpuUsage = system ? Math.min(100, Math.round(((system.server.loadAverage[0] ?? 0) / Math.max(system.server.cpuCount, 1)) * 100)) : 0;
-  const ramUsage = system ? Math.min(100, Math.round(((system.server.totalMemoryBytes - system.server.freeMemoryBytes) / Math.max(system.server.totalMemoryBytes, 1)) * 100)) : 0;
-  const streamCount = cameras.filter((camera) => camera.isOnline).length;
   // Retenção real das câmeras acessíveis (antes era um "90 dias" fixo e falso).
   const retentionLabel = useMemo(() => {
     const days = Array.from(new Set(
@@ -168,6 +193,10 @@ export default function MonitoramentoPage() {
     if (days.length === 1) return `${days[0]} dias`;
     return `${Math.min(...days)}–${Math.max(...days)} dias`;
   }, [cameras]);
+  const cameraUsage = analytics?.byCamera ?? [];
+  const groupUsage = analytics?.byGroup ?? [];
+  const pagedCameraUsage = cameraUsage.slice((cameraUsagePage - 1) * USAGE_PAGE_SIZE, cameraUsagePage * USAGE_PAGE_SIZE);
+  const pagedGroupUsage = groupUsage.slice((groupUsagePage - 1) * USAGE_PAGE_SIZE, groupUsagePage * USAGE_PAGE_SIZE);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -188,55 +217,11 @@ export default function MonitoramentoPage() {
           <Ring value={percent} />
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
-          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Total</div><div className="mt-2 text-2xl font-semibold">{total.toFixed(1)} TB</div></div>
-          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Utilizado</div><div className="mt-2 text-2xl font-semibold">{used.toFixed(1)} TB</div></div>
-          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Livre</div><div className="mt-2 text-2xl font-semibold">{free.toFixed(1)} TB</div></div>
+          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Capacidade total</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(system?.disk.totalBytes)}</div></div>
+          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Em uso</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(system?.disk.usedBytes)}</div></div>
+          <div className="bg-card border border-border rounded-xl p-4"><div className="text-[10px] uppercase text-[hsl(var(--muted-foreground))]">Disponível</div><div className="mt-2 text-2xl font-semibold">{formatarBytes(system?.disk.freeBytes)}</div></div>
         </div>
       </div>
-      <StorageSection title="Saúde do servidor" aria-label="Saúde do servidor" open={openStorageSections.health} onToggle={() => toggleStorageSection('health')}>
-        <div className="flex items-start justify-between gap-4 border-b border-border/70 px-5 py-4">
-          <div className="min-w-0">
-            <h3 className="text-[15px] font-semibold text-foreground">Uso atual</h3>
-            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Carga consolidada do servidor neste momento.</p>
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="space-y-3">
-            {[
-              { label: 'CPU', value: cpuUsage, unit: '%', icon: Cpu },
-              { label: 'RAM', value: ramUsage, unit: '%', icon: MemoryStick },
-              { label: 'Disco', value: percent, unit: '%', icon: HardDrive },
-              { label: 'Streams', value: streamCount, unit: '', icon: Activity },
-            ].map((metric) => {
-              const Icon = metric.icon;
-              const pct = metric.unit === '%' ? metric.value : Math.min(100, (metric.value / 200) * 100);
-              const barColor = pct > 82 ? 'hsl(354,52%,52%)' : pct > 62 ? 'hsl(38,58%,54%)' : 'hsl(213,68%,57%)';
-              return (
-                <div key={metric.label} className="grid grid-cols-[18px_56px_1fr_58px] items-center gap-2">
-                  <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground">{metric.label}</span>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-border/70">
-                    <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${Math.min(100, pct)}%`, background: barColor }} />
-                  </div>
-                  <span className="text-right font-mono text-[10px] tabular-nums">{metric.value.toFixed(0)}{metric.unit}</span>
-                </div>
-              );
-            })}
-          </div>
-          <div className="mt-4 rounded-xl border border-border/80 bg-background px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[11px] font-semibold">{system?.server.hostname ?? 'Servidor'}</div>
-                <div className="mt-0.5 text-[10px] text-muted-foreground">{system?.recordingsRoot ?? '/storage'} · {cameras.length} câmeras</div>
-              </div>
-              <div className="text-right">
-                <div className="text-[11px] font-semibold">{cpuUsage}% CPU</div>
-                <div className="mt-0.5 text-[10px] text-muted-foreground">{ramUsage}% RAM</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </StorageSection>
       <StorageSection title="Volumes" aria-label="Volumes" open={openStorageSections.volumes} onToggle={() => toggleStorageSection('volumes')}>
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div>
@@ -276,7 +261,7 @@ export default function MonitoramentoPage() {
         <PreviousStoragesCard apiUrl={API_URL} accessToken={accessToken} />
       </StorageSection>
 
-      <StorageSection title="Uso por câmera" aria-label="Uso por câmera" open={openStorageSections.cameras} onToggle={() => toggleStorageSection('cameras')}>
+      <StorageSection title="Uso de armazenamento" aria-label="Uso de armazenamento" open={openStorageSections.cameras} onToggle={() => toggleStorageSection('cameras')}>
         <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3">
           <div>
             <div className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Gravações e clipes exportados no período selecionado</div>
@@ -287,7 +272,7 @@ export default function MonitoramentoPage() {
           </div>
         </div>
         <div className="px-5 py-3 text-xs text-[hsl(var(--muted-foreground))]">
-          {analyticsLoading && 'Carregando uso por câmera...'}
+          {analyticsLoading && 'Carregando uso de armazenamento...'}
           {!analyticsLoading && analyticsError && analyticsError}
           {!analyticsLoading && analytics && (
             <span>
@@ -295,36 +280,58 @@ export default function MonitoramentoPage() {
             </span>
           )}
         </div>
+        <div className="flex gap-2 border-t border-border px-5 pt-3">
+          <button type="button" onClick={() => setUsageView('camera')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${usageView === 'camera' ? 'bg-primary text-primary-foreground' : 'border border-border text-muted-foreground hover:bg-accent'}`}>Por câmera</button>
+          <button type="button" onClick={() => setUsageView('group')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${usageView === 'group' ? 'bg-primary text-primary-foreground' : 'border border-border text-muted-foreground hover:bg-accent'}`}>Por grupo</button>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-[10px] text-[hsl(var(--muted-foreground))]">
-              <tr className="border-b border-border">
-                <th className="text-left px-5 py-3">Dia</th>
-                <th className="text-left px-5 py-3">Câmera</th>
-                <th className="text-left px-5 py-3">Gravações</th>
-                <th className="text-left px-5 py-3">Clipes</th>
-                <th className="text-left px-5 py-3">Total</th>
-              </tr>
+              {usageView === 'camera' ? (
+                <tr className="border-b border-border">
+                  <th className="text-left px-5 py-3">Câmera</th>
+                  <th className="text-left px-5 py-3">Grupo</th>
+                  <th className="text-left px-5 py-3">Gravações</th>
+                  <th className="text-left px-5 py-3">Clipes</th>
+                  <th className="text-left px-5 py-3">Total</th>
+                </tr>
+              ) : (
+                <tr className="border-b border-border">
+                  <th className="text-left px-5 py-3">Grupo</th>
+                  <th className="text-left px-5 py-3">Câmeras</th>
+                  <th className="text-left px-5 py-3">Gravações</th>
+                  <th className="text-left px-5 py-3">Clipes</th>
+                  <th className="text-left px-5 py-3">Total</th>
+                </tr>
+              )}
             </thead>
             <tbody>
-              {(analytics?.items ?? []).slice(0, 200).map((row) => (
-                <tr key={`${row.day}-${row.cameraId}`} className="border-b border-border last:border-0">
-                  <td className="px-5 py-3 font-mono text-xs">{row.day}</td>
-                  <td className="px-5 py-3 text-xs">{row.cameraName}</td>
-                  <td className="px-5 py-3 text-xs">
-                    {row.recordingsCount} arquivo(s) · {toGB(row.recordingsBytes)}
-                  </td>
-                  <td className="px-5 py-3 text-xs">
-                    {row.clipsCount} arquivo(s) · {toGB(row.clipsBytes)}
-                  </td>
+              {usageView === 'camera' ? pagedCameraUsage.map((row) => (
+                <tr key={row.cameraId} className="border-b border-border last:border-0">
+                  <td className="px-5 py-3 text-xs font-medium">{row.cameraName}</td>
+                  <td className="px-5 py-3 text-xs text-muted-foreground">{row.groupName}</td>
+                  <td className="px-5 py-3 text-xs">{row.recordingsCount} arquivo(s) · {toGB(row.recordingsBytes)}</td>
+                  <td className="px-5 py-3 text-xs">{row.clipsCount} arquivo(s) · {toGB(row.clipsBytes)}</td>
+                  <td className="px-5 py-3 text-xs font-semibold">{toGB(row.totalBytes)}</td>
+                </tr>
+              )) : pagedGroupUsage.map((row) => (
+                <tr key={row.groupId ?? 'no-group'} className="border-b border-border last:border-0">
+                  <td className="px-5 py-3 text-xs font-medium">{row.groupName}</td>
+                  <td className="px-5 py-3 text-xs">{row.camerasCount}</td>
+                  <td className="px-5 py-3 text-xs">{row.recordingsCount} arquivo(s) · {toGB(row.recordingsBytes)}</td>
+                  <td className="px-5 py-3 text-xs">{row.clipsCount} arquivo(s) · {toGB(row.clipsBytes)}</td>
                   <td className="px-5 py-3 text-xs font-semibold">{toGB(row.totalBytes)}</td>
                 </tr>
               ))}
+              {!analyticsLoading && ((usageView === 'camera' && cameraUsage.length === 0) || (usageView === 'group' && groupUsage.length === 0)) ? (
+                <tr><td colSpan={5} className="px-5 py-8 text-center text-xs text-muted-foreground">Nenhum uso encontrado no período selecionado.</td></tr>
+              ) : null}
             </tbody>
           </table>
         </div>
+        <UsagePagination page={usageView === 'camera' ? cameraUsagePage : groupUsagePage} total={usageView === 'camera' ? cameraUsage.length : groupUsage.length} onChange={usageView === 'camera' ? setCameraUsagePage : setGroupUsagePage} />
       </StorageSection>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-2">
         <div className="bg-card border border-border rounded-xl p-4">
           <div className="text-xs text-[hsl(var(--muted-foreground))]">Retenção</div>
           <div className="mt-3 text-2xl font-semibold">{retentionLabel}</div>
@@ -334,11 +341,6 @@ export default function MonitoramentoPage() {
           <div className="text-xs text-[hsl(var(--muted-foreground))]">Câmeras</div>
           <div className="mt-3 text-2xl font-semibold">{cameras.length}</div>
           <div className="mt-3 text-xs text-[hsl(var(--muted-foreground))]">Base para cálculo de retenção por carga.</div>
-        </div>
-        <div className="bg-card border border-border rounded-xl p-4">
-          <div className="text-xs text-[hsl(var(--muted-foreground))]">Saúde operacional</div>
-          <div className="mt-3 flex items-center gap-2 text-xs"><ShieldAlert className="w-4 h-4 text-[hsl(var(--chart-4))]" /> {volumes.filter((volume) => volume.health !== 'OK').length} volumes em atenção</div>
-          <div className="mt-3 flex items-center gap-2 text-xs"><Server className="w-4 h-4 text-[hsl(var(--primary))]" /> {system ? 1 : 0} servidor monitorado</div>
         </div>
       </div>
 

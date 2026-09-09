@@ -2277,11 +2277,11 @@ export class RecordingsService implements OnModuleInit, OnModuleDestroy {
       }),
       this.prisma.camera.findMany({
         where: cameraWhere ? { id: cameraWhere } : {},
-        select: { id: true, name: true },
+        select: { id: true, name: true, group: { select: { id: true, name: true } } },
       }),
     ]);
 
-    const cameraNameById = new Map(cameras.map((camera) => [camera.id, camera.name]));
+    const cameraById = new Map(cameras.map((camera) => [camera.id, camera]));
     const dayKey = (date: Date) => date.toISOString().slice(0, 10);
     const bucket = new Map<
       string,
@@ -2302,7 +2302,7 @@ export class RecordingsService implements OnModuleInit, OnModuleDestroy {
       if (current) return current;
       const created = {
         cameraId,
-        cameraName: cameraNameById.get(cameraId) ?? cameraId,
+        cameraName: cameraById.get(cameraId)?.name ?? cameraId,
         day,
         recordingsBytes: BigInt(0),
         clipsBytes: BigInt(0),
@@ -2341,6 +2341,58 @@ export class RecordingsService implements OnModuleInit, OnModuleDestroy {
     const totalRecordingsBytes = items.reduce((acc, item) => acc + BigInt(item.recordingsBytes), BigInt(0));
     const totalClipsBytes = items.reduce((acc, item) => acc + BigInt(item.clipsBytes), BigInt(0));
 
+    // A lista diária é útil para auditoria, mas não responde a pergunta de
+    // capacidade: "qual câmera/grupo está ocupando meu disco?". Entregamos os
+    // dois resumos já agregados para a interface paginar sem baixar vídeo nem
+    // repetir contas com BigInt no navegador.
+    const byCamera = new Map<string, {
+      cameraId: string; cameraName: string; groupId: string | null; groupName: string;
+      recordingsBytes: bigint; clipsBytes: bigint; recordingsCount: number; clipsCount: number;
+    }>();
+    const byGroup = new Map<string, {
+      groupId: string | null; groupName: string;
+      recordingsBytes: bigint; clipsBytes: bigint; recordingsCount: number; clipsCount: number; camerasCount: number;
+    }>();
+    for (const item of items) {
+      const camera = cameraById.get(item.cameraId);
+      const groupId = camera?.group?.id ?? null;
+      const groupName = camera?.group?.name ?? 'Sem grupo';
+      const cameraUsage = byCamera.get(item.cameraId) ?? {
+        cameraId: item.cameraId, cameraName: item.cameraName, groupId, groupName,
+        recordingsBytes: BigInt(0), clipsBytes: BigInt(0), recordingsCount: 0, clipsCount: 0,
+      };
+      cameraUsage.recordingsBytes += BigInt(item.recordingsBytes);
+      cameraUsage.clipsBytes += BigInt(item.clipsBytes);
+      cameraUsage.recordingsCount += item.recordingsCount;
+      cameraUsage.clipsCount += item.clipsCount;
+      byCamera.set(item.cameraId, cameraUsage);
+
+      const groupKey = groupId ?? '__no_group__';
+      const groupUsage = byGroup.get(groupKey) ?? {
+        groupId, groupName, recordingsBytes: BigInt(0), clipsBytes: BigInt(0), recordingsCount: 0, clipsCount: 0, camerasCount: 0,
+      };
+      groupUsage.recordingsBytes += BigInt(item.recordingsBytes);
+      groupUsage.clipsBytes += BigInt(item.clipsBytes);
+      groupUsage.recordingsCount += item.recordingsCount;
+      groupUsage.clipsCount += item.clipsCount;
+      byGroup.set(groupKey, groupUsage);
+    }
+    for (const camera of byCamera.values()) {
+      const groupUsage = byGroup.get(camera.groupId ?? '__no_group__');
+      if (groupUsage) groupUsage.camerasCount += 1;
+    }
+    const serializeUsage = <T extends { recordingsBytes: bigint; clipsBytes: bigint }>(row: T) => ({
+      ...row,
+      recordingsBytes: row.recordingsBytes.toString(),
+      clipsBytes: row.clipsBytes.toString(),
+      totalBytes: (row.recordingsBytes + row.clipsBytes).toString(),
+    });
+    const sortByUsage = <T extends { recordingsBytes: bigint; clipsBytes: bigint; groupName?: string; cameraName?: string }>(a: T, b: T) => {
+      const difference = (b.recordingsBytes + b.clipsBytes) - (a.recordingsBytes + a.clipsBytes);
+      if (difference !== BigInt(0)) return difference > BigInt(0) ? 1 : -1;
+      return String(a.cameraName ?? a.groupName ?? '').localeCompare(String(b.cameraName ?? b.groupName ?? ''));
+    };
+
     return {
       from: from.toISOString(),
       to: to.toISOString(),
@@ -2352,6 +2404,8 @@ export class RecordingsService implements OnModuleInit, OnModuleDestroy {
         totalBytes: (totalRecordingsBytes + totalClipsBytes).toString(),
       },
       items,
+      byCamera: [...byCamera.values()].sort(sortByUsage).map(serializeUsage),
+      byGroup: [...byGroup.values()].sort(sortByUsage).map(serializeUsage),
     };
   }
 
