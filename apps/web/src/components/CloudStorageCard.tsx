@@ -151,7 +151,7 @@ export function CloudStorageCard({ apiUrl, accessToken }: { apiUrl: string; acce
         <div className="text-sm">
           <div className="font-medium">Nenhum armazenamento em nuvem instalado</div>
           <p className="mt-1 text-muted-foreground">
-            O bucket é provisionado pela Central AjustCam, na aba
+            O bucket é provisionado pela Central S2Cam, na aba
             <span className="font-medium"> Armazenamento em nuvem</span> desta instalação.
             Depois de instalado, os controles de envio aparecem aqui.
           </p>

@@ -190,7 +190,7 @@ export function PreviousStoragesCard({ apiUrl, accessToken }: { apiUrl: string; 
                 <div className="mt-1 text-xs text-muted-foreground">
                   {s.gravacoes > 0
                     ? <>{s.gravacoes} gravações · {formatarBytes(s.bytes)} · {periodo(s.maisAntiga, s.maisRecente)}</>
-                    : 'Nenhuma gravação do AjustCam aponta para este storage.'}
+                    : 'Nenhuma gravação do S2Cam aponta para este armazenamento.'}
                 </div>
                 {!s.credencialLegivel && (
                   <div className="mt-1.5 flex items-center gap-1.5 text-xs text-[hsl(var(--status-warning))]">
@@ -272,7 +272,7 @@ export function PreviousStoragesCard({ apiUrl, accessToken }: { apiUrl: string; 
               <div className="mt-3 rounded border border-border bg-background/55 p-3">
                 <div className="text-sm font-medium">Remover o cadastro de {s.bucket}</div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Nenhum arquivo é apagado no fornecedor — só o AjustCam deixa de conhecer este storage.
+                  Nenhum arquivo é apagado no fornecedor — só o S2Cam deixa de conhecer este armazenamento.
                 </p>
                 {s.gravacoes > 0 && (
                   <p className="mt-2 text-xs text-[hsl(var(--status-warning))]">

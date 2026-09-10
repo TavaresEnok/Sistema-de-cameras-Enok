@@ -251,7 +251,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             // detecção da CÂMERA (que não conhece zonas) para o detector do
             // DRAC, que respeita a máscara. Sem contar isso, o operador não
             // entende por que o comportamento da gravação mudou.
-            ? `${zones.length} zona(s) ativas. A gravação por movimento passa a disparar pelo detector do DRAC, que respeita as áreas desenhadas.`
+            ? `${zones.length} zona(s) ativas. A gravação por movimento passa a disparar pelo detector do S2Cam, que respeita as áreas desenhadas.`
             : `${zones.length} zona(s) ativas. A detecção já está usando as novas áreas.`
           : 'Sem zonas: a câmera inteira volta a ser monitorada.',
       });
