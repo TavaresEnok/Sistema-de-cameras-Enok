@@ -476,7 +476,7 @@ export function LiveStreamPlayer({
   // Para reativar o HEVC: volte GRID_HEVC_ENABLED para true.
   const GRID_HEVC_ENABLED = false;
   const deliveryMode: LiveDeliveryMode = liveViewMode === 'selected'
-    ? (qualityMode === 'max' ? 'original-audio' : 'grid-audio')
+    ? (qualityMode === 'max' ? 'original' : 'grid-audio')
     : gridAudioRequested
       ? 'grid-audio'
       : (GRID_HEVC_ENABLED && !gridUsesH264Fallback) ? 'grid-hevc' : 'grid';
@@ -842,7 +842,7 @@ export function LiveStreamPlayer({
           setGridUsesH264Fallback(true);
           return;
         }
-        if (deliveryMode === 'original-audio' && videoCodecFamily(actualCodec) === 'hevc') {
+        if (deliveryMode === 'original' && videoCodecFamily(actualCodec) === 'hevc') {
           failedProtocolsRef.current.clear();
           setQualityMode('instant');
           setProtocolReason('O teste real de H.265 falhou; usando a contingência H.264.');
@@ -1039,7 +1039,7 @@ export function LiveStreamPlayer({
             setGridUsesH264Fallback(true);
             return;
           }
-          if (deliveryMode === 'original-audio' && videoCodecFamily(sourceCodec) === 'hevc') {
+          if (deliveryMode === 'original' && videoCodecFamily(sourceCodec) === 'hevc') {
             setQualityMode('instant');
             failedProtocolsRef.current.clear();
             setProtocolReason('Este navegador não decodifica H.265 — usando o modo Instantâneo (H.264).');
@@ -1674,7 +1674,7 @@ export function LiveStreamPlayer({
           setGridUsesH264Fallback(true);
           return;
         }
-        if (deliveryMode === 'original-audio' && videoCodecFamily(sourceCodec) === 'hevc') {
+        if (deliveryMode === 'original' && videoCodecFamily(sourceCodec) === 'hevc') {
           failedProtocolsRef.current.clear();
           streamUrlsCache.clear(cacheKey);
           setQualityMode('instant');

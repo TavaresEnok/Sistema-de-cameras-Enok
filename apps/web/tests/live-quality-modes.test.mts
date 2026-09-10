@@ -22,6 +22,12 @@ test('duplo clique vindo da grade sempre reinicia em Máxima resolução', async
   assert.doesNotMatch(source, /drac-live-quality|getStoredLiveQuality|storeLiveQuality/);
 });
 
+test('Máxima pede o stream original; limite da grade fica somente no Instantâneo', async () => {
+  const source = await readFile(playerPath, 'utf8');
+  assert.match(source, /qualityMode === 'max' \? 'original' : 'grid-audio'/);
+  assert.doesNotMatch(source, /qualityMode === 'max' \? 'original-audio'/);
+});
+
 test('sinal vermelho da grade é exclusivo de gravação manual', async () => {
   const source = await readFile(livePagePath, 'utf8');
   assert.match(source, /camera\.recordingMode === 'manual' && camera\.status === 'recording'/);
