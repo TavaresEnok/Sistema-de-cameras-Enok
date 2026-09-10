@@ -14,6 +14,12 @@ test('câmera individual oferece somente Instantâneo e Máxima resolução', as
   assert.doesNotMatch(source, /Equilibrado|qualityMode === 'balanced'|\['balanced'/i);
 });
 
+test('Máxima pede o stream original; limite da grade fica somente no Instantâneo', async () => {
+  const source = await readFile(playerPath, 'utf8');
+  assert.match(source, /qualityMode === 'max' \? 'original' : 'grid-audio'/);
+  assert.doesNotMatch(source, /qualityMode === 'max' \? 'original-audio'/);
+});
+
 test('backend não mantém o perfil transcodificado da câmera individual', async () => {
   const source = await readFile(apiProfilePath, 'utf8');
   assert.match(source, /export type LiveViewMode =/);
