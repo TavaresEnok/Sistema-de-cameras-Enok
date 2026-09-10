@@ -1855,8 +1855,8 @@ export default function CameraDetailPage() {
                     icon={KeyRound}
                     title={modoPush ? 'Identificação e publicação RTMP' : 'Identificação e acesso'}
                     description={modoPush
-                      ? 'A câmera abre a conexão e envia o vídeo ao AjustCam; não existe IP RTSP para o servidor acessar.'
-                      : 'Como o AjustCam encontra e autentica nesta câmera.'}
+                      ? 'A câmera abre a conexão e envia o vídeo ao S2Cam; não existe IP RTSP para o servidor acessar.'
+                      : 'Como o S2Cam encontra e autentica nesta câmera.'}
                   >
                     <div className="grid gap-3 md:grid-cols-2">
                       <SettingsField label="Nome da câmera" wide>

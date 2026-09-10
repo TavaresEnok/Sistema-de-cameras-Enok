@@ -311,7 +311,7 @@ export default function PerformancePage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Aplicar ajustes seguros de streaming?</AlertDialogTitle>
             <AlertDialogDescription>
-              O AjustCam não vai alterar IP, senha, RTSP, ONVIF, codec físico da câmera ou áudio — apenas parâmetros de entrega/streaming considerados seguros.
+              O S2Cam não vai alterar IP, senha, RTSP, ONVIF, codec físico da câmera ou áudio — apenas parâmetros de entrega/streaming considerados seguros.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -806,7 +806,7 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                     </FormField>
                   </div>
                   <div className="rounded-lg border border-border bg-background/70 px-3 py-2 text-[11px] text-muted-foreground">
-                    Grid padronizado em até 720p / 20 FPS. Ao abrir a câmera sozinha, o AjustCam usa a resolução original do perfil live.
+                    Grid padronizado em até 720p / 20 FPS. Ao abrir a câmera sozinha, o S2Cam usa a resolução original do perfil live.
                   </div>
                   <Separator />
                   <ToggleRow label="Áudio" desc="Captura de áudio da câmera" value={form.audioEnabled} onChange={(v) => upd('audioEnabled', v)} />
