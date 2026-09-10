@@ -15,7 +15,7 @@ import { explicarTeto, podeCadastrarCamera } from './helpers/teto-de-cameras.hel
 // ligar "objeto" no painel mestre não tinha efeito nenhum aqui — só o
 // legado `aiAdvanced`, que acende objeto e face juntos. `aiAdvanced` continua
 // existindo como TETO dos dois, para não quebrar instalação antiga.
-export type CommercialFeature = 'localLive' | 'localRecording' | 'localPlayback' | 'addCameras' | 'aiAdvanced' | 'aiMotion' | 'aiObject' | 'aiFace' | 'exports';
+export type CommercialFeature = 'localLive' | 'localRecording' | 'localPlayback' | 'addCameras' | 'aiAdvanced' | 'aiMotion' | 'aiObject' | 'aiFace' | 'aiPlate' | 'exports';
 export type CommercialLicenseStatus = 'UNKNOWN' | 'ACTIVE' | 'GRACE' | 'RESTRICTED' | 'SUSPENDED';
 
 type RestrictionMap = Record<CommercialFeature | 'adminAccess' | 'cloudSupport' | 'updates', boolean>;
@@ -29,6 +29,8 @@ const DEFAULT_RESTRICTIONS: RestrictionMap = {
   aiMotion: true,
   aiObject: true,
   aiFace: true,
+  // Nasce bloqueada: reconhecer placas exige motor específico e contratação.
+  aiPlate: false,
   exports: true,
   adminAccess: true,
   cloudSupport: true,
@@ -65,6 +67,7 @@ const GENERIC_FEATURE_MESSAGES: Record<CommercialFeature, string> = {
   aiMotion: 'Detecção de movimento temporariamente indisponível. Entre em contato com o administrador do sistema.',
   aiObject: 'Detecção de objetos temporariamente indisponível. Entre em contato com o administrador do sistema.',
   aiFace: 'Reconhecimento facial temporariamente indisponível. Entre em contato com o administrador do sistema.',
+  aiPlate: 'Leitura de placas temporariamente indisponível. Entre em contato com o administrador do sistema.',
   exports: 'Exportação temporariamente indisponível. Entre em contato com o administrador do sistema.',
 };
 
@@ -84,7 +87,7 @@ export class CommercialPolicyService {
             'cloud.maiorInstanteVisto',
             // Teto de câmeras contratado, definido na Central.
             'cloud.maxCameras',
-            'cloud.maxUsers', 'cloud.maxRetentionDays',
+            'cloud.maxUsers', 'cloud.maxRetentionDays', 'cloud.maxPlateRecognitionCameras',
           ],
         },
       },
@@ -128,6 +131,7 @@ export class CommercialPolicyService {
       maxCameras: this.paraInteiro(settings['cloud.maxCameras']),
       maxUsers: this.paraInteiro(settings['cloud.maxUsers']),
       maxRetentionDays: this.paraInteiro(settings['cloud.maxRetentionDays']),
+      maxPlateRecognitionCameras: this.paraInteiro(settings['cloud.maxPlateRecognitionCameras']),
       licenseMessage: settings['cloud.licenseMessage'] || null,
       lastSyncAt: settings['cloud.lastSyncAt'] || null,
       lastError: settings['cloud.lastError'] || null,

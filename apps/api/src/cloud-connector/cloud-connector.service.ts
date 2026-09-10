@@ -186,6 +186,7 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
           this.writeSetting('cloud.maxCameras', this.tetoDeCameras(response.data?.maxCameras)),
           this.writeSetting('cloud.maxUsers', this.tetoDeCameras(response.data?.maxUsers)),
           this.writeSetting('cloud.maxRetentionDays', this.tetoDeCameras(response.data?.maxRetentionDays)),
+          this.writeSetting('cloud.maxPlateRecognitionCameras', this.tetoDeCameras(response.data?.maxPlateRecognitionCameras)),
           // Túnel até as câmeras do cliente. Guardado como veio; quem decide se
           // aplica é `decidirSobreVpn`, e quem aplica de fato é o script do
           // host — a API não mexe em rota de rede.

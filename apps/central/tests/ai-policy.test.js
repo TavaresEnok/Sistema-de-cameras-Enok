@@ -181,3 +181,9 @@ test('o painel usa o TETO, não o derivado', () => {
   assert.ok(linha, 'a decisão de bloqueio sumiu do painel');
   assert.match(linha, /aiAdvancedAllowed/, 'o painel voltou a se basear no valor derivado');
 });
+
+test('leitura de placas nasce desligada e só atravessa quando a licença permite', () => {
+  assert.equal(normalizeAiPolicy({}).plate, false);
+  assert.equal(applyAiPolicyToRestrictions({ aiAdvanced: true }, { plate: true }).aiPlate, true);
+  assert.equal(applyAiPolicyToRestrictions({ aiAdvanced: false }, { plate: true }).aiPlate, false);
+});

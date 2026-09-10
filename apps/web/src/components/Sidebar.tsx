@@ -6,7 +6,7 @@ import {
   LogOut, Keyboard, Shield,
   Server, Users, Radar, FolderKey, ShieldCheck, Search, Sun, Moon,
   Bell, Crosshair, HardDrive, UserCircle, ShieldAlert, MapPinned, Newspaper,
-  CircleHelp, LayoutGrid, Activity, FileSearch, ScrollText, Brain,
+  CircleHelp, LayoutGrid, Activity, FileSearch, ScrollText, Brain, CarFront,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -59,6 +59,7 @@ const NAV_SECTIONS: NavSection[] = [
       { path: '/storage', label: 'Armazenamento', icon: HardDrive, roles: ['admin', 'operator'] },
       { path: '/performance', label: 'Desempenho', icon: Activity,  roles: ['admin', 'operator'] },
       { path: '/ia',      label: 'Inteligência', icon: Brain,    roles: ['admin', 'operator'] },
+      { path: '/placas',  label: 'Placas',       icon: CarFront, roles: ['admin', 'operator'] },
     ],
   },
   {

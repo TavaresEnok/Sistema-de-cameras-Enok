@@ -17,7 +17,7 @@
 //   object → detecção de objeto (YOLO). Pesada. Nasce DESLIGADA.
 //   face   → reconhecimento facial. Pesada e sensível (LGPD). Nasce DESLIGADA.
 
-const AI_CAPABILITIES = Object.freeze(['motion', 'object', 'face']);
+const AI_CAPABILITIES = Object.freeze(['motion', 'object', 'face', 'plate']);
 
 // ── QUAIS OBJETOS ESTA INSTALAÇÃO PODE DETECTAR ─────────────────────────────
 //
@@ -41,6 +41,8 @@ const DEFAULT_AI_POLICY = Object.freeze({
   motion: true,
   object: false,
   face: false,
+  // OCR de placas tem motor e teto próprios; nunca liga ao cadastrar a Central.
+  plate: false,
   objectClasses: DEFAULT_OBJECT_CLASSES,
 });
 
@@ -127,10 +129,11 @@ function applyAiPolicyToRestrictions(restrictions, policy) {
     aiMotion: wanted.motion,
     aiObject: wanted.object && advancedAllowed,
     aiFace: wanted.face && advancedAllowed,
+    aiPlate: wanted.plate && advancedAllowed,
     // `aiAdvanced` legado permanece: verdadeiro só se a licença permite E o
     // painel liberou alguma das pesadas. Instalação antiga que não entenda as
     // chaves novas continua obedecendo a este campo.
-    aiAdvanced: advancedAllowed && (wanted.object || wanted.face),
+    aiAdvanced: advancedAllowed && (wanted.object || wanted.face || wanted.plate),
     // O TETO, separado do valor derivado acima — e a separação NÃO é enfeite.
     //
     // `aiAdvanced` responde "esta instalação DEVE rodar IA pesada agora?", e por

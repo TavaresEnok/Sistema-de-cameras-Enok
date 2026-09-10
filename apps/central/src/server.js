@@ -1077,6 +1077,8 @@ function publicInstallation(item, release = null) {
     maxCameras: tetoParaHeartbeat(item.maxCameras),
     maxUsers: tetoParaHeartbeat(item.maxUsers),
     maxRetentionDays: tetoParaHeartbeat(item.maxRetentionDays),
+    // Teto independente de câmeras comuns: só as que processam placa contam.
+    maxPlateRecognitionCameras: tetoParaHeartbeat(item.maxPlateRecognitionCameras),
     restrictions: licenseResponse(item).restrictions,
     policyPending,
     launchProfile: item.launchProfile || item.metrics?.launchProfile || null,
@@ -1428,6 +1430,7 @@ function licenseResponse(item) {
     maxCameras: tetoParaHeartbeat(item.maxCameras),
     maxUsers: tetoParaHeartbeat(item.maxUsers),
     maxRetentionDays: tetoParaHeartbeat(item.maxRetentionDays),
+    maxPlateRecognitionCameras: tetoParaHeartbeat(item.maxPlateRecognitionCameras),
     // Túnel até a rede de câmeras do cliente. null = sem VPN configurada;
     // perfil vazio faria a instalação concluir que precisa desmontar algo.
     vpn: perfilParaHeartbeat(item.vpn),
@@ -2554,6 +2557,14 @@ async function handlePatchAiPolicy(req, res, db, actor, installationId) {
   const previous = normalizeAiPolicy(item.aiPolicy);
   const next = normalizeAiPolicy({ ...previous, ...payload });
   item.aiPolicy = next;
+  if (body && Object.prototype.hasOwnProperty.call(body, 'maxPlateRecognitionCameras')) {
+    const raw = body.maxPlateRecognitionCameras;
+    const parsed = raw === null || raw === '' ? null : Number(raw);
+    if (parsed !== null && (!Number.isInteger(parsed) || parsed < 0 || parsed > 10000)) {
+      return json(req, res, 400, { error: 'invalid_plate_camera_limit' });
+    }
+    item.maxPlateRecognitionCameras = parsed;
+  }
   item.updatedAt = new Date().toISOString();
   bumpConfigRevision(item);
   addAuditEvent(db, req, {

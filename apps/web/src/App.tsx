@@ -62,6 +62,7 @@ const CamerasPage     = lazyWithReload(() => import('./pages/CamerasPage'));
 const PTZPage         = lazyWithReload(() => import('./pages/PTZPage'));
 const PerimetroPage   = lazyWithReload(() => import('./pages/PerimetroPage'));
 const AiPage          = lazyWithReload(() => import('./pages/AiPage'));
+const PlateRecognitionPage = lazyWithReload(() => import('./pages/PlateRecognitionPage'));
 const InvestigationPage = lazyWithReload(() => import('./pages/InvestigationPage'));
 const StoragePage     = lazyWithReload(() => import('./pages/StoragePage'));
 const SettingsPage    = lazyWithReload(() => import('./pages/SettingsPage'));
@@ -337,6 +338,9 @@ function AppRoutes() {
       </Route>
       <Route path="/ia">
         {() => <ProtectedRoute component={AiPage} minRole="operator" />}
+      </Route>
+      <Route path="/placas">
+        {() => <ProtectedRoute component={PlateRecognitionPage} minRole="operator" />}
       </Route>
       <Route path="/storage">
         {() => <ProtectedRoute component={StoragePage} minRole="operator" />}

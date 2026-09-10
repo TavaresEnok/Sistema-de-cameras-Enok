@@ -2827,6 +2827,7 @@
         { key: 'motion', nome: 'Movimento (MOG2)', desc: 'Essencial — arma a gravação por movimento. Leve (~2% CPU por câmera).' },
         { key: 'object', nome: 'Detecção de objeto', desc: 'Pesada. Reconhece pessoa, carro, moto…' },
         { key: 'face', nome: 'Reconhecimento facial', desc: 'Pesada e sensível (LGPD).' },
+        { key: 'plate', nome: 'Leitura de placas', desc: 'Usa um motor OCR especializado. Ative somente nas câmeras necessárias.' },
       ];
       function renderAiSection(item) {
         const body = document.getElementById('ai-body');
@@ -2884,6 +2885,14 @@
                 </label>`).join('')}
             </div>
           </div>` : ''}
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+            <strong style="font-weight:500;font-size:12.5px">Limite de câmeras com leitura de placas</strong>
+            <div class="subtext" style="margin-top:3px;margin-bottom:9px">Só câmeras ligadas para OCR contam. Deixe vazio para não definir teto.</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="ai-plate-camera-limit" type="number" min="0" max="10000" value="${item.maxPlateRecognitionCameras == null ? '' : Number(item.maxPlateRecognitionCameras)}" placeholder="Sem limite" style="width:130px" />
+              <button id="ai-plate-camera-limit-save" class="ghost">Salvar limite</button>
+            </div>
+          </div>
           <div class="license-actions" style="margin-top:13px">
             <button id="ai-only-motion" class="primary">Somente movimento</button>
             <button id="ai-none" class="ghost">Desativar todas</button>
@@ -2916,15 +2925,19 @@
             aiPolicyRequest(item.id, { motion: false, object: false, face: false });
           }
         });
+        body.querySelector('#ai-plate-camera-limit-save')?.addEventListener('click', () => {
+          const value = body.querySelector('#ai-plate-camera-limit')?.value;
+          aiPolicyRequest(item.id, {}, value === '' ? null : Number(value));
+        });
       }
       // O estado real vem do servidor (que aplica o teto da licença), nunca do
       // que a tela achou que iria gravar.
-      async function aiPolicyRequest(installationId, aiPolicy) {
+      async function aiPolicyRequest(installationId, aiPolicy, maxPlateRecognitionCameras = undefined) {
         try {
           const res = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(installationId)}/ai-policy`), {
             method: 'PATCH', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ aiPolicy }),
+            body: JSON.stringify({ aiPolicy, ...(maxPlateRecognitionCameras !== undefined ? { maxPlateRecognitionCameras } : {}) }),
           });
           if (!res.ok) throw new Error(String(res.status));
           showToast('Política de IA atualizada.');

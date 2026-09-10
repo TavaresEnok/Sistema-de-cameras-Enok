@@ -202,6 +202,16 @@ model Camera {
   recordingBitrateKbps   Int?
   audioEnabled           Boolean      @default(true)
   aiEnabled              Boolean      @default(true)
+  /// Leitura de placas é opt-in por câmera: além de ser uma IA especializada,
+  /// o teto contratado é contado apenas nas câmeras que estão realmente ligadas.
+  plateRecognitionEnabled Boolean     @default(false)
+  /// Região normalizada 0..1 onde a placa deve aparecer. Null = quadro inteiro.
+  plateRecognitionRoi     Json?
+  /// BOTH | ENTERING | LEAVING. A direção é interpretada pelo motor, não pela UI.
+  plateRecognitionDirection String    @default("BOTH")
+  plateRecognitionFps      Int       @default(2)
+  plateRecognitionMinConfidence Int  @default(75)
+  plateRecognitionCooldownSeconds Int @default(20)
   alarmsEnabled          Boolean      @default(true)
   hasEdgeAi              Boolean      @default(false)
   motionTrigger          String       @default("SYSTEM")
@@ -260,6 +270,7 @@ model Camera {
   alarms        AlarmInstance[]
   permissions   CameraPermission[]
   groupMessages GroupMessage[]
+  plateRecognitions PlateRecognition[]
 
   @@index([siteId])
   @@index([areaId])
@@ -390,6 +401,47 @@ model CameraEvent {
   @@index([cameraId, type, occurredAt])
   @@index([occurredAt])
   @@index([reviewedAt])
+}
+
+/// Uma passagem de placa é um fato imutável. Não reaproveitamos CameraEvent
+/// porque pesquisa por placa, retenção e exportação precisam de índices próprios.
+model PlateRecognition {
+  id              String   @id @default(uuid())
+  cameraId        String
+  camera          Camera   @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  plateRaw        String
+  plateNormalized String
+  confidence      Float
+  direction       String?
+  listKind        String?
+  snapshotPath    String?
+  metadata        Json?
+  occurredAt      DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([cameraId, occurredAt])
+  @@index([plateNormalized, occurredAt])
+  @@index([occurredAt])
+}
+
+/// Listas operacionais: autorizada, bloqueada e observada. A placa é
+/// normalizada para que ABC1D23 e abc-1d23 sejam a mesma entrada.
+model PlateListEntry {
+  id              String   @id @default(uuid())
+  plateNormalized String
+  plateDisplay    String
+  kind            String
+  label           String?
+  ownerName       String?
+  vehicleInfo     String?
+  active          Boolean  @default(true)
+  validFrom       DateTime?
+  validUntil      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([plateNormalized, kind])
+  @@index([kind, active])
 }
 
 /// Revisão POR USUÁRIO: cada operador tem o seu próprio "visto". Substitui o
