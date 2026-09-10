@@ -361,6 +361,15 @@ export default function LiveViewPage() {
     while (slots.length < count) slots.push(null);
     return slots;
   }, [cameraIds, count, cameraById]);
+  // `count` é a quantidade de QUADROS da grade (por exemplo, 6×6 = 36), não
+  // de câmeras. Depois de “Preencher”, 28 câmeras ocupam 28 desses quadros e
+  // os 8 restantes ficam vazios; exibir “36 câmeras” era enganoso e fazia o
+  // operador procurar câmeras inexistentes. O alerta de carga deve refletir
+  // somente players efetivamente abertos.
+  const activeGridCameraCount = useMemo(
+    () => displayedCams.reduce((total, camera) => total + (camera ? 1 : 0), 0),
+    [displayedCams],
+  );
 
   // "Preencher": escolhe a MENOR grade que cabe todas as câmeras (até 5x5) e
   // preenche os quadros — online primeiro. Otimiza o espaço automaticamente.
@@ -711,14 +720,14 @@ export default function LiveViewPage() {
             <TooltipContent className="text-xs">Grade livre: colunas × linhas (1 a {GRID_MAX})</TooltipContent>
           </Tooltip>
 
-          {count > GRID_CELL_WARN ? (
+          {activeGridCameraCount > GRID_CELL_WARN ? (
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
                 <span className="hidden sm:inline-flex items-center gap-1 rounded-md bg-[hsl(var(--status-warning)_/_0.14)] px-2 py-1 text-[10px] font-semibold text-[hsl(var(--status-warning))]" data-testid="grid-cpu-warn">
-                  ⚠ {count} câmeras
+                  ⚠ {activeGridCameraCount} câmeras
                 </span>
               </TooltipTrigger>
-              <TooltipContent className="text-xs max-w-56">Muitas câmeras ao vivo ao mesmo tempo podem sobrecarregar a CPU do servidor (transcode). Reduza a grade se ficar lento.</TooltipContent>
+              <TooltipContent className="text-xs max-w-56">{activeGridCameraCount} câmeras estão abertas nesta grade. Muitas transmissões simultâneas podem aumentar o uso do servidor.</TooltipContent>
             </Tooltip>
           ) : null}
 
