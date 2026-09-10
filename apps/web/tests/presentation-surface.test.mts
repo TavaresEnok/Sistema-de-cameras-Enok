@@ -4,10 +4,10 @@ import test from 'node:test';
 
 const read = (path: string) => readFileSync(path, 'utf8');
 
-test('marca visível usa AjustCam e não exibe versão fictícia', () => {
-  assert.match(read('index.html'), /<title>AjustCam<\/title>/);
+test('marca visível usa S2Cam e não exibe versão fictícia', () => {
+  assert.match(read('index.html'), /<title>S2Cam<\/title>/);
   assert.doesNotMatch(read('src/pages/LoginPage.tsx'), /v2\.4\s*·\s*Local/);
-  assert.match(read('src/lib/product-brand.ts'), /PRODUCT_NAME = 'AjustCam'/);
+  assert.match(read('src/lib/product-brand.ts'), /PRODUCT_NAME = 'S2Cam'/);
 });
 
 test('nenhuma tela oferecida ao operador finge ter conteúdo que não tem', () => {

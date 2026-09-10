@@ -162,7 +162,7 @@ export default function PerimetroPage() {
           {selecionada && !selecionada.camera.aiEnabled && (
             <p className="mt-3 rounded-lg border border-[hsl(var(--chart-4)_/_0.3)] bg-[hsl(var(--chart-4)_/_0.08)] px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
               A IA está desligada nesta câmera. A linha ainda funciona pela via da própria
-              câmera (ONVIF), mas a detecção por IA local do DRAC só roda com a IA ligada.
+              câmera (ONVIF), mas a detecção por IA local do S2Cam só roda com a IA ligada.
             </p>
           )}
         </div>

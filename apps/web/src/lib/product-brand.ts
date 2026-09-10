@@ -1,4 +1,6 @@
-export const PRODUCT_NAME = 'AjustCam';
+// Marca pública do produto. Identificadores internos legados continuam com
+// prefixo DRAC para não invalidar sessões, agentes e instalações existentes.
+export const PRODUCT_NAME = 'S2Cam';
 
 /**
  * Instalações antigas podem ter persistido o nome de produto anterior como se
@@ -7,7 +9,7 @@ export const PRODUCT_NAME = 'AjustCam';
  */
 export function normalizeFacilityName(value?: string | null) {
   const name = String(value ?? '').trim();
-  if (!name || name.toLowerCase() === 'drac vms') return PRODUCT_NAME;
+  if (!name || ['drac vms', 'drac', 'ajustcam', 'ajust cam', 's2cam'].includes(name.toLowerCase())) return PRODUCT_NAME;
   return name;
 }
 
@@ -15,7 +17,7 @@ export function normalizeFacilityName(value?: string | null) {
  * Descritor que acompanha a marca da instalação (barra lateral, tela de login).
  *
  * É um DESCRITOR, nunca uma marca: cada instalação roda sob a marca do próprio
- * cliente, e exibir "AjustCam" logo abaixo de "D-GUARDIAN" põe duas marcas na
+ * cliente, e exibir "S2Cam" logo abaixo de "D-GUARDIAN" põe duas marcas na
  * mesma tela — a nossa dentro do produto que ele comprou. Foi o que o dono viu
  * na primeira instalação de cliente (07/08/2026).
  */

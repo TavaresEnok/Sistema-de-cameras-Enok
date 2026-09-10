@@ -579,7 +579,7 @@ function WizardModal({
       if (result.detectedOnvifProfileToken) updateField('onvifProfileToken', result.detectedOnvifProfileToken);
       if (showResult) {
         if (result.rtspAuthOk || result.rtspReachable || result.rtspReachableAny) {
-          toast({ title: 'Câmera detectada', description: 'O AjustCam configurou live principal, grid em 720p/20 FPS e gravação com o FPS original da câmera.' });
+          toast({ title: 'Câmera detectada', description: 'O S2Cam configurou live principal, grid em 720p/20 FPS e gravação com o FPS original da câmera.' });
         } else {
           toast({ title: 'Vídeo não confirmado', description: 'Verifique IP, porta, usuário e senha.', variant: 'destructive' });
         }
@@ -624,7 +624,7 @@ function WizardModal({
         <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-border bg-background/40">
           <div>
             <h3 className="text-sm font-semibold">Assistente de Nova Câmera</h3>
-            <p className="mt-1 text-[11px] text-muted-foreground">Informe o básico. O AjustCam detecta perfis, caminhos e origem automaticamente.</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">Informe o básico. O S2Cam detecta perfis, caminhos e origem automaticamente.</p>
           </div>
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded hover:bg-[hsl(var(--accent))] transition-colors">
             <X className="w-4 h-4" />
@@ -845,7 +845,7 @@ function WizardModal({
                     </label>
                   </div>
                   <div className="col-span-2 rounded border border-border bg-card px-3 py-2 text-[11px] text-[hsl(var(--muted-foreground))]">
-                    O grid usa no máximo 720p em 20 FPS. Ao abrir a câmera sozinha, o AjustCam mostra a resolução original do perfil live. A gravação usa o perfil principal da câmera e preserva o FPS da origem.
+                    O grid usa no máximo 720p em 20 FPS. Ao abrir a câmera sozinha, o S2Cam mostra a resolução original do perfil live. A gravação usa o perfil principal da câmera e preserva o FPS da origem.
                   </div>
                 </div>
               </div>
