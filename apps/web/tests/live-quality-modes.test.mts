@@ -4,6 +4,9 @@ import test from 'node:test';
 
 const playerPath = new URL('../src/components/LiveStreamPlayer.tsx', import.meta.url);
 const livePagePath = new URL('../src/pages/LiveViewPage.tsx', import.meta.url);
+const mapPagePath = new URL('../src/pages/MapPage.tsx', import.meta.url);
+const cameraDetailPagePath = new URL('../src/pages/CameraDetailPage.tsx', import.meta.url);
+const ptzPagePath = new URL('../src/pages/PTZPage.tsx', import.meta.url);
 const apiProfilePath = new URL('../../api/src/camera-stream/helpers/live-delivery-profile.helper.ts', import.meta.url);
 const pushDialogPath = new URL('../src/components/AddPushCameraDialog.tsx', import.meta.url);
 
@@ -26,6 +29,20 @@ test('Máxima pede o stream original; limite da grade fica somente no Instantân
   const source = await readFile(playerPath, 'utf8');
   assert.match(source, /qualityMode === 'max' \? 'original' : 'grid-audio'/);
   assert.doesNotMatch(source, /qualityMode === 'max' \? 'original-audio'/);
+});
+
+test('todas as telas de câmera única usam o player no modo selected', async () => {
+  const [live, map, cameraDetail, ptz] = await Promise.all([
+    readFile(livePagePath, 'utf8'),
+    readFile(mapPagePath, 'utf8'),
+    readFile(cameraDetailPagePath, 'utf8'),
+    readFile(ptzPagePath, 'utf8'),
+  ]);
+
+  assert.match(live, /liveViewMode=\{(?:focusedCameraId === cam\.id \|\| )?count === 1 \? 'selected' : 'grid'\}/);
+  assert.match(map, /<LiveStreamPlayer[\s\S]*?liveViewMode="selected"/);
+  assert.match(cameraDetail, /<LiveStreamPlayer[\s\S]*?liveViewMode="selected"/);
+  assert.match(ptz, /<LiveStreamPlayer[\s\S]*?liveViewMode="selected"/);
 });
 
 test('sinal vermelho da grade é exclusivo de gravação manual', async () => {
