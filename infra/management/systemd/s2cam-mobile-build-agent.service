@@ -1,0 +1,32 @@
+[Unit]
+Description=S2Cam white-label Android build agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The Management VM owns the Central and the APK artifacts.  The agent does
+# not need root or a public listener.
+User=management
+WorkingDirectory=/opt/ajustcam-management/repo/apps/mobile
+EnvironmentFile=/opt/ajustcam-management/repo/infra/management/build-agent.env
+Environment=HOME=/home/management
+Environment=BUILD_AGENT_HOST=172.17.0.1
+Environment=BUILD_AGENT_PORT=8780
+Environment=APK_PUBLISH_DIR=/opt/ajustcam-management/repo/infra/management/apk
+Environment=JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+Environment=ANDROID_HOME=/home/management/toolchain/android-sdk
+Environment=PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node /opt/ajustcam-management/repo/apps/mobile/scripts/build-agent.mjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
