@@ -54,11 +54,12 @@ build. A configuração inicial é feita uma vez:
    Google Cloud Console.
 2. Crie uma conta de serviço exclusiva, com acesso mínimo para administrar os
    Firebase Apps desse projeto; baixe a chave JSON uma única vez.
-3. Na VM Management:
+3. Na VM Management (a Central executa como UID/GID `1000` dentro do
+   contêiner, por isso o arquivo é legível somente por esse usuário):
 
 ```bash
-install -d -m 0700 /opt/ajustcam-management/secrets/firebase
-install -m 0600 /caminho/seguro/service-account.json \
+install -d -o 1000 -g 1000 -m 0700 /opt/ajustcam-management/secrets/firebase
+install -o 1000 -g 1000 -m 0600 /caminho/seguro/service-account.json \
   /opt/ajustcam-management/secrets/firebase/service-account.json
 ```
 
