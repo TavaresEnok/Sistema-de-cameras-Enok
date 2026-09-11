@@ -42,7 +42,9 @@ export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 set +o pipefail
 yes | sdkmanager --licenses >/dev/null
 set -o pipefail
-sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' 'cmake;3.22.1' 'ndk;27.1.12297006'
+# Algumas dependências React Native ainda declaram Build Tools 35; manter 35
+# e 36 evita download/falha no meio da primeira compilação de um cliente.
+sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;35.0.0' 'build-tools;36.0.0' 'cmake;3.22.1' 'ndk;27.1.12297006'
 
 # O agente escreve apenas nas áreas geradas por cliente/build; o código fica
 # controlado pelo Git e não é aberto para escrita desnecessariamente.
