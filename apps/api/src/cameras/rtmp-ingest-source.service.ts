@@ -4,6 +4,7 @@ import { CryptoService } from '../common/crypto/crypto.service';
 import { envNumber } from '../common/config/env-number.helper';
 import { spawnWithSecretUrl } from '../common/process/secret-url-process.helper';
 import {
+  ingestProfilePathCandidates,
   ingestPathNames,
   isAcceptableIngestPath,
   isValidIngestKey,
@@ -55,6 +56,11 @@ type ByteSample = {
   lastProgressAt: number;
   bitrateKbps: number | null;
 };
+
+// SRS confirma a publicação antes de o MediaMTX necessariamente expor o path
+// interno. Essa pequena janela é normal em uma entrada RTMP e não deve virar
+// "sem vídeo" no primeiro acesso do operador.
+const READY_RECHECK_DELAYS_MS = [250, 750] as const;
 
 /**
  * Resolve a origem canônica de câmeras que PUBLICAM por RTMP.
@@ -119,7 +125,7 @@ export class RtmpIngestSourceService {
 
   private candidatePaths(camera: PushCameraSource): string[] {
     if (isAcceptableIngestPath(camera.rtmpIngestPath)) {
-      return [normalizeIngestPath(camera.rtmpIngestPath)];
+      return ingestProfilePathCandidates(normalizeIngestPath(camera.rtmpIngestPath));
     }
     if (!camera.rtmpIngestKeyEncrypted) return [];
     try {
@@ -221,17 +227,27 @@ export class RtmpIngestSourceService {
 
     let selectedPath = candidates[0];
     let selectedRuntime: RuntimePath | null = null;
+    let stalledCandidate: { pathName: string; runtime: RuntimePath } | null = null;
     for (const pathName of candidates) {
       const runtime = await this.getRuntime(pathName);
       if (!selectedRuntime) {
         selectedPath = pathName;
         selectedRuntime = runtime;
       }
-      if (runtime.ready) {
+      if (runtime.ready && !runtime.stalled) {
         selectedPath = pathName;
         selectedRuntime = runtime;
         break;
       }
+      if (runtime.ready && !stalledCandidate) {
+        stalledCandidate = { pathName, runtime };
+      }
+    }
+    // Um perfil conectado mas sem bytes é diagnóstico melhor do que "offline"
+    // quando nenhum irmão saudável existe. Ele nunca vence um secundário vivo.
+    if (selectedRuntime && !selectedRuntime.ready && stalledCandidate) {
+      selectedPath = stalledCandidate.pathName;
+      selectedRuntime = stalledCandidate.runtime;
     }
     selectedRuntime ??= {
       ready: false,
@@ -241,6 +257,22 @@ export class RtmpIngestSourceService {
       stalled: false,
       bitrateKbps: null,
     };
+    if (options.requireReady && (!selectedRuntime.ready || selectedRuntime.stalled)) {
+      // Reconsulta todos os aliases por um intervalo curto e limitado. Não é
+      // polling infinito: ela só absorve a propagação SRS -> MediaMTX no exato
+      // momento em que uma câmera RTMP começa a publicar.
+      for (const delayMs of READY_RECHECK_DELAYS_MS) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        for (const pathName of candidates) {
+          const runtime = await this.getRuntime(pathName);
+          if (!runtime.ready || runtime.stalled) continue;
+          selectedPath = pathName;
+          selectedRuntime = runtime;
+          break;
+        }
+        if (selectedRuntime.ready && !selectedRuntime.stalled) break;
+      }
+    }
     if (options.requireReady && (!selectedRuntime.ready || selectedRuntime.stalled)) {
       throw new Error(selectedRuntime.stalled
         ? 'A publicação RTMP está conectada, mas parou de entregar quadros.'

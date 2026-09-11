@@ -341,7 +341,9 @@ services:
       rtmp-callback:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/usr/bin/bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9972 && printf 'GET /metrics HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      # O exporter sozinho não prova que a entrada RTMP está escutando. Consulta
+      # /proc para não criar uma conexão RTMP falsa a cada healthcheck.
+      test: ["CMD", "/usr/bin/bash", "-c", "grep -Eq ':078F[[:space:]]+[0]+:[0]+[[:space:]]+0A[[:space:]]' /proc/net/tcp /proc/net/tcp6 && exec 3<>/dev/tcp/127.0.0.1/9972 && printf 'GET /metrics HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -527,10 +529,9 @@ services:
       - MEDIAMTX_SOURCE_ON_DEMAND_START_TIMEOUT=${MEDIAMTX_SOURCE_ON_DEMAND_START_TIMEOUT:-6s}
       - MEDIAMTX_SOURCE_ON_DEMAND_CLOSE_AFTER=${MEDIAMTX_SOURCE_ON_DEMAND_CLOSE_AFTER:-5m}
       - MEDIAMTX_RUN_ON_DEMAND_CLOSE_AFTER=${MEDIAMTX_RUN_ON_DEMAND_CLOSE_AFTER:-5m}
-      - MEDIAMTX_SELECTED_RUN_ON_DEMAND_CLOSE_AFTER=${MEDIAMTX_SELECTED_RUN_ON_DEMAND_CLOSE_AFTER:-90s}
+      - MEDIAMTX_ORIGINAL_RUN_ON_DEMAND_CLOSE_AFTER=${MEDIAMTX_ORIGINAL_RUN_ON_DEMAND_CLOSE_AFTER:-90s}
       - RTMP_STALL_THRESHOLD_SECONDS=${RTMP_STALL_THRESHOLD_SECONDS:-20}
       - MEDIAMTX_WARM_PATHS_ON_BOOT=${MEDIAMTX_WARM_PATHS_ON_BOOT:-true}
-      - MEDIAMTX_WARM_SELECTED_PATHS_ON_BOOT=${MEDIAMTX_WARM_SELECTED_PATHS_ON_BOOT:-false}
       - MEDIAMTX_MAX_CONCURRENT_TRANSCODES=${MEDIAMTX_MAX_CONCURRENT_TRANSCODES:-10}
       - ALARM_WEBHOOK_ALLOWED_HOSTS=${ALARM_WEBHOOK_ALLOWED_HOSTS:-}
       - ALARM_WEBHOOK_SIGNING_SECRET=${ALARM_WEBHOOK_SIGNING_SECRET:-}
@@ -951,7 +952,10 @@ services:
       # white-label nova nascia anunciando o host ICE errado.
       - MTX_WEBRTCADDITIONALHOSTS=${MEDIAMTX_WEBRTC_ADDITIONAL_HOST:-127.0.0.1}
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 8554 || exit 1"]
+      # Liveness de toda a superfície interna necessária: ingest RTMP, saída
+      # RTSP, API de reconciliação e signaling WebRTC. Lê sockets LISTEN em
+      # /proc sem gerar sessões artificiais nem ruído nos logs de mídia.
+      test: ["CMD-SHELL", "for port in 078F 216A 270D 22B9; do grep -Eq \":$${port}[[:space:]]+[0]+:[0]+[[:space:]]+0A[[:space:]]\" /proc/net/tcp /proc/net/tcp6 || exit 1; done"]
       interval: 30s
       timeout: 5s
       retries: 5

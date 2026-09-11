@@ -9,6 +9,7 @@ import {
   hashIngestKey,
   ingestHashMatches,
   ingestKeyFromPathName,
+  ingestProfilePathCandidates,
   ingestPathName,
   ingestPathNames,
   isPushSourced,
@@ -117,6 +118,29 @@ test('publicador NÃO consegue mirar um path de câmera', () => {
   ];
   for (const alvo of alvos) {
     assert.equal(ingestKeyFromPathName(alvo), null, `${alvo} jamais pode ser lido como ingestão`);
+  }
+});
+
+test('perfis principal e secundário do mesmo equipamento formam uma família segura', () => {
+  assert.deepEqual(
+    ingestProfilePathCandidates('live/liveStream_DHK0003252944_0_1'),
+    [
+      'live/liveStream_DHK0003252944_0_0',
+      'live/liveStream_DHK0003252944_0_1',
+    ],
+  );
+  assert.deepEqual(
+    ingestProfilePathCandidates('live/liveStream_H3ZL2802830WB_0_0C'),
+    [
+      'live/liveStream_H3ZL2802830WB_0_0C',
+      'live/liveStream_H3ZL2802830WB_0_1C',
+    ],
+  );
+});
+
+test('formato desconhecido não autoriza caminhos parecidos por aproximação', () => {
+  for (const path of ['live/camera_0_1', 'fabricante/serial_stream2', 'd/camera-recente']) {
+    assert.deepEqual(ingestProfilePathCandidates(path), [path]);
   }
 });
 

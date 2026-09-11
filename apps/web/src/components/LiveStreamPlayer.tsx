@@ -62,6 +62,11 @@ const LIVE_STALL_RECONNECT_MS = 16000;
 const LIVE_RECONNECT_DEBOUNCE_MS = 2500;
 const LIVE_FAST_RETRY_BASE_MS = 1200;
 const LIVE_FAST_RETRY_MAX_MS = 7000;
+// A câmera pode chegar ao SRS alguns instantes antes de o MediaMTX anunciar a
+// origem interna. Recuperamos essa janela automaticamente, mas paramos após
+// tentativas suficientes para uma fonte realmente desligada não virar spinner.
+const RTMP_SOURCE_AUTO_RETRY_LIMIT = 4;
+const RTMP_SOURCE_BACKGROUND_RETRY_MS = 15_000;
 const LIVE_EDGE_OFFSET_SECONDS = 0.35;
 // Recuperação de latência sem salto (técnica do Frigate): acima de 1,2s de
 // deriva a reprodução acelera suavemente (teto 1,5×) até reencostar no ao vivo;
@@ -83,18 +88,15 @@ const WEBRTC_RTP_STALL_RECONNECT_MS = 30000;
 const LIVE_BLACK_FRAME_FAILOVER_MS = 6000;
 const LIVE_VIEW_LEASE_TTL_SECONDS = 20;
 const LIVE_VIEW_HEARTBEAT_MS = 7000;
-const LIVE_QUALITY_STORAGE_PREFIX = 'drac-live-quality';
 const WEBRTC_HEVC_PROOF_STORAGE_KEY = 'drac-live-capability:webrtc-hevc:v1';
 const WEBRTC_HEVC_PROOF_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const STREAM_URL_CACHE_TTL_MS = 60 * 1000;
 type ActiveLiveProtocol = 'WEBRTC' | 'LL-HLS' | 'HLS';
 // Qualidade escolhida pelo operador na visualização de câmera única (1x1):
 //  - instant  → sub-stream (mesmo da grade): latência mínima, zero CPU, imagem reduzida
-//  - balanced → principal transcodificado H.264: latência mínima, 1080p, ~0,6 núcleo
 //  - max      → principal ORIGINAL sem transcode (HEVC incluso): zero CPU, qualidade
-//               idêntica à câmera; WebRTC quando o navegador decodifica H.265, senão
-//               LL-HLS/HLS (~1–3s de atraso); sem suporte nenhum → volta a balanced.
-type LiveQualityMode = 'instant' | 'balanced' | 'max';
+//               idêntica à câmera; sem suporte a HEVC, volta ao Instantâneo.
+type LiveQualityMode = 'instant' | 'max';
 function hasWebrtcHevcProof() {
   try {
     const provedAt = Number(window.localStorage.getItem(WEBRTC_HEVC_PROOF_STORAGE_KEY));
@@ -107,26 +109,6 @@ function hasWebrtcHevcProof() {
 function storeWebrtcHevcProof() {
   try {
     window.localStorage.setItem(WEBRTC_HEVC_PROOF_STORAGE_KEY, String(Date.now()));
-  } catch {
-  }
-}
-
-function getStoredLiveQuality(cameraId: string): LiveQualityMode {
-  try {
-    const stored = window.localStorage.getItem(`${LIVE_QUALITY_STORAGE_PREFIX}:${cameraId}`);
-    if (stored === 'instant' || stored === 'balanced' || stored === 'max') return stored;
-    // Sem preferência explícita, navegador com HEVC recebe o bitstream original
-    // (zero transcode). O incompatível começa em H.264. A escolha manual segue
-    // persistida e sempre prevalece.
-    return BROWSER_DECODES_HEVC || hasWebrtcHevcProof() ? 'max' : 'balanced';
-  } catch {
-    return BROWSER_DECODES_HEVC || hasWebrtcHevcProof() ? 'max' : 'balanced';
-  }
-}
-
-function storeLiveQuality(cameraId: string, quality: LiveQualityMode) {
-  try {
-    window.localStorage.setItem(`${LIVE_QUALITY_STORAGE_PREFIX}:${cameraId}`, quality);
   } catch {
   }
 }
@@ -151,7 +133,7 @@ const MSE_DECODES_HEVC = (() => {
   }
 })();
 // Este navegador consegue exibir H.265 por ALGUM caminho? Se não, o modo "Máxima"
-// (H.265 original) cai automaticamente para "Equilibrado" (H.264) — o seletor avisa.
+// (H.265 original) cai automaticamente para "Instantâneo" (H.264).
 const BROWSER_DECODES_HEVC = WEBRTC_DECODES_HEVC || MSE_DECODES_HEVC;
 export type LivePlayerStatus = {
   activeProtocol: ActiveLiveProtocol | null;
@@ -349,6 +331,7 @@ export function LiveStreamPlayer({
   const hasFrameRef = useRef(false);
   const retryTimerRef = useRef<number | null>(null);
   const retryAttemptRef = useRef(0);
+  const rtmpBackgroundRecoveryRef = useRef(false);
   const activeProtocolRef = useRef<ActiveLiveProtocol | null>(null);
   const primaryProtocolRef = useRef<LiveProtocol>('webrtc');
   const hiddenAtRef = useRef<number | null>(null);
@@ -408,6 +391,11 @@ export function LiveStreamPlayer({
   const [displayFps, setDisplayFps] = useState<number | null>(null);
   const [sourceVideoCodec, setSourceVideoCodec] = useState<string | null>(null);
   const [isTranscodedForBrowser, setIsTranscodedForBrowser] = useState(false);
+  // Defesa também no cliente: respostas antigas ainda podem estar no cache do
+  // navegador. Conversão de vídeo só existe quando a ORIGEM é HEVC/H.265.
+  // H.264 com publisher de áudio continua sendo passthrough de vídeo.
+  const showsVideoTranscode = isTranscodedForBrowser
+    && videoCodecFamily(sourceVideoCodec) === 'hevc';
   // Custo da conversão, medido no servidor. A etiqueta de codec já mostrava
   // "H265 → H.264", mas sem dizer que isso custa 5× de CPU — o operador não tinha
   // como saber que o navegador dele é a causa, nem que trocar resolve de graça.
@@ -457,27 +445,41 @@ export function LiveStreamPlayer({
     setZoom(1);
     setPan({ x: 0, y: 0 });
   }, []);
-  // Qualidade da câmera única (1x1): persistida por câmera; na grade é sempre 'grid'.
-  const [qualityMode, setQualityMode] = useState<LiveQualityMode>(() => getStoredLiveQuality(cameraId));
+  // Câmera única sempre começa na imagem original. Instantâneo é uma escolha
+  // temporária do operador para AQUELE atendimento; persistir essa preferência
+  // fazia um duplo clique posterior na grade abrir uma câmera esquecida em
+  // baixa qualidade.
+  const [qualityMode, setQualityMode] = useState<LiveQualityMode>('max');
+  // Grade começa sem trilha de áudio: evita uma conversão AAC→Opus por tile.
+  // O gesto explícito no ícone de volume troca SOMENTE esta câmera para o
+  // perfil com áudio, preservando o último frame durante a renegociação.
+  const [gridAudioRequested, setGridAudioRequested] = useState(false);
+  const [audioSwitchMessage, setAudioSwitchMessage] = useState<string | null>(null);
   // A grade começa sempre pelo bitstream original do substream. Só muda para o
   // path H.264 depois que este cliente realmente falhar em WebRTC/H.265 (e no
   // HLS/H.265, quando MSE estiver disponível). A detecção declarativa de codec
   // dos navegadores é incompleta; o teste real de reprodução é autoritativo.
   const [gridUsesH264Fallback, setGridUsesH264Fallback] = useState(false);
   useEffect(() => {
-    setQualityMode(getStoredLiveQuality(cameraId));
+    setQualityMode('max');
     setGridUsesH264Fallback(false);
+    setGridAudioRequested(false);
+    setAudioSwitchMessage(null);
+    retryAttemptRef.current = 0;
+    rtmpBackgroundRecoveryRef.current = false;
   }, [cameraId]);
   // RESTAURO TEMPORÁRIO (2026-09-01): a grade HEVC-via-WebRTC (`grid-hevc`)
   // black-screena em navegadores sem decodificação HEVC/WebRTC, e o fallback
   // para H.264 não dispara quando a negociação é CANCELADA (só quando FALHA).
   // Resultado: grade/ronda toda preta. Enquanto o fallback do `grid-hevc` não
-  // for confiável, a grade usa o caminho H.264 comprovado ("Equilibrado").
+  // for confiável, a grade usa o caminho H.264 comprovado ("Instantâneo").
   // Para reativar o HEVC: volte GRID_HEVC_ENABLED para true.
   const GRID_HEVC_ENABLED = false;
   const deliveryMode: LiveDeliveryMode = liveViewMode === 'selected'
-    ? (qualityMode === 'instant' ? 'grid' : qualityMode === 'max' ? 'original' : 'selected')
-    : (GRID_HEVC_ENABLED && !gridUsesH264Fallback) ? 'grid-hevc' : 'grid';
+    ? (qualityMode === 'max' ? 'original' : 'grid-audio')
+    : gridAudioRequested
+      ? 'grid-audio'
+      : (GRID_HEVC_ENABLED && !gridUsesH264Fallback) ? 'grid-hevc' : 'grid';
 
   const changeQuality = useCallback((next: LiveQualityMode) => {
     // A declaração de codecs do navegador é apenas uma pista: alguns clientes
@@ -486,7 +488,6 @@ export function LiveStreamPlayer({
     // máquina de estados retorna com segurança ao caminho H.264.
     setQualityMode((current) => {
       if (current === next) return current;
-      storeLiveQuality(cameraId, next);
       failedProtocolsRef.current.clear();
       retryAttemptRef.current = 0;
       setRetryMessage(next === 'max' ? 'Abrindo vídeo original da câmera…' : 'Ajustando qualidade…');
@@ -503,6 +504,20 @@ export function LiveStreamPlayer({
     : retryMessage
       ? friendlyLiveText(retryMessage, 'Reconectando à câmera…')
       : 'Aguardando vídeo';
+
+  // A troca de perfil para incluir/remover Opus exige uma renegociação WebRTC.
+  // O último frame pode desaparecer por um instante durante a substituição do
+  // MediaStream; o aviso evita que isso pareça uma falha da câmera. Há limite
+  // para uma anomalia de rede nunca deixar o selo preso na tela.
+  useEffect(() => {
+    if (!audioSwitchMessage) return;
+    const timeout = window.setTimeout(() => setAudioSwitchMessage(null), 15_000);
+    return () => window.clearTimeout(timeout);
+  }, [audioSwitchMessage]);
+
+  useEffect(() => {
+    if (error) setAudioSwitchMessage(null);
+  }, [error]);
   const compactErrorLabel = error && TECHNICAL_LIVE_MESSAGE_REGEX.test(error)
     ? 'Reconectando…'
     : 'Sem vídeo';
@@ -692,6 +707,10 @@ export function LiveStreamPlayer({
     if (previousLiveViewModeRef.current === liveViewMode) return;
     previousLiveViewModeRef.current = liveViewMode;
     failedProtocolsRef.current.clear();
+    // Grade → câmera única (inclusive duplo clique): reinicia em Máxima.
+    // A escolha por Instantâneo continua existindo, mas apenas até o operador
+    // voltar à grade; ela não pode virar uma preferência esquecida por câmera.
+    if (liveViewMode === 'selected') setQualityMode('max');
     if (liveViewMode === 'grid') setGridUsesH264Fallback(false);
     // O reboot do stream acontece pelo próprio effect de boot (deliveryMode nas
     // dependências). Aqui só preparamos a transição: mensagem amigável e
@@ -825,8 +844,7 @@ export function LiveStreamPlayer({
         }
         if (deliveryMode === 'original' && videoCodecFamily(actualCodec) === 'hevc') {
           failedProtocolsRef.current.clear();
-          storeLiveQuality(cameraId, 'balanced');
-          setQualityMode('balanced');
+          setQualityMode('instant');
           setProtocolReason('O teste real de H.265 falhou; usando a contingência H.264.');
           setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');
           return;
@@ -856,7 +874,9 @@ export function LiveStreamPlayer({
 
     const markHealthy = (protocol: ActiveLiveProtocol) => {
       retryAttemptRef.current = 0;
+      rtmpBackgroundRecoveryRef.current = false;
       setRetryMessage(null);
+      setAudioSwitchMessage(null);
       setError(null);
       setActiveProtocol(protocol);
       activeProtocolRef.current = protocol;
@@ -887,7 +907,7 @@ export function LiveStreamPlayer({
       const delayMs = getFastRetryDelay();
       const alreadyHadFrame = hasFrameRef.current;
       setError(null);
-      const warmupMessage = /Nenhum protocolo de live conseguiu iniciar|Aguardando vídeo/i.test(message);
+      const warmupMessage = /Nenhum protocolo de live conseguiu iniciar|Aguardando vídeo|Aguardando transmissão RTMP/i.test(message);
       setRetryMessage(warmupMessage
         ? 'Aguardando vídeo da câmera'
         : `${message} Reconectando...`);
@@ -906,11 +926,31 @@ export function LiveStreamPlayer({
       }, delayMs);
     };
 
+    const scheduleRtmpBackgroundRecovery = (message: string) => {
+      if (cancelled) return;
+      clearRetryTimer();
+      rtmpBackgroundRecoveryRef.current = true;
+      setError(message);
+      setRetryMessage(null);
+      setIsLoading(false);
+      setActiveProtocol(null);
+      activeProtocolRef.current = null;
+      retryTimerRef.current = window.setTimeout(() => {
+        retryTimerRef.current = null;
+        failedProtocolsRef.current.clear();
+        streamUrlsCache.clear(`stream-urls:${authUserId}:${cameraId}:${deliveryMode}`);
+        setReloadNonce((value) => value + 1);
+      }, RTMP_SOURCE_BACKGROUND_RETRY_MS);
+    };
+
     const boot = async () => {
       const alreadyHadFrame = hasFrameRef.current;
-      setIsLoading(!alreadyHadFrame);
-      setError(null);
-      if (!alreadyHadFrame) {
+      const backgroundRtmpRecovery = rtmpBackgroundRecoveryRef.current;
+      if (!backgroundRtmpRecovery) {
+        setIsLoading(!alreadyHadFrame);
+        setError(null);
+      }
+      if (!alreadyHadFrame && !backgroundRtmpRecovery) {
         setActiveProtocol(null);
         activeProtocolRef.current = null;
         setHasLiveFrame(false);
@@ -1000,10 +1040,9 @@ export function LiveStreamPlayer({
             return;
           }
           if (deliveryMode === 'original' && videoCodecFamily(sourceCodec) === 'hevc') {
-            storeLiveQuality(cameraId, 'balanced');
-            setQualityMode('balanced');
+            setQualityMode('instant');
             failedProtocolsRef.current.clear();
-            setProtocolReason('Este navegador não decodifica H.265 — usando o modo equilibrado (H.264).');
+            setProtocolReason('Este navegador não decodifica H.265 — usando o modo Instantâneo (H.264).');
             setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');
             return;
           }
@@ -1638,8 +1677,7 @@ export function LiveStreamPlayer({
         if (deliveryMode === 'original' && videoCodecFamily(sourceCodec) === 'hevc') {
           failedProtocolsRef.current.clear();
           streamUrlsCache.clear(cacheKey);
-          storeLiveQuality(cameraId, 'balanced');
-          setQualityMode('balanced');
+          setQualityMode('instant');
           setProtocolReason('O teste real de H.265 falhou; usando a contingência H.264.');
           setNotice('O teste real de H.265 falhou neste navegador. Exibindo em H.264.');
           return;
@@ -1675,18 +1713,18 @@ export function LiveStreamPlayer({
           && streamError.response?.status === 503
           && streamError.response.data?.error === 'rtmp_source_unavailable'
         ) {
-          // Publicação RTMP não é falha de WebRTC a ser tentada em loop: não há
-          // mídia no servidor enquanto o app/encoder estiver desconectado.
-          // Parar aqui evita o "Conectando" eterno; o botão permite retestar
-          // assim que a origem voltar, sem sair da página.
-          setError(
+          // A publicação pode ter acabado de chegar ao SRS e ainda estar sendo
+          // anunciada pelo MediaMTX. Faça uma recuperação curta e limitada; se
+          // a fonte estiver realmente desligada, a tela para com um diagnóstico
+          // honesto em vez de manter "Conectando" eternamente.
+          if (retryAttemptRef.current < RTMP_SOURCE_AUTO_RETRY_LIMIT) {
+            scheduleReconnect('Aguardando transmissão RTMP da câmera');
+            return;
+          }
+          scheduleRtmpBackgroundRecovery(
             streamError.response.data.userMessage
             ?? 'Aguardando transmissão RTMP da câmera.',
           );
-          setRetryMessage(null);
-          setIsLoading(false);
-          setActiveProtocol(null);
-          activeProtocolRef.current = null;
           return;
         }
         const message = streamError instanceof Error ? streamError.message : 'Falha ao iniciar stream.';
@@ -1838,20 +1876,34 @@ export function LiveStreamPlayer({
   }, []);
 
   useEffect(() => {
+    // Cada perfil abre outro path/PeerConnection. Não carregue para a nova
+    // qualidade a última amostra da conexão anterior: isso fazia o selo mostrar
+    // por alguns segundos o bitrate do Instantâneo em "Máxima" (e vice-versa).
+    lastBitrateSampleRef.current = null;
+    setMeasuredBitrateKbps(null);
+
     if (liveViewMode !== 'selected' || activeProtocol !== 'WEBRTC') {
-      lastBitrateSampleRef.current = null;
-      setMeasuredBitrateKbps(null);
       return;
     }
 
+    let cancelled = false;
     const sample = async () => {
       const pc = webrtcPcRef.current;
       if (!pc) return;
       try {
         const stats = await pc.getStats();
+        // A qualidade pode ter trocado enquanto getStats() aguardava. Uma
+        // resposta da conexão velha nunca deve sobrescrever a medição nova.
+        if (cancelled || pc !== webrtcPcRef.current) return;
         let bytes = 0;
         stats.forEach((report) => {
           if (report.type === 'inbound-rtp' && report.kind === 'video' && !report.isRemote) {
+            // Chrome expõe retransmissões RTX/FEC como outro inbound-rtp de
+            // vídeo. Somá-lo ao fluxo principal podia quase duplicar o número
+            // mostrado em redes com perda, embora não fossem pixels adicionais.
+            const codec = report.codecId ? stats.get(report.codecId) : null;
+            const mimeType = String(codec?.mimeType ?? '').toLowerCase();
+            if (mimeType.includes('/rtx') || mimeType.includes('/red') || mimeType.includes('/ulpfec')) return;
             bytes += Number(report.bytesReceived ?? 0);
           }
         });
@@ -1863,14 +1915,17 @@ export function LiveStreamPlayer({
           setMeasuredBitrateKbps(Math.max(0, Math.round(kbps)));
         }
       } catch {
-        setMeasuredBitrateKbps(null);
+        if (!cancelled) setMeasuredBitrateKbps(null);
       }
     };
 
     void sample();
     const interval = window.setInterval(() => void sample(), 2000);
-    return () => window.clearInterval(interval);
-  }, [activeProtocol, liveViewMode]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeProtocol, deliveryMode, liveViewMode]);
 
   useEffect(() => {
     if (activeProtocol !== 'HLS' && activeProtocol !== 'LL-HLS') {
@@ -2368,13 +2423,13 @@ export function LiveStreamPlayer({
         />
       )}
 
-      {showOverlay && isLoading && (
+      {showOverlay && (isLoading || audioSwitchMessage) && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20 backdrop-blur-[1px]">
           <div className={`flex items-center gap-2 rounded-md border border-white/10 bg-black/45 text-white/75 ${
             compactLiveOverlay ? 'px-2 py-1 text-[10px]' : 'px-3 py-2 text-xs'
           }`}>
             <LoaderCircle className={`${compactLiveOverlay ? 'h-3 w-3' : 'h-4 w-4'} animate-spin`} />
-            {loadingLabel}
+            {audioSwitchMessage ?? loadingLabel}
           </div>
         </div>
       )}
@@ -2405,6 +2460,8 @@ export function LiveStreamPlayer({
             <button
               type="button"
               onClick={() => {
+                retryAttemptRef.current = 0;
+                rtmpBackgroundRecoveryRef.current = false;
                 setError(null);
                 setIsLoading(true);
                 setReloadNonce((value) => value + 1);
@@ -2453,13 +2510,12 @@ export function LiveStreamPlayer({
             >
               {([
                 ['instant', 'Instantâneo', 'Substream da câmera: imagem menor, menor latência e menos banda. Use em redes lentas ou muitas câmeras.'],
-                ['balanced', 'Equilibrado', 'Resolução original convertida para H.264 — fallback para navegador sem H.265 ou escolha manual.'],
                 [
                   'max',
-                  'Máxima',
+                  'Máxima resolução',
                   browserHevcKnown
                     ? 'Vídeo original da câmera sem conversão (preserva o H.265 quando a câmera usa esse codec). Pode ter 1–3 s de atraso.'
-                    : 'Vídeo original sem conversão. O navegador não declarou H.265; o sistema fará um teste real por WebRTC e voltará automaticamente ao Equilibrado (H.264) se não reproduzir.',
+                    : 'Vídeo original sem conversão. O navegador não declarou H.265; o sistema fará um teste real e voltará automaticamente ao Instantâneo (H.264) se não reproduzir.',
                 ],
               ] as const).map(([mode, label, hint]) => {
                 const isActive = qualityMode === mode;
@@ -2497,18 +2553,18 @@ export function LiveStreamPlayer({
           {!compactLiveOverlay && sourceVideoCodec ? (
             <span
               className={`inline-flex h-6 items-center gap-1 rounded border px-2 text-[10px] font-semibold uppercase tracking-wide ${
-                isTranscodedForBrowser
+                showsVideoTranscode
                   ? 'border-amber-400/50 bg-amber-500/20 text-amber-100'
                   : 'border-white/15 bg-black/55 text-white/80'
               }`}
               title={
-                transcodeCost
+                showsVideoTranscode && transcodeCost
                   ? `${transcodeCost.reason ?? ''} Custa cerca de ${transcodeCost.cpuMultiplier ?? 5}x mais CPU do servidor. ${transcodeCost.hint ?? ''}`.trim()
                   : undefined
               }
             >
-              {sourceVideoCodec}{isTranscodedForBrowser ? ' → H.264' : ''}
-              {isTranscodedForBrowser && transcodeCost?.cpuMultiplier
+              {sourceVideoCodec}{showsVideoTranscode ? ' → H.264' : ''}
+              {showsVideoTranscode && transcodeCost?.cpuMultiplier
                 ? ` · ${transcodeCost.cpuMultiplier}x CPU`
                 : ''}
             </span>
@@ -2565,6 +2621,13 @@ export function LiveStreamPlayer({
           type="button"
           onClick={() => {
             const nextMuted = !isMuted;
+            if (liveViewMode === 'grid' && nextMuted !== isMuted) {
+              // Só o clique que liga/desliga áudio reconecta este tile. A
+              // grade inteira continua no H.264 em passthrough, sem áudio.
+              if (hasFrameRef.current) preserveFrameOnReloadRef.current = true;
+              setAudioSwitchMessage(nextMuted ? 'Desativando áudio…' : 'Ativando áudio…');
+              setGridAudioRequested(!nextMuted);
+            }
             setIsMuted(nextMuted);
             const element = videoRef.current;
             if (element) {

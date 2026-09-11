@@ -100,7 +100,7 @@ test('câmera intacta: todos os campos casam e o estado é ok', () => {
 
 // ── 2. Firmware trocou o codec: o caso que mais gera visita técnica ─────────
 
-test('codec virou H.265 depois de salvo: divergência CRÍTICA e live passa a transcodificar', () => {
+test('codec virou H.265 depois de salvo: divergência CRÍTICA e Máxima preserva o original', () => {
   const input = healthyInput();
   input.detected.main.codec = 'hevc';
   const report = buildCameraDiagnosticsReport(input);
@@ -112,12 +112,10 @@ test('codec virou H.265 depois de salvo: divergência CRÍTICA e live passa a tr
   assert.equal(codec.detected, 'H.265');
   assert.equal(report.state, 'diverged');
 
-  // O "por que está transcodificando" precisa apontar a CAUSA medida, não um
-  // palpite: o navegador não decodifica H.265 em WebRTC, então a live passa a
-  // gastar CPU do servidor. É isso que o técnico precisa ler na tela.
   const live = verdict(report, 'live_single');
-  assert.equal(live.transcoding, true);
-  assert.equal(live.code, 'source_hevc');
+  assert.equal(live.transcoding, false);
+  assert.equal(live.code, 'passthrough');
+  assert.match(live.reason, /original|Instantâneo/);
   assert.equal(live.certainty, 'measured');
 });
 
@@ -127,12 +125,12 @@ test('codec continua H.264 e sem áudio: live é passthrough (sem CPU à toa)', 
   assert.equal(live.code, 'passthrough');
 });
 
-test('áudio ligado em H.264 transcodifica a live por causa do WebRTC, não do vídeo', () => {
+test('áudio ligado não cria transcode escondido na câmera individual', () => {
   const input = healthyInput();
   input.configured.audioEnabled = true;
   const live = verdict(buildCameraDiagnosticsReport(input), 'live_single');
-  assert.equal(live.transcoding, true);
-  assert.equal(live.code, 'audio_webrtc');
+  assert.equal(live.transcoding, false);
+  assert.equal(live.code, 'passthrough');
 });
 
 // ── 3. Resolução caiu — o bug do rtspPath grudento, visto em produção ───────
@@ -388,7 +386,7 @@ test('serviço: divergência de codec sai montada e sem a senha da câmera', asy
 
   assert.equal(report.state, 'diverged');
   assert.equal(finding(report as CameraDiagnosticsReport, 'codec').detected, 'H.265');
-  assert.equal(verdict(report as CameraDiagnosticsReport, 'live_single').code, 'source_hevc');
+  assert.equal(verdict(report as CameraDiagnosticsReport, 'live_single').code, 'passthrough');
 
   const serialized = JSON.stringify(report);
   assert.equal(serialized.includes(SERVICE_PASSWORD), false, 'senha decifrada no payload do diagnóstico');

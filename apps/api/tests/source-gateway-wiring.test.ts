@@ -8,20 +8,19 @@ import {
 
 // ── Ligação do Source Gateway (Fase 3, passo A+B+C) ──────────────────────────
 // O gateway existia mas era inalcançável: ninguém traduzia o vocabulário de
-// perfil (main|sub) para o do proxy (selected|grid|original), ninguém avisava
+// perfil (main|sub) para o do proxy (grid|original), ninguém avisava
 // que havia origem publicada, e nenhum consumidor perguntava a ele.
 
-test('tradutor: grid usa o SUBSTREAM; selected e original usam o principal', () => {
+test('tradutor: grid usa o SUBSTREAM e original usa o principal', () => {
   assert.equal(liveViewModeToSourceProfile('grid'), 'sub');
-  assert.equal(liveViewModeToSourceProfile('selected'), 'main');
   assert.equal(liveViewModeToSourceProfile('original'), 'main');
 });
 
 test('tradutor: a volta devolve o modo canônico de cada perfil', () => {
   assert.equal(sourceProfileToLiveViewMode('sub'), 'grid');
-  assert.equal(sourceProfileToLiveViewMode('main'), 'selected');
+  assert.equal(sourceProfileToLiveViewMode('main'), 'original');
   // Ida e volta a partir do modo canônico é estável (a relação é muitos-para-um).
-  for (const mode of ['grid', 'selected'] as const) {
+  for (const mode of ['grid', 'original'] as const) {
     assert.equal(sourceProfileToLiveViewMode(liveViewModeToSourceProfile(mode)), mode);
   }
 });

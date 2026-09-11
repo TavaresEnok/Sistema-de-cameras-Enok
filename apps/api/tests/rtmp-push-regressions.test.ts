@@ -4,6 +4,8 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { CamerasService } from '../src/cameras/cameras.service';
 import { ClipCaptureService } from '../src/camera-stream/clip-capture.service';
 import { FfmpegMjpegService } from '../src/camera-stream/ffmpeg-mjpeg.service';
+import { MediamtxProxyService } from '../src/camera-stream/mediamtx-proxy.service';
+import { RtmpIngestSourceService } from '../src/cameras/rtmp-ingest-source.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { generateIngestKey } from '../src/cameras/helpers/rtmp-ingest.helper';
 import type { AuthUser } from '../src/common/types/auth-user.type';
@@ -41,7 +43,37 @@ test('botão Gravar usa a publicação interna da RTMP e nunca tenta 0.0.0.0', a
   assert.match(input.url, /^rtsp:\/\/.*@mediamtx:8554\//);
 });
 
-test('RTMP privada criada pelo app ignora continuous e herda 3 dias do grupo', async () => {
+test('RTMP administrativa ignora payload contínuo e nasce manual/desligada', async () => {
+  let written: any = null;
+  const service = Object.create(CamerasService.prototype) as any;
+  service.validateReferences = async () => undefined;
+  service.getDefaultRetentionDays = () => 7;
+  service.cryptoService = { encrypt: (value: string) => `encrypted:${value}` };
+  service.configService = { get: () => '' };
+  service.logger = { log() {} };
+  service.prisma = {
+    camera: {
+      create: async ({ data }: any) => {
+        written = data;
+        return { id: 'push-admin-1', createdAt: new Date(), updatedAt: new Date(), ...data };
+      },
+    },
+  };
+
+  await service.create({
+    name: 'Entrada RTMP',
+    sourceMode: 'rtmp_push',
+    recordingMode: 'continuous',
+    recordingEnabled: true,
+  });
+
+  assert.equal(written.recordingMode, 'manual');
+  assert.equal(written.recordingEnabled, false);
+  assert.equal(written.recordingVideoCodec, 'original');
+  assert.equal(written.audioEnabled, true, 'RTMP nova preserva áudio para a live');
+});
+
+test('RTMP privada criada pelo app nasce manual, desligada e herda 3 dias do grupo', async () => {
   const writes: any[] = [];
   const owner: AuthUser = {
     id: 'cliente-1',
@@ -143,6 +175,166 @@ test('poster de câmera RTMP offline não tenta RTSP direto nem descriptografa m
       && error.message === 'Câmera RTMP ainda não está publicando vídeo.',
   );
   assert.equal(decryptCalls, 0);
+});
+
+test('poster de câmera RTMP publicada usa o stream interno, não o IP marcador', async () => {
+  let decryptCalls = 0;
+  let gridCalls = 0;
+  const proxy = Object.create(MediamtxProxyService.prototype) as any;
+  proxy.camerasService = {
+    getCameraOrThrow: async () => ({
+      id: 'push-poster-1', sourceMode: 'rtmp_push', enabled: true,
+      ip: '0.0.0.0', passwordEncrypted: 'marcador', preferredRtspTransport: 'tcp',
+    }),
+  };
+  proxy.configService = { get: () => 'tcp' };
+  proxy.cryptoService = { decrypt: () => { decryptCalls += 1; throw new Error('marcador não pode ser lido'); } };
+  proxy.chooseGridSource = async () => { gridCalls += 1; throw new Error('não deve consultar RTSP da câmera'); };
+  proxy.resolvePushLiveSource = async () => ({
+    sourceUrl: 'rtsp://media-interno/cam_publicada', profile: null, isHevc: false,
+  });
+
+  const selected = await proxy.resolveGridPosterSource('push-poster-1');
+  assert.equal(selected.sourceUrl, 'rtsp://media-interno/cam_publicada');
+  assert.equal(selected.sourceVideoCodec, 'h264');
+  assert.equal(selected.usedSubStream, false);
+  assert.equal(decryptCalls, 0);
+  assert.equal(gridCalls, 0);
+});
+
+test('entrada RTMP recém-publicada aguarda a propagação curta do MediaMTX antes de declarar sem vídeo', async () => {
+  const service = new RtmpIngestSourceService(
+    {
+      get: (key: string) => ({
+        mediaMtxApiUser: 'internal',
+        mediaMtxApiPass: 'internal',
+        mediaMtxRtspInternalUrl: 'rtsp://mediamtx:8554',
+      })[key],
+    } as any,
+    { decrypt: () => { throw new Error('não deve precisar da chave quando há path'); } } as any,
+  );
+  let reads = 0;
+  (service as any).getRuntime = async () => {
+    reads += 1;
+    return reads === 1
+      ? { ready: false, stalled: false, bytesReceived: null, tracks: [], codec: null, bitrateKbps: null }
+      : { ready: true, stalled: false, bytesReceived: 1200, tracks: ['H264'], codec: 'h264', bitrateKbps: null };
+  };
+
+  const resolved = await service.resolve({ rtmpIngestPath: 'd/camera-recente' }, { requireReady: true });
+  assert.equal(resolved.pathName, 'd/camera-recente');
+  assert.equal(resolved.ready, true);
+  assert.equal(resolved.sourceUrl.includes('mediamtx:8554'), true);
+  assert.equal(reads, 2, 'deve reconsultar a publicação antes de falhar');
+});
+
+test('RTMP usa o secundário quando é o único perfil que publica', async () => {
+  const service = new RtmpIngestSourceService(
+    {
+      get: (key: string) => ({
+        mediaMtxApiUser: 'internal',
+        mediaMtxApiPass: 'internal',
+        mediaMtxRtspInternalUrl: 'rtsp://mediamtx:8554',
+      })[key],
+    } as any,
+    { decrypt: () => { throw new Error('path aprendido não usa chave'); } } as any,
+  );
+  const reads: string[] = [];
+  (service as any).getRuntime = async (pathName: string) => {
+    reads.push(pathName);
+    return pathName.endsWith('_0_1')
+      ? { ready: true, stalled: false, bytesReceived: 1200, tracks: ['H264'], codec: 'h264', bitrateKbps: 700 }
+      : { ready: false, stalled: false, bytesReceived: null, tracks: [], codec: null, bitrateKbps: null };
+  };
+
+  const resolved = await service.resolve({
+    rtmpIngestPath: 'live/liveStream_DHK0003252944_0_1',
+  }, { requireReady: true });
+
+  assert.deepEqual(reads, [
+    'live/liveStream_DHK0003252944_0_0',
+    'live/liveStream_DHK0003252944_0_1',
+  ]);
+  assert.equal(resolved.pathName, 'live/liveStream_DHK0003252944_0_1');
+  assert.equal(resolved.ready, true);
+});
+
+test('RTMP promove o principal quando os dois perfis estão disponíveis', async () => {
+  const service = new RtmpIngestSourceService(
+    {
+      get: (key: string) => ({
+        mediaMtxApiUser: 'internal',
+        mediaMtxApiPass: 'internal',
+        mediaMtxRtspInternalUrl: 'rtsp://mediamtx:8554',
+      })[key],
+    } as any,
+    { decrypt: () => { throw new Error('path aprendido não usa chave'); } } as any,
+  );
+  const reads: string[] = [];
+  (service as any).getRuntime = async (pathName: string) => {
+    reads.push(pathName);
+    return { ready: true, stalled: false, bytesReceived: 5000, tracks: ['H264'], codec: 'h264', bitrateKbps: 2000 };
+  };
+
+  const resolved = await service.resolve({
+    rtmpIngestPath: 'live/liveStream_DHK0003252944_0_1',
+  }, { requireReady: true });
+
+  assert.deepEqual(reads, ['live/liveStream_DHK0003252944_0_0']);
+  assert.equal(resolved.pathName, 'live/liveStream_DHK0003252944_0_0');
+});
+
+test('RTMP abandona o principal parado e mantém o secundário vivo', async () => {
+  const service = new RtmpIngestSourceService(
+    {
+      get: (key: string) => ({
+        mediaMtxApiUser: 'internal',
+        mediaMtxApiPass: 'internal',
+        mediaMtxRtspInternalUrl: 'rtsp://mediamtx:8554',
+      })[key],
+    } as any,
+    { decrypt: () => { throw new Error('path aprendido não usa chave'); } } as any,
+  );
+  (service as any).getRuntime = async (pathName: string) => pathName.endsWith('_0_0')
+    ? { ready: true, stalled: true, bytesReceived: 5000, tracks: ['H264'], codec: 'h264', bitrateKbps: 0 }
+    : { ready: true, stalled: false, bytesReceived: 7000, tracks: ['H264'], codec: 'h264', bitrateKbps: 700 };
+
+  const resolved = await service.resolve({
+    rtmpIngestPath: 'live/liveStream_DHK0003252944_0_0',
+  }, { requireReady: true });
+
+  assert.equal(resolved.pathName, 'live/liveStream_DHK0003252944_0_1');
+  assert.equal(resolved.stalled, false);
+});
+
+test('autorização por path aceita perfil irmão, mas nega família ambígua', async () => {
+  const service = Object.create(CamerasService.prototype) as any;
+  let queriedPaths: string[] = [];
+  service.prisma = {
+    camera: {
+      findMany: async ({ where }: any) => {
+        queriedPaths = where.rtmpIngestPath.in;
+        return [{ id: 'camera-1', name: 'Recepção', enabled: true, sourceMode: 'rtmp_push' }];
+      },
+    },
+  };
+
+  const camera = await service.findCameraByIngestPath('live/liveStream_DHK0003252944_0_0');
+  assert.equal(camera.id, 'camera-1');
+  assert.deepEqual(queriedPaths, [
+    'live/liveStream_DHK0003252944_0_0',
+    'live/liveStream_DHK0003252944_0_1',
+  ]);
+
+  service.prisma.camera.findMany = async () => [
+    { id: 'camera-1', name: 'Recepção', enabled: true, sourceMode: 'rtmp_push' },
+    { id: 'camera-2', name: 'Garagem', enabled: true, sourceMode: 'rtmp_push' },
+  ];
+  assert.equal(
+    await service.findCameraByIngestPath('live/liveStream_DHK0003252944_0_1'),
+    null,
+    'dois donos diferentes precisam falhar fechados',
+  );
 });
 
 test('edição de câmera RTMP ignora o marcador de rede sem afrouxar câmera RTSP', async () => {

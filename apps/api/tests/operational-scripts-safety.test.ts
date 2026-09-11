@@ -23,10 +23,18 @@ test('API aplica migrações antes de iniciar mesmo fora do script oficial', () 
 });
 
 test('update mantém writers quiescentes durante rollback transacional', () => {
-  assert.match(updateScript, /stop api web drac-central/);
+  assert.match(updateScript, /stop "\$\{APP_SERVICES\[@\]\}"/);
   assert.match(updateScript, /--exit-on-error --single-transaction/);
   assert.doesNotMatch(updateScript, /pg_restore[^\n]*\|\| true/);
   assert.match(updateScript, /ROLLBACK INCOMPLETO/);
+});
+
+test('update reporta o commit implantado e não sobe a Central em tenants', () => {
+  assert.match(updateScript, /DEPLOY_COMMIT="\$\(git -C "\$ROOT_DIR" rev-parse HEAD\)"/);
+  assert.match(updateScript, /env_set DRAC_VERSION "\$DEPLOY_COMMIT"/);
+  assert.match(updateScript, /APP_SERVICES=\(api web\)/);
+  assert.match(updateScript, /APP_SERVICES\+=\(drac-central\)/);
+  assert.doesNotMatch(updateScript, /(?:build|stop|up -d) api web drac-central/);
 });
 
 test('update aguarda API e Web iniciarem antes de considerar o deploy quebrado', () => {
@@ -34,6 +42,19 @@ test('update aguarda API e Web iniciarem antes de considerar o deploy quebrado',
   assert.match(updateScript, /for attempt in \$\(seq 1 "\$attempts"\)/);
   assert.match(updateScript, /wait_for_http GET http:\/\/127\.0\.0\.1:3000\/health\/ready API/);
   assert.match(updateScript, /wait_for_http HEAD http:\/\/127\.0\.0\.1:5173\/ Web/);
+});
+
+test('update não confunde readiness em Atenção com falha que exige rollback', () => {
+  assert.match(
+    updateScript,
+    /readiness_status=0\s+"\$ROOT_DIR\/scripts\/production-readiness\.sh" \|\| readiness_status=\$\?/,
+  );
+  assert.match(updateScript, /if \[ "\$readiness_status" -ge 2 \]/);
+  assert.doesNotMatch(
+    updateScript,
+    /set \+e\s+"\$ROOT_DIR\/scripts\/production-readiness\.sh"/,
+    'ERR trap dispara mesmo com set +e; o comando deve estar protegido por ||',
+  );
 });
 
 test('update bloqueia a migration histórica quando ainda existem gravações duplicadas', () => {

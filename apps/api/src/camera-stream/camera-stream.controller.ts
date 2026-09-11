@@ -58,8 +58,8 @@ type SrsPublishHookRequest = {
 export function isLoopbackMediaWorkerAuthorized(body: MediaMtxAuthRequest) {
   const action = String(body?.action ?? '');
   const path = String(body?.path ?? '');
-  const sourcePath = /^cam_[0-9a-f]{32}(?:_grid|_grid_hevc|_orig)?_source$/i.test(path);
-  const outputPath = /^cam_[0-9a-f]{32}(?:_grid|_grid_hevc|_orig)?$/i.test(path);
+  const sourcePath = /^cam_[0-9a-f]{32}(?:_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?_source$/i.test(path);
+  const outputPath = /^cam_[0-9a-f]{32}(?:_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?$/i.test(path);
   // MediaMTX 1.15 pode enviar somente o IP ou IP:porta no callback HTTP,
   // dependendo do transporte RTSP. O publisher `runOnDemand` disca para o
   // próprio 127.0.0.1; rejeitar a variação com porta fazia o FFmpeg receber
@@ -306,7 +306,7 @@ export class CameraStreamController {
       return deny('Ação de mídia não autorizada.');
     }
 
-    const match = /^cam_([0-9a-f]{32})(?:_grid|_grid_hevc|_orig)?$/i.exec(String(body?.path ?? ''));
+    const match = /^cam_([0-9a-f]{32})(?:_grid|_grid_audio|_grid_hevc|_orig|_orig_audio)?$/i.exec(String(body?.path ?? ''));
     if (!match) return deny('Caminho de mídia inválido.');
 
     const token = String(body?.token ?? '').trim();
@@ -488,7 +488,12 @@ export class CameraStreamController {
         const ensured = await this.mediamtxProxyService.ensurePathForCamera(cameraId, viewMode);
         mediaBridge = this.mediamtxProxyService.buildPublicUrls(req, ensured.pathName, ensured.sourceUrl);
         measuredLiveCodec = ensured.sourceVideoCodec;
-        liveTranscodedForBrowser = ensured.transcodedForLive;
+        // `transcodedForLive` também cobre AAC→Opus: há um publisher, mas o
+        // vídeo H.264 continua em cópia. O selo do painel é exclusivamente
+        // sobre H.265→H.264 (o custo de vídeo que chega a ~5×), portanto não
+        // pode usar esse booleano amplo e assustar o operador sem motivo.
+        liveTranscodedForBrowser = ensured.transcodedForLive
+          && isHevcCodec(ensured.sourceVideoCodec);
         effectiveDeliveryProfile = ensured.liveProfile ?? effectiveDeliveryProfile;
       } catch (error) {
         // Uma câmera RTMP só existe enquanto o equipamento/app está publicando.
@@ -573,7 +578,7 @@ export class CameraStreamController {
       originalProfile,
       deliveryProfile,
       deliveryMode: viewMode,
-      deliveryTarget: viewMode === 'grid' || viewMode === 'grid-hevc'
+      deliveryTarget: viewMode === 'grid' || viewMode === 'grid-audio' || viewMode === 'grid-hevc'
         ? {
             maxWidth: GRID_LIVE_MAX_WIDTH,
             maxHeight: GRID_LIVE_MAX_HEIGHT,
@@ -592,6 +597,8 @@ export class CameraStreamController {
         protocolOrder,
         reason: viewMode === 'grid-hevc'
           ? 'A grade recebe o substream no codec original e prioriza WebRTC; H.264 é apenas contingência do cliente.'
+          : viewMode === 'grid-audio'
+          ? 'Áudio foi solicitado para este tile; somente esta câmera normaliza AAC em Opus.'
           : smartOriginalEnabled
           ? 'Perfil Live recebido em HEVC; navegador recebe H.264, enquanto gravação permanece no perfil H.265 dedicado.'
           : configuredPreferred === 'webrtc'

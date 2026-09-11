@@ -4,12 +4,31 @@ import path from 'node:path';
 
 export default defineConfig(async () => {
   const { default: tailwindcss } = await import('@tailwindcss/vite');
+  // Identifica exatamente os arquivos gerados neste build. Abas que ficaram
+  // abertas durante um deploy usam este valor para perceber que o servidor já
+  // publicou outra interface e recarregar antes de misturar chunks antigos e
+  // novos (por exemplo, o player antigo pedindo o perfil reduzido no mapa).
+  const frontendBuildId = process.env.VITE_FRONTEND_BUILD_ID?.trim()
+    || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
   return {
     plugins: [
       react(),
       tailwindcss(),
+      {
+        name: 's2cam-frontend-version',
+        generateBundle() {
+          this.emitFile({
+            type: 'asset',
+            fileName: 'frontend-version.json',
+            source: `${JSON.stringify({ buildId: frontendBuildId })}\n`,
+          });
+        },
+      },
     ],
+    define: {
+      __S2CAM_FRONTEND_BUILD_ID__: JSON.stringify(frontendBuildId),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),

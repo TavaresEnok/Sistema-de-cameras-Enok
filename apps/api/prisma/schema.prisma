@@ -200,7 +200,7 @@ model Camera {
   recordingHeight        Int?
   recordingFps           Int?
   recordingBitrateKbps   Int?
-  audioEnabled           Boolean      @default(false)
+  audioEnabled           Boolean      @default(true)
   aiEnabled              Boolean      @default(true)
   alarmsEnabled          Boolean      @default(true)
   hasEdgeAi              Boolean      @default(false)

@@ -144,7 +144,7 @@ function persistSavedLayouts(layouts: SavedLayout[]) {
   window.localStorage.setItem(LIVE_LAYOUTS_STORAGE_KEY, JSON.stringify(layouts));
 }
 
-export default function LiveViewPage() {
+export default function LiveViewPage({ pageActive = true }: { pageActive?: boolean }) {
   const API_URL = getApiBaseUrl();
   const accessToken = useAuthStore((state) => state.accessToken);
   const allCameras = useVmsDataStore((state) => state.cameras);
@@ -211,6 +211,7 @@ export default function LiveViewPage() {
     // O painel recolhido não gera trabalho de snapshot. Ao abrir, os tokens são
     // emitidos em um único lote; o navegador baixa somente as imagens visíveis.
     if (!panelOpen) return;
+    if (!pageActive) return;
     void loadSidebarPosters();
     const renew = () => {
       if (document.visibilityState === 'visible') void loadSidebarPosters();
@@ -223,7 +224,7 @@ export default function LiveViewPage() {
       window.removeEventListener('focus', renew);
       document.removeEventListener('visibilitychange', renew);
     };
-  }, [loadSidebarPosters, panelOpen, sidebarPosterCameraIdsKey]);
+  }, [loadSidebarPosters, pageActive, panelOpen, sidebarPosterCameraIdsKey]);
 
   const retrySidebarPoster = useCallback((cameraId: string) => {
     setSidebarPosterUrls((current) => {
@@ -296,14 +297,16 @@ export default function LiveViewPage() {
   );
   const availableLayouts = savedLayouts.length ? savedLayouts : generatedLayouts;
 
-  // Gravação por movimento/objeto não é a ação manual do operador e não pode
-  // pintar o tile de vermelho. O destaque vermelho fica reservado ao REC manual.
+  // Só uma ação explícita do operador deve ficar vermelha como "gravação
+  // manual". Gravações por movimento/objeto podem estar escrevendo arquivos
+  // normalmente, mas não podem dar a impressão de que alguém apertou Gravar.
   const isManualRecording = useCallback((camera: Camera | null | undefined) => {
     if (!camera) return false;
     const override = recordingOverrides[camera.id];
     if (typeof override === 'boolean') return override;
     return camera.recordingMode === 'manual' && camera.status === 'recording';
   }, [recordingOverrides]);
+  const isRecording = isManualRecording(selectedCameraObj);
   useEffect(() => {
     if (!cameraIds.length && cameras.length) {
       const onlineFirst = [...cameras].sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
@@ -416,6 +419,7 @@ export default function LiveViewPage() {
   // Esc volta para a grade anterior — exceto digitando num campo ou com diálogo
   // aberto (nesses casos o Esc pertence ao campo/diálogo).
   useEffect(() => {
+    if (!pageActive) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (layoutDialog || deleteTarget) return;
@@ -432,7 +436,7 @@ export default function LiveViewPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [restoreLayout, layoutDialog, deleteTarget, wallMode, toggleWallMode]);
+  }, [pageActive, restoreLayout, layoutDialog, deleteTarget, wallMode, toggleWallMode]);
 
   const handleCamAction = useCallback((action: string, camera: Camera) => {
     if (action === 'playback') setLocation(`/playback?cameraId=${encodeURIComponent(camera.id)}`);

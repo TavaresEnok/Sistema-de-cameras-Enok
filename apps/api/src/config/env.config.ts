@@ -137,12 +137,11 @@ export function readEnvConfig(
     mediaMtxSourceOnDemandStartTimeout: source.MEDIAMTX_SOURCE_ON_DEMAND_START_TIMEOUT ?? '6s',
     mediaMtxSourceOnDemandCloseAfter: source.MEDIAMTX_SOURCE_ON_DEMAND_CLOSE_AFTER ?? '5m',
     mediaMtxRunOnDemandCloseAfter: source.MEDIAMTX_RUN_ON_DEMAND_CLOSE_AFTER ?? '5m',
-    mediaMtxSelectedRunOnDemandCloseAfter:
-      source.MEDIAMTX_SELECTED_RUN_ON_DEMAND_CLOSE_AFTER
+    mediaMtxOriginalRunOnDemandCloseAfter:
+      source.MEDIAMTX_ORIGINAL_RUN_ON_DEMAND_CLOSE_AFTER
       ?? source.MEDIAMTX_RUN_ON_DEMAND_CLOSE_AFTER
-      ?? '5m',
+      ?? '90s',
     mediaMtxWarmPathsOnBoot: flag('MEDIAMTX_WARM_PATHS_ON_BOOT', true),
-    mediaMtxWarmSelectedPathsOnBoot: flag('MEDIAMTX_WARM_SELECTED_PATHS_ON_BOOT', false),
     adminEmail: source.ADMIN_EMAIL ?? 'admin@local.dev',
     adminPassword: source.ADMIN_PASSWORD ?? '',
     adminName: source.ADMIN_NAME ?? 'Administrador',

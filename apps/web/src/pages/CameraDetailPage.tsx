@@ -228,7 +228,7 @@ const emptyConfig: CameraConfig = {
   recordingHeight: '',
   recordingFps: '',
   recordingBitrateKbps: '',
-  audioEnabled: false,
+  audioEnabled: true,
   alarmsEnabled: true,
   hasEdgeAi: false,
   motionTrigger: 'SYSTEM',

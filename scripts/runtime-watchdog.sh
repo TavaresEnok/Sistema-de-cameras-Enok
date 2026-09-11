@@ -69,8 +69,38 @@ if [ "$(load_env_var DRAC_GPU_ENABLED)" = "true" ] && [ -f "$INFRA_DIR/docker-co
   COMPOSE_MEDIAMTX+=(-f "$INFRA_DIR/docker-compose.gpu.yml")
 fi
 
+# Docker não reinicia um container apenas por ele ficar `unhealthy`.
+# `restart: unless-stopped` cobre crash, mas não processo vivo com subsistema
+# travado. A cada ciclo, cura SOMENTE os dois componentes RTMP degradados; nunca
+# toca em SRS/callback saudáveis e portanto não derruba publicações válidas.
+heal_rtmp_service() { # container service
+  local container="$1" service="$2" state
+  state="$(docker inspect -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || true)"
+  case "$state" in
+    running\|healthy|running\|starting) return ;;
+    running\|unhealthy)
+      if docker restart "$container" >/dev/null 2>&1; then
+        actions+=("reiniciou-$service-unhealthy")
+      else
+        issues+=("autocura:$service:restart-falhou")
+      fi
+      ;;
+    *)
+      if "${COMPOSE_MEDIAMTX[@]}" up -d --no-deps "$service" >/dev/null 2>&1; then
+        actions+=("religou-$service")
+      else
+        issues+=("autocura:$service:subida-falhou")
+      fi
+      ;;
+  esac
+}
+heal_rtmp_service vms-rtmp-callback rtmp-callback
+heal_rtmp_service vms-rtmp-ingest rtmp-ingest
+
 # ── 1) CONTAINERS ────────────────────────────────────────────────────────────
-for container in vms-postgres vms-redis vms-mediamtx vms-api vms-web vms-ai-service; do
+# Mede o estado DEPOIS da tentativa de autocura. RTMP faz parte do caminho
+# crítico: SRS e a ponte de autorização não podem falhar fora da supervisão.
+for container in vms-postgres vms-redis vms-mediamtx vms-rtmp-callback vms-rtmp-ingest vms-api vms-web vms-ai-service; do
   state="$(docker inspect -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || true)"
   case "$state" in
     running\|healthy|running\|none) ;;
@@ -139,6 +169,10 @@ if docker inspect vms-mediamtx >/dev/null 2>&1; then
       fi
       # MediaMTX novo perde os paths dinâmicos; a API os re-injeta no boot (warmCameraPaths).
       docker restart vms-api >/dev/null 2>&1 && actions+=("reaqueceu-paths-api")
+      # Forwards RTMP que estavam conectados ao MediaMTX antigo podem continuar
+      # presos ao socket morto. Reiniciar o tradutor força um handshake limpo;
+      # os equipamentos configurados para publicação contínua reconectam.
+      docker restart vms-rtmp-ingest >/dev/null 2>&1 && actions+=("reconectou-forward-rtmp")
     else
       mediamtx_ports_ok || issues+=("live:mediamtx-sem-portas")
       mediamtx_turn_ok || issues+=("live:mediamtx-sem-turn")
@@ -154,6 +188,43 @@ if docker inspect vms-mediamtx >/dev/null 2>&1; then
   fi
 fi
 
+# Prova funcional do elo SRS -> MediaMTX. `healthy` em ambos ainda não garante
+# que as publicações estejam chegando ao segundo salto. Só auto-cura quando a
+# quebra é TOTAL e persistente (SRS tem streams, MediaMTX tem zero RTMP); uma
+# divergência parcial gera alerta e nunca sacrifica as câmeras que estão boas.
+srs_stream_count() {
+  curl -fsS --max-time 3 http://127.0.0.1:9972/metrics 2>/dev/null \
+    | awk '$1 == "srs_streams" { print int($2); found=1; exit } END { if (!found) print "" }'
+}
+mediamtx_rtmp_count() {
+  docker exec vms-api node -e '
+    const base = process.env.MEDIAMTX_API_BASE_URL || "http://mediamtx:9997";
+    const auth = Buffer.from(`${process.env.MEDIAMTX_API_USER}:${process.env.MEDIAMTX_API_PASS}`).toString("base64");
+    fetch(`${base}/v3/paths/list?itemsPerPage=1000`, { headers: { authorization: `Basic ${auth}` } })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((x) => console.log((x.items || []).filter((p) => p.ready && p.source && p.source.type === "rtmpConn").length))
+      .catch(() => process.exit(1));
+  ' 2>/dev/null
+}
+SRS_STREAMS="$(srs_stream_count)"
+MTX_RTMP_STREAMS="$(mediamtx_rtmp_count)"
+if [[ "$SRS_STREAMS" =~ ^[0-9]+$ && "$MTX_RTMP_STREAMS" =~ ^[0-9]+$ ]] && [ "$SRS_STREAMS" -gt 0 ]; then
+  if [ "$MTX_RTMP_STREAMS" -eq 0 ]; then
+    sleep 5
+    SRS_CONFIRM="$(srs_stream_count)"
+    MTX_CONFIRM="$(mediamtx_rtmp_count)"
+    if [ "${SRS_CONFIRM:-0}" -gt 0 ] 2>/dev/null && [ "${MTX_CONFIRM:--1}" -eq 0 ] 2>/dev/null; then
+      if docker restart vms-rtmp-ingest >/dev/null 2>&1; then
+        actions+=("restaurou-forward-total-rtmp")
+      else
+        issues+=("rtmp:forward-total:autocura-falhou")
+      fi
+    fi
+  elif [ "$MTX_RTMP_STREAMS" -lt $((SRS_STREAMS - 1)) ]; then
+    issues+=("rtmp:forward-parcial:srs=$SRS_STREAMS:mediamtx=$MTX_RTMP_STREAMS")
+  fi
+fi
+
 # ── 4) DISCO ─────────────────────────────────────────────────────────────────
 disk_used="$(df -P "$INFRA_DIR/storage" | awk 'NR==2 {gsub(/%/, "", $5); print $5}')"
 if [ "${disk_used:-100}" -ge 90 ]; then issues+=("disk:CRITICO:${disk_used}%")
@@ -162,7 +233,14 @@ elif [ "${disk_used:-100}" -ge 85 ]; then issues+=("disk:${disk_used}%"); fi
 # ── 5) BACKUP fresco ─────────────────────────────────────────────────────────
 latest_backup="$(find "$INFRA_DIR/backups/postgres" -type f -name 'drac-postgres-*.dump' -printf '%T@\n' 2>/dev/null | sort -nr | head -n1 | cut -d. -f1)"
 now_epoch="$(date +%s)"
-if [ -z "$latest_backup" ] || [ $((now_epoch - latest_backup)) -gt 129600 ]; then issues+=("backup:mais-velho-que-36h"); fi
+backup_interval="$(load_env_var POSTGRES_BACKUP_INTERVAL_SECONDS)"
+case "$backup_interval" in ''|*[!0-9]*) backup_interval=604800 ;; esac
+# Um ciclo de tolerância operacional de 24 h evita falso alarme por uma execução
+# semanal alguns minutos atrasada sem deixar a cópia envelhecer indefinidamente.
+backup_max_age=$((backup_interval + 86400))
+if [ -z "$latest_backup" ] || [ $((now_epoch - latest_backup)) -gt "$backup_max_age" ]; then
+  issues+=("backup:atrasado:limite=${backup_max_age}s")
+fi
 
 # ── 6) SEGURANÇA: credencial vazando em log ──────────────────────────────────
 credential_lines="$(for name in vms-api vms-ai-service; do docker logs --since 10m "$name" 2>&1 || true; done | grep -Eic 'rtsp(s)?://[^/@[:space:]:]+:[^/@[:space:]]+@' || true)"

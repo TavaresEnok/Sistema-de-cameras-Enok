@@ -17,6 +17,7 @@ import {
   generateIngestKey,
   hashIngestKey,
   ingestHashMatches,
+  ingestProfilePathCandidates,
   ingestPathNames,
   isAcceptableIngestPath,
   isPushSourced,
@@ -314,7 +315,10 @@ export class CamerasService implements OnApplicationBootstrap {
         recordingHeight: normalizedProfile.recordingHeight,
         recordingFps: normalizedProfile.recordingFps,
         recordingBitrateKbps: normalizedProfile.recordingBitrateKbps,
-        audioEnabled: dto.audioEnabled ?? false,
+        // A câmera já chega com áudio habilitado: a grade continua muda no
+        // navegador por padrão, mas o operador pode escutar ao abrir o ícone.
+        // Desabilitar aqui descartaria a trilha antes de ela chegar ao WebRTC.
+        audioEnabled: dto.audioEnabled ?? true,
         aiEnabled: aiEnabledEfetivo({
           recordingMode: dto.recordingMode ?? 'continuous',
           motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
@@ -370,9 +374,10 @@ export class CamerasService implements OnApplicationBootstrap {
       );
     }
 
-    // Política obrigatória do autoatendimento móvel: câmera RTMP nasce em modo
-    // MANUAL e DESLIGADA. Gravar é uma decisão posterior e explícita do usuário;
-    // versões antigas do app não podem armar movimento/contínuo por acidente.
+    // Política obrigatória do autoatendimento móvel: câmera RTMP do cliente
+    // nasce em modo MANUAL e DESARMADA. Não confiamos no payload do app para
+    // essa decisão — versões antigas ou uma chamada direta podem mandar
+    // `continuous`, mas o servidor continua impondo a regra.
     //
     // Se houver grupo, materializamos a retenção atual e deixamos a câmera
     // seguindo-o, para futuras alterações também valerem. Registros legados
@@ -1825,8 +1830,11 @@ export class CamerasService implements OnApplicationBootstrap {
         latitude: dto.latitude,
         longitude: dto.longitude,
         groupId: dto.groupId,
-        recordingEnabled: dto.recordingEnabled ?? true,
-        recordingMode: dto.recordingMode ?? ((dto.recordingEnabled ?? true) ? 'continuous' : 'manual'),
+        // Invariante de segurança/custo: toda câmera RTMP nova nasce em modo
+        // manual e desarmada. Não confiar no cliente — versões antigas ainda
+        // podem enviar continuous/true.
+        recordingEnabled: false,
+        recordingMode: 'manual',
         retentionDays: dto.retentionDays ?? this.getDefaultRetentionDays(),
         // Câmera nova nasce seguindo o grupo: herdar a política é o padrão são,
         // e um número próprio que ninguém revisita é como se acumula exceção.
@@ -1837,9 +1845,12 @@ export class CamerasService implements OnApplicationBootstrap {
         streamVideoCodec: null,
         recordingVideoCodec: dto.recordingVideoCodec ?? 'original',
         detectedVideoCodec: null,
-        audioEnabled: dto.audioEnabled ?? false,
+        // Publicação RTMP segue a mesma política da câmera convencional:
+        // gravação nasce manual/desarmada, mas a trilha de áudio fica disponível
+        // para a visualização ao vivo.
+        audioEnabled: dto.audioEnabled ?? true,
         aiEnabled: aiEnabledEfetivo({
-          recordingMode: dto.recordingMode ?? 'continuous',
+          recordingMode: 'manual',
           motionTrigger: dto.motionTrigger ?? (dto.hasEdgeAi ? 'CAMERA' : 'SYSTEM'),
           aiEnabled: dto.aiEnabled ?? true,
         }),
@@ -2082,10 +2093,15 @@ export class CamerasService implements OnApplicationBootstrap {
    */
   async findCameraByIngestPath(path: unknown) {
     if (!isAcceptableIngestPath(path)) return null;
-    const camera = await this.prisma.camera.findUnique({
-      where: { rtmpIngestPath: normalizeIngestPath(path) },
+    const paths = ingestProfilePathCandidates(normalizeIngestPath(path));
+    const cameras = await this.prisma.camera.findMany({
+      where: { rtmpIngestPath: { in: paths } },
       select: { id: true, name: true, enabled: true, sourceMode: true },
+      take: 2,
     });
+    // Se uma base antiga já tiver dois perfis irmãos vinculados a câmeras
+    // diferentes, negar é mais seguro do que escolher pela ordem do banco.
+    const camera = cameras.length === 1 ? cameras[0] : null;
     if (!camera || camera.enabled === false || !isPushSourced(camera)) return null;
     return camera;
   }
@@ -2103,12 +2119,14 @@ export class CamerasService implements OnApplicationBootstrap {
       throw new BadRequestException('Caminho de publicação inválido.');
     }
     const normalizado = normalizeIngestPath(path);
-    const dono = await this.prisma.camera.findUnique({
-      where: { rtmpIngestPath: normalizado },
+    const donos = await this.prisma.camera.findMany({
+      where: { rtmpIngestPath: { in: ingestProfilePathCandidates(normalizado) } },
       select: { id: true, name: true },
+      take: 2,
     });
+    const dono = donos.find((item) => item.id !== cameraId);
     if (dono && dono.id !== cameraId) {
-      throw new BadRequestException(`Este caminho já pertence à câmera "${dono.name}".`);
+      throw new BadRequestException(`Um perfil deste equipamento já pertence à câmera "${dono.name}".`);
     }
     const camera = await this.prisma.camera.update({
       where: { id: cameraId },

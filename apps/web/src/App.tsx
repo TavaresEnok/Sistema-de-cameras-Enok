@@ -1,4 +1,4 @@
-import { Component, Suspense, lazy, useEffect, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useEffect, useRef, useState, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
 import { Switch, Route, Router as WouterRouter, Redirect, useLocation } from 'wouter';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -16,6 +16,10 @@ import { productPageTitle } from './lib/product-brand';
 const queryClient = new QueryClient();
 
 const CHUNK_RELOAD_KEY = 'drac:chunkReloaded';
+// Navegar entre telas é muito comum durante operação. Um minuto preserva a
+// negociação WebRTC de uma grade enquanto o operador consulta uma tela e volta,
+// mas impede que sessões esquecidas consumam banda indefinidamente.
+export const LIVE_ROUTE_GRACE_MS = 60_000;
 
 /**
  * lazy() com recuperação de chunk obsoleto. Após um deploy novo, abas já abertas
@@ -24,7 +28,7 @@ const CHUNK_RELOAD_KEY = 'drac:chunkReloaded';
  * na primeira falha recarregamos a página uma vez (puxa o index.html novo);
  * num carregamento bem-sucedido limpamos o marcador.
  */
-function lazyWithReload<T extends ComponentType<unknown>>(factory: () => Promise<{ default: T }>) {
+function lazyWithReload<T extends ComponentType<any>>(factory: () => Promise<{ default: T }>) {
   return lazy(async () => {
     try {
       const mod = await factory();
@@ -138,9 +142,16 @@ const ROLE_WEIGHT: Record<UiRole, number> = { viewer: 1, operator: 2, admin: 3 }
 function ProtectedRoute({
   component: Page,
   minRole = 'viewer',
+  active = true,
+  layoutContentKey,
+  pageActive,
 }: {
   component: React.ComponentType;
   minRole?: UiRole;
+  active?: boolean;
+  layoutContentKey?: string;
+  /** Encaminhado somente às páginas que precisam pausar listeners invisíveis. */
+  pageActive?: boolean;
 }) {
   const { isAuthenticated, isBootstrapped, isLoading, user } = useAuthStore();
   const [, setLocation] = useLocation();
@@ -157,14 +168,65 @@ function ProtectedRoute({
   if (!isAuthenticated) return null;
   if (!hasAccess) return null;
 
+  const PageWithActivity = Page as React.ComponentType<{ pageActive?: boolean }>;
+
   return (
-    <AppLayout>
+    <AppLayout active={active} contentKey={layoutContentKey}>
       <PageErrorBoundary resetKey={window.location.pathname}>
         <Suspense fallback={<ContentFallback />}>
-          <Page />
+          {pageActive === undefined ? <Page /> : <PageWithActivity pageActive={pageActive} />}
         </Suspense>
       </PageErrorBoundary>
     </AppLayout>
+  );
+}
+
+/**
+ * Mantém a árvore de /live montada por uma janela curta depois que o operador
+ * sai dela. Diferente de cache de dados, isto conserva os próprios players e
+ * suas sessões WHEP/WebRTC. O wrapper `hidden` remove a interface da tela, e
+ * `active={false}` impede que o layout retido capture atalhos ou abra diálogos.
+ */
+function LiveRouteWithGrace({ active }: { active: boolean }) {
+  const [retained, setRetained] = useState(active);
+  const releaseTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (active) {
+      if (releaseTimerRef.current != null) {
+        window.clearTimeout(releaseTimerRef.current);
+        releaseTimerRef.current = null;
+      }
+      setRetained(true);
+      return;
+    }
+    if (!retained) return;
+    releaseTimerRef.current = window.setTimeout(() => {
+      releaseTimerRef.current = null;
+      setRetained(false);
+    }, LIVE_ROUTE_GRACE_MS);
+    return () => {
+      if (releaseTimerRef.current != null) {
+        window.clearTimeout(releaseTimerRef.current);
+        releaseTimerRef.current = null;
+      }
+    };
+  }, [active, retained]);
+
+  useEffect(() => () => {
+    if (releaseTimerRef.current != null) window.clearTimeout(releaseTimerRef.current);
+  }, []);
+
+  if (!retained) return null;
+  return (
+    <div hidden={!active} aria-hidden={!active}>
+      <ProtectedRoute
+        component={LiveViewPage}
+        active={active}
+        layoutContentKey="retained-live"
+        pageActive={active}
+      />
+    </div>
   );
 }
 
@@ -206,15 +268,17 @@ function BrandingSync() {
 }
 
 function AppRoutes() {
+  const [location] = useLocation();
+  const isLiveRoute = location === '/live' || location.startsWith('/live?');
+
   return (
-    <Switch>
+    <>
+      <LiveRouteWithGrace active={isLiveRoute} />
+      {!isLiveRoute && <Switch>
       <Route path="/login" component={LoginPage} />
       <Route path="/reset-password" component={ResetPasswordPage} />
 
       {/* ── Rotas acessíveis a todos os usuários autenticados (viewer+) ── */}
-      <Route path="/live">
-        {() => <ProtectedRoute component={LiveViewPage} />}
-      </Route>
       <Route path="/playback">
         {() => <ProtectedRoute component={PlaybackPage} />}
       </Route>
@@ -299,7 +363,8 @@ function AppRoutes() {
 
       <Route path="/" component={RootRedirect} />
       <Route component={NotFound} />
-    </Switch>
+      </Switch>}
+    </>
   );
 }
 
