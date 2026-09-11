@@ -74,6 +74,8 @@ services:
       APP_BUILDER_AGENT_TOKEN: ${APP_BUILDER_AGENT_TOKEN:-}
       APP_BUILDER_AGENT_TIMEOUT_MS: ${APP_BUILDER_AGENT_TIMEOUT_MS:-15000}
       APK_SOURCE_BASE: ${APK_SOURCE_BASE:-http://central-ingress:8080}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_SERVICE_ACCOUNT_FILE: ${FIREBASE_SERVICE_ACCOUNT_FILE:-}
       CENTRAL_SMTP_HOST: ${CENTRAL_SMTP_HOST:-}
       CENTRAL_SMTP_PORT: ${CENTRAL_SMTP_PORT:-587}
       CENTRAL_SMTP_SECURE: ${CENTRAL_SMTP_SECURE:-false}
@@ -82,6 +84,7 @@ services:
       CENTRAL_SMTP_FROM: ${CENTRAL_SMTP_FROM:-}
     volumes:
       - ${CENTRAL_DATA_DIR:-./data/central}:/app/data
+      - ${FIREBASE_CREDENTIALS_DIR:-./secrets/firebase}:/run/secrets/firebase:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
     depends_on:

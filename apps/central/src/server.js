@@ -31,6 +31,7 @@ const operations = require('./operations');
 const { testS3Access, measureS3Performance, diagnosticarConexao, localizarServidor } = require('./s3-probe');
 const { resolverEndpoint } = require('./endpoint-scheme');
 const { ReactivationArchiveStore, expiresAfterMonths } = require('./reactivation-archives');
+const firebaseManagement = require('./firebase-management');
 const { selecionarVencidos } = require('./expiracao-de-arquivo');
 const scheduler = require('./scheduler');
 const timeseries = require('./datastore/timeseries');
@@ -2519,6 +2520,22 @@ async function pushAppToBuildAgent(item, actor, req, db, installationId) {
   const packageId = effectiveAppPackageId(item);
   const remoteBranding = item.branding || item.reportedBranding ? null : await fetchClientBranding(apiUrl);
   const branding = managedBrandingFromInstallation(item, remoteBranding);
+  const pushEnabled = item.app?.pushEnabled === true;
+  let firebase = null;
+  if (pushEnabled) {
+    try {
+      firebase = await firebaseManagement.ensureAndroidApp({ packageId, displayName: appName });
+    } catch (error) {
+      const status = Number(error?.status) || 502;
+      return {
+        status,
+        data: {
+          error: error?.code || 'firebase_setup_failed',
+          message: error instanceof Error ? error.message : 'Não foi possível preparar as notificações do aplicativo.',
+        },
+      };
+    }
+  }
   const payload = {
     slug,
     appName,
@@ -2526,18 +2543,17 @@ async function pushAppToBuildAgent(item, actor, req, db, installationId) {
     packageId,
     apkBaseUrl: PUBLIC_APK_BASE,
     crashDsn: MOBILE_CRASH_DSN,
-    // Push só pode ser prometido quando o pacote foi registrado no Firebase.
-    // A Central guarda a decisão e o builder falha se true sem credencial.
-    pushEnabled: item.app?.pushEnabled === true,
+    pushEnabled,
   };
+  if (firebase?.configBase64) payload.firebaseConfigBase64 = firebase.configBase64;
   if (!branding.brandUseDefaultColors && branding.brandPrimaryColor) payload.primaryColor = branding.brandPrimaryColor;
   if (branding.brandLogoDataUrl) payload.logoBase64 = branding.brandLogoDataUrl;
   const created = await agentFetch('/clients', { method: 'POST', body: JSON.stringify(payload) });
   if (created.status >= 400) return { status: created.status, data: created.data };
   const build = await agentFetch('/builds', { method: 'POST', body: JSON.stringify({ slug, sourceCommit: approvedRelease.commit }) });
   addAuditEvent(db, req, { type: 'apk.build_started', actor: actor.email, result: build.status < 400 ? 'accepted' : 'denied', installationId });
-  item.app = { ...(item.app || {}), slug, apiUrl, appName, packageId, apkBaseUrl: PUBLIC_APK_BASE, pushEnabled: payload.pushEnabled, brandingApplied: !!branding, lastBuildJobId: build.data?.jobId || null, lastBuildAt: new Date().toISOString() };
-  return { status: build.status, data: { slug, apiUrl, packageId, brandingApplied: !!branding, ...build.data } };
+  item.app = { ...(item.app || {}), slug, apiUrl, appName, packageId, apkBaseUrl: PUBLIC_APK_BASE, pushEnabled: payload.pushEnabled, firebaseAppId: firebase?.firebaseAppId || item.app?.firebaseAppId || null, brandingApplied: !!branding, lastBuildJobId: build.data?.jobId || null, lastBuildAt: new Date().toISOString() };
+  return { status: build.status, data: { slug, apiUrl, packageId, firebaseProvisioned: Boolean(firebase), firebaseAppCreated: Boolean(firebase?.created), brandingApplied: !!branding, ...build.data } };
 }
 
 async function handleGenerateApp(req, res, db, actor, installationId) {

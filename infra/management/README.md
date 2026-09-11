@@ -43,3 +43,31 @@ systemctl enable --now ajustcam-management-health.timer
 
 O primeiro deploy de uma Central existente deve restaurar o PostgreSQL e copiar
 o diretório de dados antes de liberar a rota na Gateway.
+
+## Push Android automático (Firebase)
+
+A Central pode registrar automaticamente o pacote Android de cada cliente no
+mesmo projeto Firebase e entregar o `google-services.json` correto ao agente de
+build. A configuração inicial é feita uma vez:
+
+1. No projeto Firebase do S2Cam, habilite a **Firebase Management API** no
+   Google Cloud Console.
+2. Crie uma conta de serviço exclusiva, com acesso mínimo para administrar os
+   Firebase Apps desse projeto; baixe a chave JSON uma única vez.
+3. Na VM Management:
+
+```bash
+install -d -m 0700 /opt/ajustcam-management/secrets/firebase
+install -m 0600 /caminho/seguro/service-account.json \
+  /opt/ajustcam-management/secrets/firebase/service-account.json
+```
+
+4. Defina no `.env` `FIREBASE_PROJECT_ID` e mantenha
+   `FIREBASE_SERVICE_ACCOUNT_FILE=/run/secrets/firebase/service-account.json`.
+   Rode `docker compose --env-file .env up -d --build central`.
+
+A conta de serviço não é enviada para APK, build-agent, banco ou Git. Ao marcar
+“Notificações em segundo plano” no app de um cliente, a Central cria (ou
+reaproveita) o pacote no Firebase e só então permite o build. Sem a credencial,
+o build é recusado claramente — nunca gera um APK dizendo que possui push sem
+possuir.

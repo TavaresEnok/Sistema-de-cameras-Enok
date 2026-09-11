@@ -5,7 +5,7 @@
 // Endpoints (header x-build-token obrigatório, exceto /health):
 //   GET  /health
 //   GET  /clients                 → lista clientes + status do último build
-//   POST /clients {slug,appName,apiUrl,packageId?,primaryColor?,logoBase64?}
+//   POST /clients {slug,appName,apiUrl,packageId?,primaryColor?,logoBase64?,firebaseConfigBase64?}
 //   DELETE /clients/:slug         → apaga config + APK (local e nginx) + jobs
 //   POST /builds  {slug}          → enfileira build (serializado) → {jobId}
 //   GET  /builds                  → histórico (sem log completo)
@@ -188,6 +188,14 @@ function writeClient(body) {
   if (!API_URL_RE.test(String(apiUrl))) throw new Error('apiUrl inválida (use http(s)://host[:porta][/caminho])');
   const packageId = body.packageId || `com.ajustconsulting.drac${String(slug).replace(/-/g, '')}`;
   if (!PKG_RE.test(packageId)) throw new Error('packageId inválido');
+  let firebaseConfig = null;
+  if (body.firebaseConfigBase64 !== undefined) {
+    if (typeof body.firebaseConfigBase64 !== 'string' || body.firebaseConfigBase64.length > 1024 * 1024) throw new Error('configuração Firebase inválida');
+    try { firebaseConfig = JSON.parse(Buffer.from(body.firebaseConfigBase64, 'base64').toString('utf8')); } catch { throw new Error('configuração Firebase inválida'); }
+    const matches = (firebaseConfig.client || []).some((client) => client?.client_info?.android_client_info?.package_name === packageId);
+    if (!matches) throw new Error('configuração Firebase não corresponde ao pacote Android');
+  }
+  if (body.pushEnabled === true && !firebaseConfig) throw new Error('push exige configuração Firebase válida');
   // Converte o branding ANTES de tocar no diretório do cliente: se o logo for
   // inválido, aborta aqui sem criar/alterar nada (evita cliente meia-boca).
   const stage = body.logoBase64 ? stageClientBranding(body.logoBase64) : null;
@@ -219,6 +227,12 @@ function writeClient(body) {
     cfg.splashBackgroundColor = existing.splashBackgroundColor
       || (cfg.redesign ? '#0A0D13' : '#ffffff');
     fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(cfg, null, 2) + '\n');
+    // Arquivo público de configuração, mas específico do pacote. Ele não entra
+    // no Git: vem da Firebase no instante do build. Ao desligar push, remove a
+    // cópia anterior para que não haja reativação acidental num rebuild futuro.
+    const firebasePath = path.join(dir, 'google-services.json');
+    if (firebaseConfig) fs.writeFileSync(firebasePath, JSON.stringify(firebaseConfig, null, 2) + '\n', { mode: 0o600 });
+    else fs.rmSync(firebasePath, { force: true });
     if (stage) {
       for (const name of ['logo.png', 'splash.png', 'icon.png', 'adaptive-icon.png']) {
         fs.copyFileSync(path.join(stage, name), path.join(dir, name));
