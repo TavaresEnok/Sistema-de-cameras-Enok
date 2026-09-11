@@ -37,7 +37,11 @@ fi
 
 export ANDROID_HOME JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$JAVA_HOME/bin:$PATH"
+# O sdkmanager fecha a entrada assim que aceitou todas as licenças; `yes` então
+# termina com SIGPIPE (141). Com `pipefail` isso não é falha da instalação.
+set +o pipefail
 yes | sdkmanager --licenses >/dev/null
+set -o pipefail
 sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' 'cmake;3.22.1' 'ndk;27.1.12297006'
 
 # O agente escreve apenas nas áreas geradas por cliente/build; o código fica
