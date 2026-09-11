@@ -47,8 +47,9 @@ install -d -o "$RUN_AS" -g "$RUN_AS" \
   "$ROOT_DIR/infra/management/apk"
 chown -R "$RUN_AS:$RUN_AS" "$ROOT_DIR/apps/mobile/clients" "$ROOT_DIR/apps/mobile/builds" "$ROOT_DIR/infra/management/apk"
 
-runuser -u "$RUN_AS" -- env HOME="/home/$RUN_AS" COREPACK_HOME="/home/$RUN_AS/.cache/corepack" \
-  bash -lc "cd '$ROOT_DIR' && corepack pnpm --filter mobile... install --frozen-lockfile"
+# `runuser` não vem no conjunto mínimo de algumas imagens Debian. `su` vem,
+# e aqui já estamos sob root por causa da instalação dos pacotes/serviço.
+su -s /bin/bash "$RUN_AS" -c "HOME='/home/$RUN_AS' COREPACK_HOME='/home/$RUN_AS/.cache/corepack' bash -lc \"cd '$ROOT_DIR' && corepack pnpm --filter mobile... install --frozen-lockfile\""
 
 umask 077
 printf 'BUILD_AGENT_TOKEN=%s\nPUBLIC_APK_BASE=https://s2cam.com.br\nMIN_FREE_GB=10\n' "$BUILD_AGENT_TOKEN" > "$ENV_FILE"
