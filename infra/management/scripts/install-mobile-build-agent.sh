@@ -17,7 +17,7 @@ SDK_URL="https://dl.google.com/android/repository/commandlinetools-linux-1107670
 
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  ca-certificates curl ffmpeg git openjdk-17-jdk-headless nodejs npm unzip
+  ca-certificates curl ffmpeg git openjdk-21-jdk-headless nodejs npm unzip
 
 command -v corepack >/dev/null 2>&1 || npm install -g corepack@0.31.0
 corepack enable
@@ -35,7 +35,7 @@ if [ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
   chown -R "$RUN_AS:$RUN_AS" "$ANDROID_HOME"
 fi
 
-export ANDROID_HOME JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export ANDROID_HOME JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$JAVA_HOME/bin:$PATH"
 yes | sdkmanager --licenses >/dev/null
 sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' 'cmake;3.22.1' 'ndk;27.1.12297006'

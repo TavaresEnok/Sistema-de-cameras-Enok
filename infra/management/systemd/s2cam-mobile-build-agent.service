@@ -14,9 +14,9 @@ Environment=HOME=/home/management
 Environment=BUILD_AGENT_HOST=172.17.0.1
 Environment=BUILD_AGENT_PORT=8780
 Environment=APK_PUBLISH_DIR=/opt/ajustcam-management/repo/infra/management/apk
-Environment=JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+Environment=JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 Environment=ANDROID_HOME=/home/management/toolchain/android-sdk
-Environment=PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/usr/lib/jvm/java-21-openjdk-amd64/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/node /opt/ajustcam-management/repo/apps/mobile/scripts/build-agent.mjs
 Restart=always
 RestartSec=5
