@@ -3,7 +3,7 @@
  * (a partir de clients/<CLIENT>/config.json) e lidos em runtime via expo-constants.
  *
  * A logo da tela de login é sempre `assets/branding/logo.png` (o script de build
- * troca esse arquivo pelo da pasta do cliente; o default é o ícone do DRAC).
+ * troca esse arquivo pelo da pasta do cliente; o default é o ícone do S2Cam).
  */
 import Constants from 'expo-constants';
 
@@ -12,14 +12,16 @@ type BrandingExtra = {
   appName?: string;
   apiUrl?: string;
   primaryColor?: string | null;
+  apkBaseUrl?: string;
 };
 
 const extra = (Constants.expoConfig?.extra ?? {}) as BrandingExtra;
 
 export const BRANDING = {
   client: extra.client ?? 'default',
-  appName: extra.appName ?? 'DRAC',
+  appName: extra.appName ?? 'S2Cam',
   apiUrl: (extra.apiUrl ?? '').trim().replace(/\/+$/, ''),
+  apkBaseUrl: (extra.apkBaseUrl ?? 'https://s2cam.com.br/apk').trim().replace(/\/+$/, ''),
   primaryColor: extra.primaryColor ?? null,
 };
 

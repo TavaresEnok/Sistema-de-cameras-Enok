@@ -13,7 +13,7 @@
 //
 // Variáveis: BUILD_AGENT_HOST (127.0.0.1), BUILD_AGENT_PORT (8780),
 //   BUILD_AGENT_TOKEN (obrigatório), PUBLIC_APK_BASE_OVERRIDE (preferencial),
-//   PUBLIC_APK_BASE (http://168.194.13.70:5173), MIN_FREE_GB (6).
+//   PUBLIC_APK_BASE (https://s2cam.com.br), MIN_FREE_GB (6).
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -35,7 +35,7 @@ const TOKEN = process.env.BUILD_AGENT_TOKEN || '';
 const PUBLIC_APK_BASE = (
   process.env.PUBLIC_APK_BASE_OVERRIDE
   || process.env.PUBLIC_APK_BASE
-  || 'http://168.194.13.70:5173'
+  || 'https://s2cam.com.br'
 ).replace(/\/+$/, '');
 const MIN_FREE_GB = process.env.MIN_FREE_GB || '6';
 
@@ -46,6 +46,7 @@ const PKG_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
 // ser interpolado no fonte de um `node -e`. Validar aqui é a 2ª barreira (a 1ª é passar
 // tudo por env/argv em vez de costurar em código).
 const API_URL_RE = /^https?:\/\/[A-Za-z0-9._-]+(:\d{1,5})?(\/[A-Za-z0-9._~/-]*)?$/;
+const OPTIONAL_URL_RE = /^(?:https?:\/\/[A-Za-z0-9._-]+(?::\d{1,5})?(?:\/[A-Za-z0-9._~/?=&%+-]*)?)?$/;
 // Nome de exibição: letras/números/espaço e pontuação simples. Sem aspas, sem barra
 // (vira nome de arquivo no kit: `${APP_NAME}.aab`), sem '..'.
 const APP_NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._()-]{0,59}$/u;
@@ -70,7 +71,7 @@ function processQueue() {
 
   const child = spawn('bash', [path.join(__dirname, 'build-client.sh'), job.slug], {
     cwd: MOBILE_DIR,
-    env: { ...process.env, MIN_FREE_GB },
+    env: { ...process.env, MIN_FREE_GB, EXPECTED_SOURCE_COMMIT: job.sourceCommit || '' },
   });
   let log = '';
   const append = (b) => { log = (log + b.toString()).slice(-8000); job.log = log; };
@@ -112,6 +113,9 @@ function listClients() {
       appName: cfg.appName ?? slug,
       apiUrl: cfg.apiUrl ?? '',
       packageId: cfg.packageId ?? '',
+      apkBaseUrl: cfg.apkBaseUrl ?? '',
+      pushEnabled: cfg.pushEnabled === true,
+      crashReportingEnabled: Boolean(cfg.crashDsn),
       primaryColor: cfg.primaryColor ?? null,
       hasLogo: fs.existsSync(path.join(CLIENTS_DIR, slug, 'logo.png')),
       apkExists: fs.existsSync(apk),
@@ -197,11 +201,19 @@ function writeClient(body) {
     const cfg = {
       ...existing,
       appName, slug: `drac-${slug}`, packageId, apiUrl,
+      apkBaseUrl: String(body.apkBaseUrl || existing.apkBaseUrl || `${PUBLIC_APK_BASE}/apk`).replace(/\/+$/, ''),
+      crashDsn: body.crashDsn === undefined ? (existing.crashDsn || '') : String(body.crashDsn || ''),
+      // Sem arquivo Firebase por pacote, declarar false conscientemente. Se a
+      // Central pedir true, app.config.js bloqueia o build sem credencial.
+      pushEnabled: body.pushEnabled === undefined ? (existing.pushEnabled === true) : body.pushEnabled === true,
       primaryColor: body.primaryColor || existing.primaryColor || '#3b82f6',
       // O design NOVO (redesign) é o padrão de todo app gerado — o antigo só
       // permanece se o config do cliente disser explicitamente redesign:false.
       redesign: existing.redesign !== undefined ? existing.redesign : true,
     };
+    if (!OPTIONAL_URL_RE.test(cfg.apkBaseUrl) || !OPTIONAL_URL_RE.test(cfg.crashDsn)) {
+      throw new Error('apkBaseUrl/crashDsn inválida');
+    }
     // Splash combina com o design: escuro no redesign, claro no antigo (a menos
     // que o cliente já tenha um valor próprio salvo).
     cfg.splashBackgroundColor = existing.splashBackgroundColor
@@ -270,8 +282,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/builds') {
       const body = await readBody(req);
       if (!body || !SLUG_RE.test(body.slug || '')) return send(res, 400, { error: 'slug inválido' });
+      if (!/^[0-9a-f]{40}$/i.test(String(body.sourceCommit || ''))) {
+        return send(res, 409, { error: 'release não aprovada: sourceCommit completo é obrigatório' });
+      }
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: MOBILE_DIR, encoding: 'utf8' });
+      if (head.status !== 0 || head.stdout.trim().toLowerCase() !== String(body.sourceCommit).toLowerCase()) {
+        return send(res, 409, { error: 'o build-agent não está no commit aprovado pela Central' });
+      }
       if (!fs.existsSync(path.join(CLIENTS_DIR, body.slug, 'config.json'))) return send(res, 404, { error: 'cliente não existe' });
-      const job = { id: `${Date.now()}-${body.slug}`, slug: body.slug, status: 'queued', queuedAt: new Date().toISOString(), log: '' };
+      const job = { id: `${Date.now()}-${body.slug}`, slug: body.slug, sourceCommit: String(body.sourceCommit).toLowerCase(), status: 'queued', queuedAt: new Date().toISOString(), log: '' };
       state.jobs.push(job);
       if (state.jobs.length > 100) state.jobs = state.jobs.slice(-100);
       saveState();

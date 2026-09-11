@@ -6,7 +6,7 @@
  */
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as Sharing from 'expo-sharing';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DetectionOverlay } from '../../components/DetectionOverlay';
@@ -115,9 +115,14 @@ export function LiveScreenRedesign(props: Props) {
     };
   }, [fullscreen]);
   // Máxima qualidade (HLS H.265 passthrough), como no app atual. Reseta ao trocar de câmera.
-  const [hdMode, setHdMode] = useState(false);
+  const [hdMode, setHdMode] = useState(true);
   const hdActive = hdMode && !!hdUrl;
-  useEffect(() => { setHdMode(false); }, [camera.id]);
+  const requestHdRef = useRef(onRequestHd);
+  requestHdRef.current = onRequestHd;
+  useEffect(() => {
+    setHdMode(true);
+    requestHdRef.current();
+  }, [camera.id]);
   const toggleHd = () => {
     if (hdMode) { setHdMode(false); onExitHd(); }
     else { setHdMode(true); onRequestHd(); }

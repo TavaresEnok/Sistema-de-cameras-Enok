@@ -148,6 +148,9 @@ const APP_BUILDER_AGENT_MAX_RESPONSE_BYTES = Math.min(
 // De onde a Central busca o APK publicado p/ reentregar com nome amigável.
 // Mesma gateway usada p/ o agente; o web publica os APKs em /apk no :5173.
 const APK_SOURCE_BASE = String(process.env.APK_SOURCE_BASE || 'http://172.17.0.1:5173').replace(/\/+$/, '');
+const PUBLIC_APK_ROOT = String(process.env.PUBLIC_APK_BASE || 'https://s2cam.com.br').replace(/\/+$/, '');
+const PUBLIC_APK_BASE = /\/apk$/i.test(PUBLIC_APK_ROOT) ? PUBLIC_APK_ROOT : `${PUBLIC_APK_ROOT}/apk`;
+const MOBILE_CRASH_DSN = String(process.env.MOBILE_CRASH_DSN || '').trim();
 
 // Jobs de instalação remota via SSH (em memória; o log é volátil por design —
 // nunca persiste credenciais). jobId -> { id, installationId, status, log, ... }
@@ -2240,8 +2243,21 @@ async function artifactFetch(pathname) {
 function addrToApiUrl(addr) {
   let a = String(addr || '').trim();
   if (!a) return '';
-  if (/^https?:\/\//i.test(a)) return a.replace(/\/+$/, '').replace(/\/api$/i, '') + '/api';
+  if (/^https?:\/\//i.test(a)) {
+    try {
+      const u = new URL(a);
+      const oldHost = u.hostname.toLowerCase();
+      if (oldHost === 'ajustcam.ajustconsulting.com.br') u.hostname = 'principal.s2cam.com.br';
+      const tenant = oldHost.match(/^([a-z0-9-]+)\.cam\.ajustconsulting\.com\.br$/)?.[1];
+      if (tenant) u.hostname = `${tenant}.s2cam.com.br`;
+      if (u.hostname !== oldHost) { u.protocol = 'https:'; u.port = ''; }
+      return u.toString().replace(/\/+$/, '').replace(/\/api$/i, '') + '/api';
+    } catch { return ''; }
+  }
   if (/:\d+$/.test(a)) return `http://${a}/api`;
+  // Domínio sem esquema é uma publicação web, portanto HTTPS e /api. Apenas
+  // IPv4 sem porta mantém o fallback local legado em :5173.
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(a)) return `https://${a}/api`;
   return `http://${a}:5173/api`;
 }
 
@@ -2384,6 +2400,13 @@ async function fetchClientBranding(apiUrl, timeoutMs = 8000) {
 // (ver handlePatchApp) — os dois caminhos precisam mandar o MESMO payload pro
 // build-agent, senão uma edição salva na Central nunca chega no APK.
 async function pushAppToBuildAgent(item, actor, req, db, installationId) {
+  const approvedRelease = releaseAtual(db);
+  if (!approvedRelease?.commit) {
+    return {
+      status: 409,
+      data: { error: 'no_approved_release', message: 'Promova uma release testada antes de gerar o aplicativo.' },
+    };
+  }
   const apiUrl = deriveClientApiUrl(item);
   if (!apiUrl) {
     return {
@@ -2399,14 +2422,24 @@ async function pushAppToBuildAgent(item, actor, req, db, installationId) {
   const packageId = effectiveAppPackageId(item);
   const remoteBranding = item.branding || item.reportedBranding ? null : await fetchClientBranding(apiUrl);
   const branding = managedBrandingFromInstallation(item, remoteBranding);
-  const payload = { slug, appName, apiUrl, packageId };
+  const payload = {
+    slug,
+    appName,
+    apiUrl,
+    packageId,
+    apkBaseUrl: PUBLIC_APK_BASE,
+    crashDsn: MOBILE_CRASH_DSN,
+    // Push só pode ser prometido quando o pacote foi registrado no Firebase.
+    // A Central guarda a decisão e o builder falha se true sem credencial.
+    pushEnabled: item.app?.pushEnabled === true,
+  };
   if (!branding.brandUseDefaultColors && branding.brandPrimaryColor) payload.primaryColor = branding.brandPrimaryColor;
   if (branding.brandLogoDataUrl) payload.logoBase64 = branding.brandLogoDataUrl;
   const created = await agentFetch('/clients', { method: 'POST', body: JSON.stringify(payload) });
   if (created.status >= 400) return { status: created.status, data: created.data };
-  const build = await agentFetch('/builds', { method: 'POST', body: JSON.stringify({ slug }) });
+  const build = await agentFetch('/builds', { method: 'POST', body: JSON.stringify({ slug, sourceCommit: approvedRelease.commit }) });
   addAuditEvent(db, req, { type: 'apk.build_started', actor: actor.email, result: build.status < 400 ? 'accepted' : 'denied', installationId });
-  item.app = { ...(item.app || {}), slug, apiUrl, appName, packageId, brandingApplied: !!branding, lastBuildJobId: build.data?.jobId || null, lastBuildAt: new Date().toISOString() };
+  item.app = { ...(item.app || {}), slug, apiUrl, appName, packageId, apkBaseUrl: PUBLIC_APK_BASE, pushEnabled: payload.pushEnabled, brandingApplied: !!branding, lastBuildJobId: build.data?.jobId || null, lastBuildAt: new Date().toISOString() };
   return { status: build.status, data: { slug, apiUrl, packageId, brandingApplied: !!branding, ...build.data } };
 }
 
@@ -2429,6 +2462,10 @@ async function handlePatchApp(req, res, db, actor, installationId) {
   const appName = String(body.appName || '').trim();
   const packageId = String(body.packageId || '').trim();
   const apiUrl = String(body.apiUrl || '').trim();
+  const hasPushSetting = Object.prototype.hasOwnProperty.call(body, 'pushEnabled');
+  if (hasPushSetting && typeof body.pushEnabled !== 'boolean') {
+    return json(req, res, 400, { error: 'invalid_push_setting', message: 'A configuração de notificações deve ser ligada ou desligada.' });
+  }
   if (packageId && !PKG_RE.test(packageId)) {
     return json(req, res, 400, { error: 'invalid_package', message: 'Pacote inválido. Use o formato com.empresa.app (letras, números, pontos).' });
   }
@@ -2436,13 +2473,14 @@ async function handlePatchApp(req, res, db, actor, installationId) {
   // até o build-client.sh, que roda no HOST com as keystores — restringe o charset ao que
   // é URL de verdade (mesmo formato validado pelo build-agent).
   if (apiUrl && !/^https?:\/\/[A-Za-z0-9._-]+(:\d{1,5})?(\/[A-Za-z0-9._~/-]*)?$/.test(apiUrl) && !/^[a-z0-9.-]+(:\d+)?$/i.test(apiUrl)) {
-    return json(req, res, 400, { error: 'invalid_apiurl', message: 'Servidor inválido. Use um domínio/IP (ex.: 168.194.13.70) ou URL completa.' });
+    return json(req, res, 400, { error: 'invalid_apiurl', message: 'Servidor inválido. Use um domínio (ex.: cliente.s2cam.com.br), IP ou URL completa.' });
   }
   item.app = item.app || { slug: deriveAppSlug(item), apiUrl: deriveClientApiUrl(item) };
   const hadBuild = !!item.app.lastBuildAt;
   if (appName) item.app.appName = appName;
   if (packageId) item.app.packageId = packageId;
   if (apiUrl) item.app.apiUrlOverride = addrToApiUrl(apiUrl); // override manual do servidor
+  if (hasPushSetting) item.app.pushEnabled = body.pushEnabled;
   addAuditEvent(db, req, { type: 'apk.app_edited', actor: actor.email, result: 'accepted', installationId });
 
   let brandingChanged = false;
@@ -2477,6 +2515,7 @@ async function handlePatchApp(req, res, db, actor, installationId) {
     appName: effectiveAppName(item),
     packageId: effectiveAppPackageId(item),
     apiUrl: deriveClientApiUrl(item),
+    pushEnabled: item.app?.pushEnabled === true,
     branding: managedBrandingFromInstallation(item),
     brandingChanged,
     configRevision: Number(item.configRevision || 0) || 0,
@@ -3185,6 +3224,7 @@ async function handleInstallationApp(req, res, db, installationId) {
     apiUrl: deriveClientApiUrl(item),
     appName: effectiveAppName(item),
     packageId: effectiveAppPackageId(item),
+    pushEnabled: item.app?.pushEnabled === true,
     branding: managedBrandingFromInstallation(item, remoteBranding),
     brandingDelivery: {
       desiredRevision: Number(item.configRevision || 0) || 0,
@@ -3687,9 +3727,9 @@ async function route(req, res) {
         // enxergando as escolhas salvas.
         for (const inst of Object.values(db.installations)) {
           if (inst.app && inst.app.slug === slug) {
-            const { appName, packageId, apiUrlOverride } = inst.app;
-            inst.app = (appName || packageId || apiUrlOverride)
-              ? { appName, packageId, apiUrlOverride }
+            const { appName, packageId, apiUrlOverride, pushEnabled } = inst.app;
+            inst.app = (appName || packageId || apiUrlOverride || pushEnabled)
+              ? { appName, packageId, apiUrlOverride, pushEnabled: pushEnabled === true }
               : null;
           }
         }
@@ -4314,4 +4354,5 @@ module.exports = {
   startConnectivityMonitor,
   startTimeseriesMaintenance,
   verifyPassword,
+  addrToApiUrl,
 };

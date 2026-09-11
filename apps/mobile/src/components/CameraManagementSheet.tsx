@@ -26,6 +26,8 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
   const [name, setName] = useState('');
   const [ip, setIp] = useState('');
   const [port, setPort] = useState('');
+  const [httpPort, setHttpPort] = useState('80');
+  const [onvifPort, setOnvifPort] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [path, setPath] = useState('');
@@ -60,6 +62,8 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
     setName(camera.name ?? '');
     setIp(camera.ip === '0.0.0.0' ? '' : (camera.ip ?? ''));
     setPort(camera.rtspPort ? String(camera.rtspPort) : '');
+    setHttpPort(camera.httpPort ? String(camera.httpPort) : '80');
+    setOnvifPort(camera.onvifPort ? String(camera.onvifPort) : '');
     setUsername(camera.username ?? '');
     setPassword('');
     setPath(camera.rtspPath ?? '');
@@ -104,6 +108,16 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
       setError('Informe uma porta RTSP válida entre 1 e 65535.');
       return;
     }
+    const parsedHttpPort = Number(httpPort);
+    if (!isPush && (!Number.isInteger(parsedHttpPort) || parsedHttpPort < 1 || parsedHttpPort > 65535)) {
+      setError('Informe uma porta HTTP válida entre 1 e 65535.');
+      return;
+    }
+    const parsedOnvifPort = onvifPort ? Number(onvifPort) : null;
+    if (!isPush && parsedOnvifPort !== null && (!Number.isInteger(parsedOnvifPort) || parsedOnvifPort < 1 || parsedOnvifPort > 65535)) {
+      setError('Informe uma porta ONVIF válida ou deixe o campo vazio.');
+      return;
+    }
     const current = ++generation.current;
     setSaving(true); setError(null);
     try {
@@ -113,6 +127,8 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
             name: trimmedName,
             ip: ip.trim(),
             rtspPort: parsedPort,
+            httpPort: parsedHttpPort,
+            onvifPort: parsedOnvifPort,
             username: username.trim(),
             rtspPath: path.trim(),
             ...(password ? { password } : {}),
@@ -191,6 +207,8 @@ export function CameraManagementSheet({ visible, camera, apiUrl, token, onClose,
               {!isPush ? <>
                 <Field label="Endereço IP" theme={theme}><TextInput accessibilityLabel="Endereço IP" value={ip} onChangeText={setIp} maxLength={45} keyboardType="numbers-and-punctuation" autoCapitalize="none" autoCorrect={false} placeholderTextColor={theme.textMuted} style={[styles.input, { color: theme.text }]} /></Field>
                 <Field label="Porta RTSP" theme={theme}><TextInput accessibilityLabel="Porta RTSP" value={port} onChangeText={(value) => setPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="554" placeholderTextColor={theme.textMuted} style={[styles.input, { color: theme.text }]} /></Field>
+                <Field label="Porta HTTP da câmera" theme={theme}><TextInput accessibilityLabel="Porta HTTP da câmera" value={httpPort} onChangeText={(value) => setHttpPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="80" placeholderTextColor={theme.textMuted} style={[styles.input, { color: theme.text }]} /></Field>
+                <Field label="Porta ONVIF (opcional)" hint="Se ficar vazia, o sistema tenta usar a porta HTTP." theme={theme}><TextInput accessibilityLabel="Porta ONVIF opcional" value={onvifPort} onChangeText={(value) => setOnvifPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="Usar a porta HTTP" placeholderTextColor={theme.textMuted} style={[styles.input, { color: theme.text }]} /></Field>
                 <Field label="Usuário" theme={theme}><TextInput accessibilityLabel="Usuário da câmera" value={username} onChangeText={setUsername} maxLength={128} autoCapitalize="none" autoCorrect={false} placeholderTextColor={theme.textMuted} style={[styles.input, { color: theme.text }]} /></Field>
                 <Field label="Nova senha (opcional)" hint="Deixe em branco para manter a senha atual." theme={theme}><View style={styles.inputRow}><TextInput accessibilityLabel="Nova senha da câmera" value={password} onChangeText={setPassword} maxLength={512} secureTextEntry={!showPassword} autoCapitalize="none" autoCorrect={false} autoComplete="off" textContentType="none" placeholder="Manter senha atual" placeholderTextColor={theme.textMuted} style={[styles.input, { color: theme.text, flex: 1 }]} /><Pressable accessibilityRole="button" accessibilityLabel={showPassword ? 'Ocultar senha' : 'Mostrar senha'} onPress={() => setShowPassword((value) => !value)}><Icon name="eye" size={19} color={theme.textMuted} /></Pressable></View></Field>
                 <Field label="Caminho RTSP" hint="Use apenas quando o equipamento exigir um caminho específico." theme={theme}><TextInput accessibilityLabel="Caminho RTSP" value={path} onChangeText={setPath} maxLength={512} autoCapitalize="none" autoCorrect={false} placeholder="/cam/realmonitor" placeholderTextColor={theme.textMuted} style={[styles.input, { color: theme.text }]} /></Field>

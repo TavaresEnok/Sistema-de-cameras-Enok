@@ -40,6 +40,29 @@ BUILDS_DIR="$MOBILE_DIR/builds"
 APK_PUBLISH_DIR="${APK_PUBLISH_DIR:-$MOBILE_DIR/../../infra/apk}"
 MIN_FREE_GB="${MIN_FREE_GB:-8}"
 
+# Uma release distribuída pela Central precisa corresponder a um commit. Os
+# arquivos gerados por cliente e o projeto Android nativo são excluídos porque
+# fazem parte do próprio build; alterações no código-fonte exigem commit antes.
+REPO_ROOT="$(git -C "$MOBILE_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+SOURCE_DIRTY_AT_START=false
+if [[ -n "$REPO_ROOT" ]] && [[ -n "$(git -C "$REPO_ROOT" status --porcelain -- apps/mobile ':(exclude)apps/mobile/clients/**' ':(exclude)apps/mobile/android/**' ':(exclude)apps/mobile/builds/**')" ]]; then
+  SOURCE_DIRTY_AT_START=true
+fi
+if [[ -n "${EXPECTED_SOURCE_COMMIT:-}" ]]; then
+  CURRENT_SOURCE_COMMIT="$(git -C "$MOBILE_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if [[ "$CURRENT_SOURCE_COMMIT" != "$EXPECTED_SOURCE_COMMIT" ]]; then
+    echo "build recusado: checkout $CURRENT_SOURCE_COMMIT difere da release aprovada $EXPECTED_SOURCE_COMMIT" >&2
+    exit 6
+  fi
+fi
+if [[ -n "$REPO_ROOT" && "${ALLOW_DIRTY_MOBILE_BUILD:-false}" != "true" ]]; then
+  if [[ "$SOURCE_DIRTY_AT_START" == "true" ]]; then
+    echo "build recusado: o código do aplicativo possui alterações sem commit" >&2
+    echo "publique/autorize a release antes de gerar o APK (ou use ALLOW_DIRTY_MOBILE_BUILD=true somente em teste)." >&2
+    exit 6
+  fi
+fi
+
 mkdir -p "$KEYSTORE_DIR" "$BUILDS_DIR" "$APK_PUBLISH_DIR"
 
 # Guarda de disco: não buildar se o root estiver perto de encher (protege o
@@ -151,7 +174,7 @@ if [[ ! -f "$KS" ]]; then
   "$JAVA_HOME/bin/keytool" -genkeypair -v -keystore "$KS" -alias "$SLUG" \
     -keyalg RSA -keysize 2048 -validity 10000 \
     -storepass:file "$PASS_FILE" -keypass:file "$PASS_FILE" \
-    -dname "CN=$APP_NAME, O=DRAC, C=BR" >/dev/null
+    -dname "CN=$APP_NAME, O=S2Cam, C=BR" >/dev/null
 fi
 
 # A assinatura (apksigner do APK e jarsigner do AAB) exige a senha da keystore,
@@ -265,8 +288,7 @@ PY
   APK_SHA256="$(sha256sum "$OUT" | awk '{print $1}')"
   AAB_SHA256="$(sha256sum "$AAB_OUT" | awk '{print $1}')"
   SOURCE_COMMIT="$(git -C "$MOBILE_DIR" rev-parse HEAD 2>/dev/null || printf unknown)"
-  SOURCE_DIRTY=false
-  [[ -n "$(git -C "$MOBILE_DIR" status --porcelain 2>/dev/null)" ]] && SOURCE_DIRTY=true
+  SOURCE_DIRTY="$SOURCE_DIRTY_AT_START"
   BUILD_INFO="$BUILDS_DIR/drac-$SLUG-build-info.json"
   export SLUG APP_NAME PACKAGE_ID VERSION NEW_VC SOURCE_COMMIT SOURCE_DIRTY APK_SHA256 AAB_SHA256
   node - "$BUILD_INFO" <<'NODE'

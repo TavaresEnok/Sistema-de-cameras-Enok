@@ -9,6 +9,7 @@ import { AddCameraSheet } from '../components/AddCameraSheet';
 import { Icon, type IconName } from '../components/Icon';
 import { avaliarAtualizacao, baseDoApk, urlDoBuildInfo, type AtualizacaoDisponivel } from '../utils/atualizacao';
 import { useTheme } from '../theme/ThemeProvider';
+import { BRANDING } from '../branding';
 import type { User } from '../types';
 
 interface SettingsScreenProps {
@@ -33,9 +34,9 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 function initialsOf(name?: string): string {
-  if (!name) return 'DR';
+  if (!name) return 'S2';
   const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'DR';
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'S2';
 }
 
 export function SettingsScreen({
@@ -48,7 +49,7 @@ export function SettingsScreen({
   const [atualizacao, setAtualizacao] = useState<AtualizacaoDisponivel | null>(null);
   useEffect(() => {
     const slug = String(Constants.expoConfig?.extra?.client ?? 'default');
-    const base = baseDoApk(apiUrl);
+    const base = BRANDING.apkBaseUrl || baseDoApk(apiUrl);
     if (!base) return;
     let cancelado = false;
     void (async () => {
@@ -57,7 +58,10 @@ export function SettingsScreen({
         if (!resposta.ok) return;
         const info = await resposta.json();
         const atual = Number(Constants.expoConfig?.android?.versionCode ?? NaN);
-        const novidade = avaliarAtualizacao(info, atual, base);
+        const novidade = avaliarAtualizacao(info, atual, base, {
+          client: slug,
+          packageId: Constants.expoConfig?.android?.package,
+        });
         if (!cancelado) setAtualizacao(novidade);
       } catch {
         // silencioso de propósito
@@ -178,7 +182,7 @@ export function SettingsScreen({
         <Icon name="logout" size={18} color={theme.danger} strokeWidth={2} />
         <Text style={[styles.logoutText, { color: theme.danger }]}>Sair da conta</Text>
       </Pressable>
-      <Text style={[styles.version, { color: theme.textMuted }]}>DRAC VMS · versão {Constants.expoConfig?.version ?? '—'}</Text>
+      <Text style={[styles.version, { color: theme.textMuted }]}>S2Cam · versão {Constants.expoConfig?.version ?? '—'}</Text>
 
       {/* AVISO DE VERSÃO NOVA. O APK é distribuído por link, não pela Play:
           não há atualização automática nem aviso, e a frota fica com versões

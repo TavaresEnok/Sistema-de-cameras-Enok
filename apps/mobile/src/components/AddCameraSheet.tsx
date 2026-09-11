@@ -67,10 +67,11 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   const [name, setName] = useState('');
   const [ip, setIp] = useState('');
   const [rtspPort, setRtspPort] = useState(RTSP_PORT_DEFAULT);
+  const [httpPort, setHttpPort] = useState('80');
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [rtspPath, setRtspPath] = useState('');
-  const [onvifPort, setOnvifPort] = useState<number | null>(null);
+  const [onvifPort, setOnvifPort] = useState('');
   const [onvifPath, setOnvifPath] = useState<string | null>(null);
   const [onvifToken, setOnvifToken] = useState<string | null>(null);
   const [showPass, setShowPass] = useState(false);
@@ -100,15 +101,15 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
 
   const quotaFull = !!quota && !quota.canAdd;
   const canSave = !submitting && !quotaFull && name.trim().length > 0 && (
-    sourceMode === 'rtmp_push' || (ip.trim().length > 0 && username.trim().length > 0 && password.length > 0)
+    sourceMode === 'rtmp_push' || (ip.trim().length > 0 && username.trim().length > 0 && password.length > 0 && Number(httpPort) > 0 && Number(httpPort) <= 65535)
   );
 
   const reset = () => {
     operationRef.current += 1;
     historyRef.current = [];
     setScreen('home'); setSourceMode('rtsp_pull'); setName(''); setIp('');
-    setRtspPort(RTSP_PORT_DEFAULT); setUsername('admin'); setPassword(''); setRtspPath('');
-    setOnvifPort(null); setOnvifPath(null); setOnvifToken(null);
+    setRtspPort(RTSP_PORT_DEFAULT); setHttpPort('80'); setUsername('admin'); setPassword(''); setRtspPath('');
+    setOnvifPort(''); setOnvifPath(null); setOnvifToken(null);
     setShowPass(false); setManualConnectionNeeded(false); setTorch(false); setQrLocked(false);
     setDevices([]); setDiscoveryWarnings([]); setConnection(null); setPreview(null); setPreviewLoading(false); setError(null);
     setRtmpTarget(null); setCopied(false); setDiscovering(false); setScanProgress(null); setChecking(false); setSubmitting(false);
@@ -220,6 +221,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
     setSourceMode('rtsp_pull'); setIp(device.ip);
     setName(/^(Câmera|Possível câmera) /.test(device.name) ? '' : device.name);
     if (device.port === 554 || device.port === 8554) setRtspPort(String(device.port));
+    else if (device.port) setHttpPort(String(device.port));
     setManualConnectionNeeded(false); setConnection(null); setError(null); navigate('details');
   };
 
@@ -259,6 +261,10 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       setError('Informe usuário e senha da câmera para validar o vídeo.');
       return;
     }
+    if (!Number.isInteger(Number(httpPort)) || Number(httpPort) < 1 || Number(httpPort) > 65535) {
+      setError('Informe a porta HTTP da câmera, entre 1 e 65535. Geralmente é 80.');
+      return;
+    }
     const operation = ++operationRef.current;
     setChecking(true); setConnection(null); setError(null);
     try {
@@ -266,6 +272,8 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
         method: 'POST',
         body: JSON.stringify({
           ip: ip.trim(), rtspPort: Number(rtspPort) || 554,
+          httpPort: Number(httpPort) || 80,
+          ...(Number(onvifPort) ? { onvifPort: Number(onvifPort) } : {}),
           username: username.trim(), password,
           ...(rtspPath.trim() ? { rtspPath: rtspPath.trim() } : {}),
         }),
@@ -274,7 +282,8 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
       setConnection(result);
       if (result.detectedRtspPort) setRtspPort(String(result.detectedRtspPort));
       if (result.detectedRtspPath) setRtspPath(result.detectedRtspPath);
-      setOnvifPort(result.detectedOnvifPort); setOnvifPath(result.detectedOnvifPath); setOnvifToken(result.detectedOnvifProfileToken);
+      if (result.detectedOnvifPort) setOnvifPort(String(result.detectedOnvifPort));
+      setOnvifPath(result.detectedOnvifPath); setOnvifToken(result.detectedOnvifProfileToken);
       if (result.rtspAuthOk) {
         setManualConnectionNeeded(false);
         if (!result.detectedRtspPath && result.suggestedRtspPath) setRtspPath(result.suggestedRtspPath);
@@ -318,10 +327,11 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
         ? { name: name.trim(), sourceMode, ...(installerLocation ?? {}) }
         : {
             name: name.trim(), sourceMode, ip: ip.trim(), rtspPort: Number(rtspPort) || 554,
+            httpPort: Number(httpPort) || 80,
             username: username.trim(), password,
             ...(installerLocation ?? {}),
             ...(rtspPath.trim() ? { rtspPath: rtspPath.trim() } : {}),
-            ...(onvifPort ? { onvifPort } : {}), ...(onvifPath ? { onvifPath } : {}),
+            ...(Number(onvifPort) ? { onvifPort: Number(onvifPort) } : {}), ...(onvifPath ? { onvifPath } : {}),
             ...(onvifToken ? { onvifProfileToken: onvifToken } : {}),
           };
       const created = await request<CreatedCamera>(apiUrl, '/cameras/mine', token ?? undefined, {
@@ -431,7 +441,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
                   <Text style={[styles.heroSub, { color: theme.textSub }]}>A instalação direta de SSID e senha ainda depende do SDK oficial de cada fabricante. Nesta versão, o app orienta o primeiro pareamento e assume a configuração assim que a câmera entra na rede.</Text>
                   <Step theme={theme} number="1" title="Ligue e restaure a câmera" text="Segure o botão RESET até ouvir o aviso ou o LED começar a piscar." />
                   <Step theme={theme} number="2" title="Faça o primeiro pareamento" text="Se ainda não estiver no Wi-Fi, use o app do fabricante e habilite RTSP/ONVIF quando a opção existir." />
-                  <Step theme={theme} number="3" title="Volte para o AjustCam" text="Depois disso, encontramos IP, portas, perfis e codec automaticamente." />
+                  <Step theme={theme} number="3" title="Volte para o S2Cam" text="Depois disso, encontramos IP, portas, perfis e codec automaticamente." />
                   <InfoBanner theme={theme} text="Isto não é pareamento Wi-Fi automático: Intelbras, Tuya/Positivo e outros precisam de drivers e credenciais oficiais homologados por modelo." />
                   <PrimaryButton theme={theme} icon="search" label="A câmera já está conectada" onPress={() => void startDiscovery()} />
                   <SecondaryButton theme={theme} icon="qrCode" label="Ler QR da câmera" onPress={() => void openQr()} />
@@ -440,11 +450,11 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
 
               {screen === 'details' ? (
                 <DetailsStep theme={theme} sourceMode={sourceMode} ip={ip} name={name} username={username} password={password}
-                  rtspPort={rtspPort} rtspPath={rtspPath} showPass={showPass} manualConnectionNeeded={manualConnectionNeeded}
+                  rtspPort={rtspPort} httpPort={httpPort} onvifPort={onvifPort} rtspPath={rtspPath} showPass={showPass} manualConnectionNeeded={manualConnectionNeeded}
                   checking={checking} submitting={submitting} canSave={canSave}
                   onName={setName} onUsername={setUsername} onPassword={setPassword}
                   onIp={(value) => { setIp(value); setConnection(null); setManualConnectionNeeded(false); }}
-                  onPort={setRtspPort} onPath={setRtspPath}
+                  onPort={setRtspPort} onHttpPort={setHttpPort} onOnvifPort={setOnvifPort} onPath={setRtspPath}
                   onTogglePass={() => setShowPass((value) => !value)}
                   onTest={() => void testConnection()} onSubmit={() => void submit()} />
               ) : null}
@@ -512,8 +522,8 @@ function HomeStep({ theme, quota, quotaLoading, onDiscover, onQr, onProvision, o
   </>;
 }
 
-function DetailsStep(props: { theme: any; sourceMode: SourceMode; ip: string; name: string; username: string; password: string; rtspPort: string; rtspPath: string; showPass: boolean; manualConnectionNeeded: boolean; checking: boolean; submitting: boolean; canSave: boolean; onName: (v: string) => void; onUsername: (v: string) => void; onPassword: (v: string) => void; onIp: (v: string) => void; onPort: (v: string) => void; onPath: (v: string) => void; onTogglePass: () => void; onTest: () => void; onSubmit: () => void }) {
-  const { theme, sourceMode, ip, name, username, password, rtspPort, rtspPath, showPass, manualConnectionNeeded, checking, submitting, canSave } = props;
+function DetailsStep(props: { theme: any; sourceMode: SourceMode; ip: string; name: string; username: string; password: string; rtspPort: string; httpPort: string; onvifPort: string; rtspPath: string; showPass: boolean; manualConnectionNeeded: boolean; checking: boolean; submitting: boolean; canSave: boolean; onName: (v: string) => void; onUsername: (v: string) => void; onPassword: (v: string) => void; onIp: (v: string) => void; onPort: (v: string) => void; onHttpPort: (v: string) => void; onOnvifPort: (v: string) => void; onPath: (v: string) => void; onTogglePass: () => void; onTest: () => void; onSubmit: () => void }) {
+  const { theme, sourceMode, ip, name, username, password, rtspPort, httpPort, onvifPort, rtspPath, showPass, manualConnectionNeeded, checking, submitting, canSave } = props;
   if (sourceMode === 'rtmp_push') {
     return <>
       <Text style={[styles.heroTitle, { color: theme.text }]}>Câmera 4G ou remota</Text>
@@ -530,6 +540,8 @@ function DetailsStep(props: { theme: any; sourceMode: SourceMode; ip: string; na
       <Field label="Endereço da câmera (IP)" theme={theme}><TextInput accessibilityLabel="Endereço IP da câmera" value={ip} onChangeText={props.onIp} maxLength={45} keyboardType="numbers-and-punctuation" autoCapitalize="none" autoCorrect={false} placeholder="Ex.: 192.168.0.100" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <Field label="Usuário" theme={theme}><TextInput accessibilityLabel="Usuário da câmera" value={username} onChangeText={props.onUsername} maxLength={128} autoCapitalize="none" autoCorrect={false} placeholder="Geralmente admin" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <Field label="Senha da câmera" theme={theme}><View style={styles.inputRow}><TextInput accessibilityLabel="Senha da câmera" value={password} onChangeText={props.onPassword} maxLength={512} autoCapitalize="none" autoCorrect={false} autoComplete="off" textContentType="none" secureTextEntry={!showPass} placeholder="Senha ou chave de acesso" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text, flex: 1 }]} /><Pressable accessibilityRole="button" accessibilityLabel={showPass ? 'Ocultar senha' : 'Mostrar senha'} onPress={props.onTogglePass} hitSlop={10}><Icon name="eye" size={19} color={theme.textMuted} /></Pressable></View></Field>
+      <Field label="Porta HTTP da câmera" theme={theme}><TextInput accessibilityLabel="Porta HTTP da câmera" value={httpPort} onChangeText={(value) => props.onHttpPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="80" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
+      <Field label="Porta ONVIF (opcional)" theme={theme}><TextInput accessibilityLabel="Porta ONVIF opcional" value={onvifPort} onChangeText={(value) => props.onOnvifPort(value.replace(/[^0-9]/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="Usar a porta HTTP" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
     </View>
     {!manualConnectionNeeded ? <View style={[styles.autoConfig, { backgroundColor: theme.accentBg }]}>
       <View style={[styles.autoConfigIcon, { backgroundColor: theme.surface }]}><Icon name="search" size={18} color={theme.accent} /></View>

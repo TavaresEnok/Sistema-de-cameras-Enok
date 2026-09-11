@@ -76,6 +76,17 @@ export function LiveVideo(props: LiveVideoProps) {
   // Uma câmera/path realmente diferente ainda ganha uma nova tentativa WebRTC.
   }, [whepIdentity]);
 
+  // HLS é a continuidade segura, mas não deve virar destino permanente após
+  // uma oscilação curta. Revalida WebRTC depois de 30 s e renova a URL antes.
+  useEffect(() => {
+    if (!webrtcFailed || !whepUri) return;
+    const timer = setTimeout(() => {
+      props.onNeedRefresh?.();
+      setWebrtcFailed(false);
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [webrtcFailed, whepIdentity]);
+
   if (whepUri && !webrtcFailed) {
     return (
       <WebRtcVideo

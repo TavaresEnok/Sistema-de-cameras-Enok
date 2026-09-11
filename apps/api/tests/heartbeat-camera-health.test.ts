@@ -326,6 +326,15 @@ test('heartbeat: o payload carrega o bloco de saúde por câmera', async () => {
   assert.equal(payload.summary.cameraOnline, 2);
 });
 
+test('heartbeat anuncia a API pública do tenant para a Central gerar o app correto atrás de NAT', async () => {
+  const service = makeConnector({ observability: undefined });
+  const payload = await collect(service, {
+    CLOUD_INSTALLATION_ID: 'ibtelecom',
+    API_PUBLIC_URL: 'https://ibtelecom.s2cam.com.br/api',
+  });
+  assert.equal(payload.installation.apiUrl, 'https://ibtelecom.s2cam.com.br/api');
+});
+
 test('heartbeat: alertas por câmera entram no MESMO esquema (summary.alerts e readiness)', async () => {
   const service = makeConnector({
     observability: { getCamerasHealth: async () => REPORT_ONE() },

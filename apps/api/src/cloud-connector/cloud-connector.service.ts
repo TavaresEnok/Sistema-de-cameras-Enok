@@ -708,6 +708,10 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
         id: process.env.CLOUD_INSTALLATION_ID,
         customerName: process.env.CLOUD_CUSTOMER_NAME || os.hostname(),
         version: process.env.DRAC_VERSION || process.env.npm_package_version || 'local',
+        // Endereço público canônico usado pela Central para gerar o app. Em
+        // NAT o IP observado é o mesmo para todos os tenants e não identifica
+        // o destino; o subdomínio HTTPS configurado no instalador identifica.
+        apiUrl: process.env.API_PUBLIC_URL || null,
         launchProfile,
       },
       // O que ESTA instalação de fato aplicou. É o que permite a Central dizer

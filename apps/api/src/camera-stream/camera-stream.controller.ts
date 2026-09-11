@@ -371,6 +371,15 @@ export class CameraStreamController {
     return this.ffmpegMjpegService.getStreamStats();
   }
 
+  // Vazão ao vivo da instalação: banda ENTRANDO (câmeras→servidor) e SAINDO
+  // (servidor→espectadores), em Mbps, + nº de espectadores. Lida do MediaMTX.
+  @Roles(UserRole.VIEWER)
+  @RequirePermission('liveView')
+  @Get('throughput')
+  async getThroughput() {
+    return this.mediamtxProxyService.getLiveThroughput();
+  }
+
   @Roles(UserRole.ADMIN)
   @RequirePermission('serverConfig')
   @Get(':cameraId/stats')

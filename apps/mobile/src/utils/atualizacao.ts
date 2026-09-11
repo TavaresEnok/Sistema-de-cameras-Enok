@@ -16,6 +16,7 @@ export type BuildInfo = {
   packageId?: string;
   versionName?: string;
   versionCode?: number;
+  sourceDirty?: boolean;
   artifacts?: { apk?: { file?: string; sha256?: string } };
 };
 
@@ -41,10 +42,14 @@ export function avaliarAtualizacao(
   info: BuildInfo | null | undefined,
   versionCodeAtual: number | null | undefined,
   baseUrlDoApk: string,
+  esperado?: { client?: string; packageId?: string },
 ): AtualizacaoDisponivel | null {
   if (!info || typeof info.versionCode !== 'number' || !Number.isFinite(info.versionCode)) return null;
   if (typeof versionCodeAtual !== 'number' || !Number.isFinite(versionCodeAtual)) return null;
   if (info.versionCode <= versionCodeAtual) return null;
+  if (info.sourceDirty === true) return null;
+  if (esperado?.client && info.client && info.client !== esperado.client) return null;
+  if (esperado?.packageId && info.packageId && info.packageId !== esperado.packageId) return null;
 
   const arquivo = info.artifacts?.apk?.file;
   // O manifesto vem da rede. Aceita somente o nome de artefato que o builder

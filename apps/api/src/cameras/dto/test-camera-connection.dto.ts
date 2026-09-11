@@ -17,6 +17,12 @@ export class TestCameraConnectionDto {
   onvifPort?: number;
 
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  httpPort?: number;
+
+  @IsOptional()
   @IsString()
   username?: string;
 

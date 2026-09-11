@@ -77,6 +77,10 @@ import {
   devoSondarRtsp,
 } from './helpers/prova-de-vida.helper';
 import { retencaoEfetiva } from '../recordings/helpers/retencao-efetiva.helper';
+import {
+  cameraControlPortCandidates,
+  preferredCameraControlPort,
+} from './helpers/camera-control-port.helper';
  
 
 export function sanitizeCamera<T extends { passwordEncrypted: string; rtmpIngestKeyHash?: unknown; rtmpIngestKeyEncrypted?: unknown }>(camera: T): Omit<T, 'passwordEncrypted' | 'rtmpIngestKeyHash' | 'rtmpIngestKeyEncrypted'> {
@@ -253,6 +257,7 @@ export class CamerasService implements OnApplicationBootstrap {
 
     const normalizedIp = this.assertTestTargetAllowed(dto.ip, dto.rtspPort);
     if (dto.onvifPort != null) this.assertTestTargetAllowed(normalizedIp, dto.onvifPort);
+    this.assertTestTargetAllowed(normalizedIp, dto.httpPort);
     await this.validateReferences(dto.siteId, dto.areaId, dto.groupId);
     const normalizedProfile = this.normalizeProfileToDetected(dto, null);
     const defaultChannel = dto.channel ?? 1;
@@ -365,10 +370,9 @@ export class CamerasService implements OnApplicationBootstrap {
       );
     }
 
-    // Política obrigatória do autoatendimento móvel: câmera RTMP do cliente
-    // nasce ARMADA por movimento, nunca em gravação contínua. Não confiamos no
-    // payload do app para essa decisão — versões antigas ou uma chamada manual
-    // podem mandar `continuous`, mas o servidor continua impondo a regra.
+    // Política obrigatória do autoatendimento móvel: câmera RTMP nasce em modo
+    // MANUAL e DESLIGADA. Gravar é uma decisão posterior e explícita do usuário;
+    // versões antigas do app não podem armar movimento/contínuo por acidente.
     //
     // Se houver grupo, materializamos a retenção atual e deixamos a câmera
     // seguindo-o, para futuras alterações também valerem. Registros legados
@@ -388,12 +392,10 @@ export class CamerasService implements OnApplicationBootstrap {
       cameraDto = {
         ...dto,
         groupId,
-        recordingMode: 'motion',
-        // Em modo motion este campo representa o processo gravando AGORA, não
-        // o armamento. Começa false e o detector liga durante o evento.
+        recordingMode: 'manual',
         recordingEnabled: false,
         motionTrigger: 'SYSTEM',
-        aiEnabled: true,
+        aiEnabled: false,
         retentionDays: groupRetentionDays ?? 3,
         retentionFollowsGroup: groupRetentionDays !== null,
         // Autoatendimento móvel sempre começa em cópia do fluxo recebido. A
@@ -595,6 +597,16 @@ export class CamerasService implements OnApplicationBootstrap {
     const targetOnvifPort = dto.onvifPort ?? existing.onvifPort;
     if (!pushSourced && targetOnvifPort != null) {
       this.assertTestTargetAllowed(normalizedIp, targetOnvifPort);
+    }
+    const requestedHttpPort = dto.httpPort as number | null | undefined;
+    const targetHttpPort = requestedHttpPort === undefined ? existing.httpPort : requestedHttpPort;
+    if (!pushSourced && targetHttpPort == null) {
+      throw new BadRequestException(
+        'Informe a porta de acesso web (HTTP) da câmera. A porta ONVIF pode ficar vazia.',
+      );
+    }
+    if (!pushSourced) {
+      this.assertTestTargetAllowed(normalizedIp, targetHttpPort!);
     }
     await this.validateReferences(dto.siteId, dto.areaId, dto.groupId);
     // O DTO valida a lista com uma regra só; a exigência por TIPO (linha tem
@@ -1000,6 +1012,7 @@ export class CamerasService implements OnApplicationBootstrap {
   async testConnectionDraft(input: TestCameraConnectionDto) {
     this.assertTestTargetAllowed(input.ip, input.rtspPort);
     if (input.onvifPort != null) this.assertTestTargetAllowed(input.ip, input.onvifPort);
+    if (input.httpPort != null) this.assertTestTargetAllowed(input.ip, input.httpPort);
     const steps: CameraProbeStep[] = [];
     const runStep = async <T>(key: string, label: string, action: () => Promise<T>, detail?: (value: T) => string | null | undefined): Promise<T> => {
       const startedAt = Date.now();
@@ -1046,7 +1059,7 @@ export class CamerasService implements OnApplicationBootstrap {
     }
     const rtspReachable = reachableRtspPorts.includes(input.rtspPort);
     const rtspReachableAny = reachableRtspPorts.length > 0;
-    const onvifPorts = Array.from(new Set([input.onvifPort, 8075, 8080, 8000, 8899, 80, 2020].filter((v): v is number => Number.isFinite(v as number))));
+    const onvifPorts = cameraControlPortCandidates(input, [8075, 8080, 8000, 8899, 80, 2020]);
     const reachablePorts = await runStep(
       'onvif_ports',
       'Verificar portas ONVIF',
@@ -1064,7 +1077,10 @@ export class CamerasService implements OnApplicationBootstrap {
     if (!reachablePorts.length) {
       steps[steps.length - 1].status = 'warning';
     }
-    const onvifReachable = input.onvifPort == null ? reachablePorts.length > 0 : reachablePorts.includes(input.onvifPort);
+    const preferredControlPort = preferredCameraControlPort(input);
+    const onvifReachable = preferredControlPort == null
+      ? reachablePorts.length > 0
+      : reachablePorts.includes(preferredControlPort);
 
     let onvifMedia: {
       port: number | null;
@@ -1269,6 +1285,7 @@ export class CamerasService implements OnApplicationBootstrap {
       ip: input.ip,
       rtspPort: input.rtspPort,
       onvifPort: input.onvifPort ?? null,
+      httpPort: input.httpPort ?? null,
       rtspReachable,
       rtspReachableAny,
       reachableRtspPorts,
@@ -2528,8 +2545,9 @@ export class CamerasService implements OnApplicationBootstrap {
       const transmitindoAgora = await this.cameraTransmitindoAgora(camera.id);
 
       const rtspReachable = await this.portChecker.check(camera.ip, camera.rtspPort);
+      const controlPort = preferredCameraControlPort(camera);
       const onvifReachable =
-        camera.onvifPort == null ? true : await this.portChecker.check(camera.ip, camera.onvifPort);
+        controlPort == null ? true : await this.portChecker.check(camera.ip, controlPort);
       let rtspAuthOk = false;
       let detectedRtspPath: string | null = null;
       let detectedStream: ProbedStreamMetadata | null = null;

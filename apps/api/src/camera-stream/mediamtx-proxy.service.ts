@@ -1904,6 +1904,72 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     }
   }
 
+  // VAZÃO AO VIVO — o MediaMTX conta bytes ACUMULADOS por path (entrada, o que a
+  // câmera empurra) e por sessão (saída, o que vai ao espectador). Taxa em Mbps =
+  // (bytes agora − bytes da amostra anterior) / tempo. Guardamos a última amostra
+  // aqui; o painel chama de poucos em poucos segundos e a diferença vira a taxa.
+  // Suavizamos (EMA) para o número não pular feio entre leituras.
+  private tpSample: { rx: number; tx: number; ts: number } | null = null;
+  private tpRate = { inMbps: 0, outMbps: 0 };
+  private tpHasRate = false;
+
+  async getLiveThroughput(): Promise<{
+    inMbps: number; outMbps: number; viewers: number;
+    activeStreams: number; totalStreams: number; sampledAt: number;
+  }> {
+    const vazio = { inMbps: this.tpRate.inMbps, outMbps: this.tpRate.outMbps, viewers: 0, activeStreams: 0, totalStreams: 0, sampledAt: Date.now() };
+    if (!this.isEnabled()) return { ...vazio, inMbps: 0, outMbps: 0 };
+    try {
+      const [pathsTxt, wrtcTxt, hlsTxt, rtspTxt] = await Promise.all([
+        this.apiRequest('GET', '/v3/paths/list?itemsPerPage=1000'),
+        this.apiRequest('GET', '/v3/webrtcsessions/list?itemsPerPage=1000').catch(() => '{"items":[]}'),
+        this.apiRequest('GET', '/v3/hlsmuxers/list?itemsPerPage=1000').catch(() => '{"items":[]}'),
+        this.apiRequest('GET', '/v3/rtspconns/list?itemsPerPage=1000').catch(() => '{"items":[]}'),
+      ]);
+      const paths = (JSON.parse(pathsTxt)?.items ?? []) as Array<Record<string, any>>;
+      let rx = 0, viewers = 0, active = 0;
+      for (const p of paths) {
+        rx += Number(p?.bytesReceived ?? 0);
+        viewers += Array.isArray(p?.readers) ? p.readers.length : 0;
+        if (p?.ready) active++;
+      }
+      let tx = 0;
+      for (const txt of [wrtcTxt, hlsTxt, rtspTxt]) {
+        const items = (JSON.parse(txt)?.items ?? []) as Array<Record<string, any>>;
+        for (const s of items) tx += Number(s?.bytesSent ?? 0);
+      }
+      const now = Date.now();
+      const prev = this.tpSample;
+      if (prev) {
+        const dt = (now - prev.ts) / 1000;
+        if (dt >= 0.4) {
+          const inb = (Math.max(0, rx - prev.rx) * 8) / dt / 1e6;
+          const outb = (Math.max(0, tx - prev.tx) * 8) / dt / 1e6;
+          if (!this.tpHasRate) {
+            this.tpRate = { inMbps: inb, outMbps: outb };
+            this.tpHasRate = true;
+          } else {
+            const k = 0.5;
+            this.tpRate = {
+              inMbps: this.tpRate.inMbps * (1 - k) + inb * k,
+              outMbps: this.tpRate.outMbps * (1 - k) + outb * k,
+            };
+          }
+          this.tpSample = { rx, tx, ts: now };
+        }
+      } else {
+        this.tpSample = { rx, tx, ts: now };
+      }
+      return {
+        inMbps: Math.round(this.tpRate.inMbps * 100) / 100,
+        outMbps: Math.round(this.tpRate.outMbps * 100) / 100,
+        viewers, activeStreams: active, totalStreams: paths.length, sampledAt: now,
+      };
+    } catch {
+      return vazio;
+    }
+  }
+
   private async getPath(pathName: string) {
     const encodedPath = encodeURIComponent(pathName);
     const text = await this.apiRequest('GET', `/v3/config/paths/get/${encodedPath}`);

@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { DEFAULT_API_URL, SESSION_KEY } from '../config';
 import type { Session } from '../types';
+import { normalizeApiUrl } from '../utils/server-url';
 
 const BIOMETRIC_LOGIN_KEY = `${SESSION_KEY}.biometric`;
 const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
@@ -11,31 +12,34 @@ const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
 };
 
 export function cleanApiUrl(value: string) {
-  const raw = value.trim() || DEFAULT_API_URL;
-  if (!raw) return '';
-  const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
-  let parsed: URL;
-  try { parsed = new URL(candidate); }
-  catch { throw new Error('Endereço do servidor inválido. Use, por exemplo, https://servidor.com/api.'); }
-  if (!['https:', 'http:'].includes(parsed.protocol) || !parsed.hostname) {
-    throw new Error('O servidor precisa usar um endereço HTTP ou HTTPS válido.');
-  }
-  if (parsed.username || parsed.password) throw new Error('Não inclua usuário ou senha no endereço do servidor.');
-  parsed.hash = '';
-  parsed.search = '';
-  return parsed.toString().replace(/\/+$/, '');
+  return normalizeApiUrl(value, DEFAULT_API_URL);
 }
 
 export async function loadStoredSession() {
   const secureRaw = await SecureStore.getItemAsync(SESSION_KEY, SECURE_OPTIONS);
-  if (secureRaw) return secureRaw;
+  if (secureRaw) return migrateStoredSession(secureRaw);
 
   const legacyRaw = await AsyncStorage.getItem(SESSION_KEY);
   if (legacyRaw) {
     await SecureStore.setItemAsync(SESSION_KEY, legacyRaw, SECURE_OPTIONS);
     await AsyncStorage.removeItem(SESSION_KEY);
   }
-  return legacyRaw;
+  return legacyRaw ? migrateStoredSession(legacyRaw) : legacyRaw;
+}
+
+async function migrateStoredSession(raw: string): Promise<string> {
+  try {
+    const session = JSON.parse(raw) as Session;
+    const apiUrl = cleanApiUrl(session.apiUrl || '');
+    if (apiUrl && apiUrl !== session.apiUrl) {
+      const migrated = JSON.stringify({ ...session, apiUrl });
+      await SecureStore.setItemAsync(SESSION_KEY, migrated, SECURE_OPTIONS);
+      return migrated;
+    }
+  } catch {
+    // A validação normal de sessão tratará conteúdo legado inválido.
+  }
+  return raw;
 }
 
 export async function saveStoredSession(session: Session) {

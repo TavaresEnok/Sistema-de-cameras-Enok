@@ -12,7 +12,7 @@ max-port=49252
 fingerprint
 use-auth-secret
 static-auth-secret=CHANGE_ME_GENERATE_AT_INSTALL_TIME
-realm=ajustcam.ajustconsulting.com.br
+realm=s2cam.com.br
 stale-nonce=600
 
 cert=/etc/coturn/ssl/default.crt

@@ -45,11 +45,14 @@ export class CreateCameraDto {
   onvifPort?: number;
 
 
-  @IsOptional()
+  // Toda câmera que o servidor acessa por RTSP precisa informar onde fica a
+  // interface de configuração. ONVIF continua opcional: quando não for
+  // informado, esta porta HTTP será a primeira candidata para ONVIF/PTZ.
+  @ValidateIf((o) => o.sourceMode !== 'rtmp_push')
   @IsInt()
   @Min(1)
   @Max(65535)
-  httpPort?: number;
+  httpPort!: number;
 
   @ValidateIf((o) => o.sourceMode !== 'rtmp_push')
   @IsString()

@@ -151,9 +151,9 @@ test('a URL de publicação sai pronta nos dois formatos de interface', () => {
   const alvo = buildPublishTarget({ host: '203.0.113.10', port: 1935, key: 'a'.repeat(32) });
   assert.equal(alvo.serverUrl, 'rtmp://203.0.113.10:1935/drac');
   assert.equal(alvo.streamKey, 'a'.repeat(32));
-  assert.equal(alvo.fullUrl, `rtmp://203.0.113.10:1935/drac/${'a'.repeat(32)}`);
-  assert.equal(alvo.canonicalFullUrl, alvo.fullUrl);
-  assert.equal(alvo.compactFullUrl, null);
+  assert.equal(alvo.fullUrl, `rtmp://203.0.113.10:1935/d/${encodeCompactIngestKey('a'.repeat(32))}`);
+  assert.equal(alvo.canonicalFullUrl, `rtmp://203.0.113.10:1935/drac/${'a'.repeat(32)}`);
+  assert.equal(alvo.compactFullUrl, alvo.fullUrl);
   assert.equal(alvo.fullUrlFitsSingleField, true);
   assert.equal(alvo.singleFieldMaxLength, 63);
   // Câmera com um campo só recebe a concatenação exata que o path espera.
@@ -232,7 +232,7 @@ test('sem host compacto a API sinaliza que a URL não cabe, sem fingir compatibi
     key: chave,
   });
 
-  assert.equal(alvo.fullUrl, alvo.canonicalFullUrl);
+  assert.equal(alvo.fullUrl, `rtmp://dominio-publico-muito-longo.exemplo.test/d/${encodeCompactIngestKey(chave)}`);
   assert.equal(alvo.fullUrlFitsSingleField, false);
   assert.equal(alvo.streamKey.length, 32);
 });
@@ -245,8 +245,8 @@ test('host compacto malformado é ignorado em vez de gerar URL enganosa', () => 
     key: 'e'.repeat(32),
   });
 
-  assert.equal(alvo.compactFullUrl, null);
-  assert.equal(alvo.fullUrl, alvo.canonicalFullUrl);
+  assert.equal(alvo.compactFullUrl, alvo.fullUrl);
+  assert.equal(alvo.fullUrl, `rtmp://dominio-publico-muito-longo.exemplo.test/d/${encodeCompactIngestKey('e'.repeat(32))}`);
   assert.equal(alvo.fullUrlFitsSingleField, false);
 });
 

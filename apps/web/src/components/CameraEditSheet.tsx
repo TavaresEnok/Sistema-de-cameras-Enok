@@ -335,6 +335,17 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
 
   const handleSave = async () => {
     if (!accessToken || !form) return;
+    if (!modoPush) {
+      const httpPort = Number(form.httpPort);
+      if (!Number.isInteger(httpPort) || httpPort < 1 || httpPort > 65535) {
+        toast({
+          title: 'Porta de acesso web obrigatória',
+          description: 'Informe a porta usada para abrir a câmera no navegador, como 80, 8080 ou 8081.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
     if (form.recordingMode === 'schedule') {
       toast({
         title: 'Agenda ainda não está disponível',
@@ -364,10 +375,9 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
           rtspPort: Number(form.rtspPort),
           username: form.username.trim() || undefined,
           ...(deveEnviarSenha(form.password, senhaRevelada) ? { password: form.password } : {}),
-          // Vazio de propósito volta a ser "procure sozinho"; por isso null e
-          // não undefined, que o backend leria como "não mexi neste campo".
+          // ONVIF vazio significa usar primeiro a porta web e depois descobrir.
           onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : null,
-          httpPort: form.httpPort.trim() ? Number(form.httpPort) : null,
+          httpPort: modoPush ? null : Number(form.httpPort),
           rtspPath: form.rtspPath.trim(),
           preferredRtspTransport: form.preferredRtspTransport,
           preferredLiveProtocol: form.preferredLiveProtocol === 'mjpeg' ? 'webrtc' : form.preferredLiveProtocol,
@@ -767,11 +777,11 @@ export function CameraEditSheet({ camera, open, onClose, onDeleted }: CameraEdit
                       <div className="grid grid-cols-2 gap-3">
                         {/* Fora de qualquer gaveta: é aqui que se conserta câmera
                             atrás de roteador, e foi o que o dono não achou. */}
-                        <FormField label="Porta ONVIF" hint="opcional">
-                          <Input value={form.onvifPort} onChange={(e) => upd('onvifPort', e.target.value)} placeholder="Vazio: detecção automática" className="text-sm font-mono" />
+                        <FormField label="Porta ONVIF" hint="opcional; vazio usa a porta web">
+                          <Input value={form.onvifPort} onChange={(e) => upd('onvifPort', e.target.value)} placeholder="Vazio: usar a porta web" className="text-sm font-mono" />
                         </FormField>
-                        <FormField label="Porta HTTP" hint="opcional">
-                          <Input value={form.httpPort} onChange={(e) => upd('httpPort', e.target.value)} placeholder="Vazio: detecção automática" className="text-sm font-mono" />
+                        <FormField label="Porta de acesso web (HTTP)" hint="obrigatória">
+                          <Input value={form.httpPort} onChange={(e) => upd('httpPort', e.target.value)} placeholder="Ex.: 80, 8080 ou 8081" className="text-sm font-mono" inputMode="numeric" />
                         </FormField>
                       </div>
                       <FormField label="Caminho RTSP" hint="vazio = detectar">

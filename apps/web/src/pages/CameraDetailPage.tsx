@@ -85,6 +85,7 @@ type CameraConfig = {
   ip: string;
   rtspPort: string;
   onvifPort: string;
+  httpPort: string;
   username: string;
   password: string;
   rtspPath: string;
@@ -195,7 +196,8 @@ const emptyConfig: CameraConfig = {
   name: '',
   ip: '',
   rtspPort: '554',
-  onvifPort: '80',
+  onvifPort: '',
+  httpPort: '80',
   username: '',
   password: '',
   rtspPath: '',
@@ -650,6 +652,7 @@ export default function CameraDetailPage() {
           ip: data.ip ?? '',
           rtspPort: String(data.rtspPort ?? 554),
           onvifPort: data.onvifPort == null ? '' : String(data.onvifPort),
+          httpPort: data.httpPort == null ? '' : String(data.httpPort),
           username: data.username ?? '',
           password: '',
           rtspPath: data.rtspPath ?? '',
@@ -929,6 +932,17 @@ export default function CameraDetailPage() {
 
   const saveSettings = async () => {
     if (!cam?.id || !accessToken) return;
+    if (!modoPush) {
+      const httpPort = Number(form.httpPort);
+      if (!Number.isInteger(httpPort) || httpPort < 1 || httpPort > 65535) {
+        toast({
+          title: 'Porta de acesso web obrigatória',
+          description: 'Informe a porta usada para abrir a câmera no navegador, como 80, 8080 ou 8081.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
     if (form.recordingMode === 'schedule') {
       toast({
         title: 'Agenda ainda não está disponível',
@@ -972,7 +986,8 @@ export default function CameraDetailPage() {
           ...(!modoPush ? {
             ip: form.ip.trim(),
             rtspPort: Number(form.rtspPort),
-            onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : undefined,
+            onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : null,
+            httpPort: Number(form.httpPort),
             username: form.username.trim(),
             password: form.password.trim() ? form.password : undefined,
             rtspPath: form.rtspPath.trim(),
@@ -1181,6 +1196,7 @@ export default function CameraDetailPage() {
           ip: form.ip.trim(),
           rtspPort: Number(form.rtspPort),
           onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : undefined,
+          httpPort: Number(form.httpPort),
           username: form.username.trim(),
           password: form.password.trim() || undefined,
           rtspPath: form.rtspPath.trim() || undefined,
@@ -1892,7 +1908,10 @@ export default function CameraDetailPage() {
                           <SettingsField label="Senha" hint="Em branco mantém a senha atual.">
                             <SettingsInput type="password" value={form.password} placeholder="••••••••" onChange={(event) => updateField('password', event.target.value)} />
                           </SettingsField>
-                          <SettingsField label="Porta de controle" hint="ONVIF / PTZ. Em branco para detectar." wide>
+                          <SettingsField label="Porta de acesso web (HTTP)" hint="Obrigatória. É a porta usada para abrir a câmera no navegador.">
+                            <SettingsInput type="number" min={1} max={65535} value={form.httpPort} onChange={(event) => updateField('httpPort', event.target.value)} className="font-mono" />
+                          </SettingsField>
+                          <SettingsField label="Porta ONVIF" hint="Opcional. Em branco, o S2Cam testa primeiro a porta web." wide>
                             <SettingsInput type="number" min={1} value={form.onvifPort} onChange={(event) => updateField('onvifPort', event.target.value)} className="font-mono md:max-w-[50%]" />
                           </SettingsField>
                         </>

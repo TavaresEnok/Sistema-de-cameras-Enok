@@ -1,5 +1,5 @@
 /**
- * DRAC Mobile — temas base claro e escuro.
+ * S2Cam — temas base claro e escuro.
  * O branding do servidor sobrepõe cada paleta separadamente.
  * Os screens consomem o tema via useTheme() (ver ThemeProvider.tsx).
  */

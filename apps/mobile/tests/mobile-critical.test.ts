@@ -97,6 +97,25 @@ test('stream WHEP: app lê o TURN temporário antes de criar o peer', () => {
   assert(!source.includes('iceServers: []'), 'app não pode descartar o TURN anunciado pelo servidor');
 });
 
+test('ao vivo recupera WebRTC congelado e abre câmera única em máxima qualidade', () => {
+  const whep = readFileSync('src/components/WebRtcVideo.tsx', 'utf8');
+  const player = readFileSync('src/components/VideoPlayers.tsx', 'utf8');
+  const live = readFileSync('src/screens/LiveScreen.tsx', 'utf8');
+  const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
+  assert(whep.includes('pc.getStats()'), 'sessão ICE conectada precisa vigiar avanço real de mídia');
+  assert(whep.includes('MEDIA_STALL_TIMEOUT_MS'), 'WebRTC congelado precisa de limite explícito');
+  assert(player.includes('setWebrtcFailed(false)') && player.includes('30_000'), 'fallback HLS deve voltar a testar WebRTC');
+  assert(live.includes('useState(true)') && redesign.includes('useState(true)'), 'tela única deve começar em máxima qualidade');
+});
+
+test('release do app exige checkout aprovado e código commitado', () => {
+  const sh = readFileSync('scripts/build-client.sh', 'utf8');
+  const agent = readFileSync('scripts/build-agent.mjs', 'utf8');
+  assert(sh.includes('EXPECTED_SOURCE_COMMIT'), 'builder precisa comparar o checkout com a release');
+  assert(sh.includes('build recusado: o código do aplicativo possui alterações sem commit'), 'builder não pode publicar fonte suja');
+  assert(agent.includes("sourceCommit completo é obrigatório"), 'agente não pode aceitar build sem release aprovada');
+});
+
 test('release mobile: iOS tem identidade e builds de loja incrementam versão', () => {
   const base = JSON.parse(readFileSync('app.base.json', 'utf8')).expo;
   const eas = JSON.parse(readFileSync('eas.json', 'utf8'));

@@ -120,7 +120,7 @@ export default function LoginPage() {
   };
 
   useEffect(() => {
-    if (isAuthenticated) setLocation('/live');
+    if (isAuthenticated) setLocation('/painel');
   }, [isAuthenticated, setLocation]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -131,7 +131,7 @@ export default function LoginPage() {
     setError('');
     try {
       await login(username, password);
-      setLocation('/live');
+      setLocation('/painel');
     } catch (err) {
       setError(getLoginErrorMessage(err));
     } finally {

@@ -10,6 +10,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { Icon, type IconName } from '../../components/Icon';
 import { AddCameraSheet } from '../../components/AddCameraSheet';
 import { avaliarAtualizacao, baseDoApk, urlDoBuildInfo, type AtualizacaoDisponivel } from '../../utils/atualizacao';
+import { BRANDING } from '../../branding';
 
 const TITLE = 'Sora';
 const UI = 'InstrumentSans';
@@ -45,7 +46,7 @@ export function SettingsRedesign(props: Props) {
 
   useEffect(() => {
     const slug = String(Constants.expoConfig?.extra?.client ?? 'default');
-    const base = baseDoApk(apiUrl);
+    const base = BRANDING.apkBaseUrl || baseDoApk(apiUrl);
     if (!base) return;
     let cancelled = false;
     void (async () => {
@@ -53,7 +54,10 @@ export function SettingsRedesign(props: Props) {
         const response = await fetch(urlDoBuildInfo(base, slug));
         if (!response.ok) return;
         const current = Number(Constants.expoConfig?.android?.versionCode ?? NaN);
-        const next = avaliarAtualizacao(await response.json(), current, base);
+        const next = avaliarAtualizacao(await response.json(), current, base, {
+          client: slug,
+          packageId: Constants.expoConfig?.android?.package,
+        });
         if (!cancelled) setAtualizacao(next);
       } catch {
         // Atualização é informativa; ficar offline não deve bloquear Ajustes.

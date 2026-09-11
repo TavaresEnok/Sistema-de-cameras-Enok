@@ -59,6 +59,10 @@ export type Camera = {
   isPrivate?: boolean;
   sourceMode?: 'rtsp_pull' | 'rtmp_push';
   rtspPort?: number;
+  httpPort?: number | null;
+  onvifPort?: number | null;
+  onvifPath?: string | null;
+  onvifProfileToken?: string | null;
   username?: string;
   rtspPath?: string | null;
   ptzCapable?: boolean;

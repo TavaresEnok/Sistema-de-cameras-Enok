@@ -3,7 +3,7 @@
  * compartilhamento) e mantém um índice local ("Minhas gravações") do que foi
  * gravado pelo app, por câmera, para listar/reproduzir dentro do app.
  *
- * O ARQUIVO fica na galeria (álbum "DRAC") e também no diretório do app (para
+ * O ARQUIVO fica na galeria (álbum "S2Cam") e também no diretório do app (para
  * reprodução in-app confiável). O ÍNDICE (metadados) fica em AsyncStorage — não
  * é uma pasta que o usuário gerencia, é só o app lembrando dos clipes.
  */
@@ -12,7 +12,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 
-const ALBUM = 'DRAC';
+const ALBUM = 'S2Cam';
 const LEGACY_KEY = '@drac:clips:v1';
 const PENDING_KEY = '@drac:pending-clips:v1';
 const mutations = new Map<string, Promise<unknown>>();
@@ -21,7 +21,7 @@ function keyFor(scope: string): string {
   return `${LEGACY_KEY}:${encodeURIComponent(scope)}`;
 }
 
-/** Salva um arquivo (vídeo/foto) na galeria do celular, no álbum "DRAC". */
+/** Salva um arquivo (vídeo/foto) na galeria do celular, no álbum "S2Cam". */
 export async function saveToGallery(uri: string): Promise<boolean> {
   // O app apenas cria mídia própria; não precisa ler fotos, vídeos ou áudios do
   // usuário. `writeOnly` evita o pedido de acesso amplo no Android 13+ e usa a

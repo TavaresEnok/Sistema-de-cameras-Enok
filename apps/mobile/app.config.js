@@ -210,6 +210,9 @@ module.exports = () => ({
       appName: c.appName || base.name,
       // Servidor embutido por cliente (cai para a env pública, depois vazio).
       apiUrl: c.apiUrl || process.env.EXPO_PUBLIC_API_URL || '',
+      // Os artefatos são centralizados no domínio oficial. Não derivar esta
+      // URL do tenant: /apk em um subdomínio pode responder com a SPA web.
+      apkBaseUrl: c.apkBaseUrl || process.env.PUBLIC_APK_BASE || 'https://s2cam.com.br/apk',
       primaryColor: c.primaryColor || null,
       // A tela de login precisa conhecer a política REAL do binário. Ler
       // `expoConfig.android.usesCleartextTraffic` não funciona: essa opção vive

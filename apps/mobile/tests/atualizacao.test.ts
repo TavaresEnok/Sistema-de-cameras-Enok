@@ -43,6 +43,12 @@ test('manifesto de atualização não pode redirecionar para URL ou caminho arbi
   assert.equal(avaliarAtualizacao(traversal, 1, 'https://api.local/apk'), null);
 });
 
+test('não oferece release suja nem artefato de outro cliente/pacote', () => {
+  assert.equal(avaliarAtualizacao({ ...INFO, sourceDirty: true }, 1, 'https://s2cam.com.br/apk'), null);
+  assert.equal(avaliarAtualizacao({ ...INFO, client: 'vibe' }, 1, 'https://s2cam.com.br/apk', { client: 'cortex' }), null);
+  assert.equal(avaliarAtualizacao({ ...INFO, packageId: 'com.outro.app' }, 1, 'https://s2cam.com.br/apk', { packageId: 'com.s2cam.app' }), null);
+});
+
 test('o manifesto fica ao lado do APK, por cliente', () => {
   assert.equal(urlDoBuildInfo('http://host/apk/', 'grupoflash'), 'http://host/apk/drac-grupoflash-build-info.json');
 });

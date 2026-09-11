@@ -1,8 +1,10 @@
 {
-  "appName": "Grupo Flash",
+  "appName": "S2Cam",
   "slug": "drac-drac-local-168-194-13-70",
   "packageId": "com.ajustconsulting.grupoflash",
-  "apiUrl": "https://ajustcam.ajustconsulting.com.br/api",
+  "apiUrl": "https://principal.s2cam.com.br/api",
+  "apkBaseUrl": "https://s2cam.com.br/apk",
+  "pushEnabled": false,
   "primaryColor": "#3b82f6",
   "redesign": true,
   "splashBackgroundColor": "#0A0D13"

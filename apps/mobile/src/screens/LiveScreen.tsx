@@ -9,7 +9,7 @@
  * PTZ, gravação e playback são ações reais via callbacks do App.
  */
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FlatList, ActivityIndicator, Alert, Image, type LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DetectionOverlay } from '../components/DetectionOverlay';
@@ -129,9 +129,14 @@ export function LiveScreen({
   // null = ainda não sabemos (conectando/HLS); false = stream sem faixa de áudio.
   const [audioAvailable, setAudioAvailable] = useState<boolean | null>(null);
   // Máxima qualidade (HLS H.265 passthrough). hdUrl chega do App sob demanda.
-  const [hdMode, setHdMode] = useState(false);
+  const [hdMode, setHdMode] = useState(true);
   const hdActive = hdMode && !!hdUrl;
-  useEffect(() => { setHdMode(false); }, [camera.id]); // reseta ao trocar de câmera
+  const requestHdRef = useRef(onRequestHd);
+  requestHdRef.current = onRequestHd;
+  useEffect(() => {
+    setHdMode(true);
+    requestHdRef.current();
+  }, [camera.id]);
   const toggleHd = () => {
     if (hdMode) { setHdMode(false); onExitHd(); }
     else { setHdMode(true); onRequestHd(); }

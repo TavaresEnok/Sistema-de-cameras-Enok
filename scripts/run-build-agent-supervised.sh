@@ -24,7 +24,7 @@ set +a
 
 export BUILD_AGENT_HOST="${BUILD_AGENT_HOST:-172.17.0.1}"
 export BUILD_AGENT_PORT="${BUILD_AGENT_PORT:-8780}"
-export PUBLIC_APK_BASE="${PUBLIC_APK_BASE:-https://ajustcam.ajustconsulting.com.br}"
+export PUBLIC_APK_BASE="${PUBLIC_APK_BASE:-https://s2cam.com.br}"
 export MIN_FREE_GB="${MIN_FREE_GB:-6}"
 export JAVA_HOME="${JAVA_HOME:-/home/flashnet/toolchain/jdk-17.0.19+10}"
 export ANDROID_HOME="${ANDROID_HOME:-/home/flashnet/toolchain/android-sdk}"

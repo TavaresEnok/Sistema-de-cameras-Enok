@@ -83,10 +83,10 @@ test('RTMP privada criada pelo app ignora continuous e herda 3 dias do grupo', a
   assert.equal(writes.length, 1);
   assert.deepEqual(writes[0].privacy, { isPrivate: true, ownerUserId: owner.id });
   assert.equal(writes[0].dto.groupId, 'grupo-3-dias');
-  assert.equal(writes[0].dto.recordingMode, 'motion');
+  assert.equal(writes[0].dto.recordingMode, 'manual');
   assert.equal(writes[0].dto.recordingEnabled, false);
   assert.equal(writes[0].dto.motionTrigger, 'SYSTEM');
-  assert.equal(writes[0].dto.aiEnabled, true);
+  assert.equal(writes[0].dto.aiEnabled, false);
   assert.equal(writes[0].dto.retentionDays, 3);
   assert.equal(writes[0].dto.retentionFollowsGroup, true);
   assert.equal(writes[0].dto.recordingVideoCodec, 'original');
@@ -119,7 +119,7 @@ test('RTMP privada sem grupo recebe retenção própria padrão de 3 dias', asyn
     retentionDays: 365,
   }, owner);
 
-  assert.equal(written.recordingMode, 'motion');
+  assert.equal(written.recordingMode, 'manual');
   assert.equal(written.recordingEnabled, false);
   assert.equal(written.retentionDays, 3);
   assert.equal(written.retentionFollowsGroup, false);
@@ -212,13 +212,18 @@ test('edição de câmera RTMP ignora o marcador de rede sem afrouxar câmera RT
   assert.equal(writes[0].data.name, 'Portaria atualizada');
   assert.equal(writes[0].data.recordingVideoCodec, 'h264');
 
-  service.getCameraOrThrow = async () => ({ ...existing, sourceMode: 'rtsp_pull', ip: '192.168.1.20' });
+  service.getCameraOrThrow = async () => ({
+    ...existing,
+    sourceMode: 'rtsp_pull',
+    ip: '192.168.1.20',
+    httpPort: 80,
+  });
   service.assertTestTargetAllowed = (ip: string) => {
     networkPolicyCalls += 1;
     return ip;
   };
   await service.update('pull-1', { name: 'RTSP validada' });
-  assert.equal(networkPolicyCalls, 1, 'câmera RTSP deve continuar passando pela política de rede');
+  assert.equal(networkPolicyCalls, 2, 'câmera RTSP deve validar as portas de vídeo e acesso web');
 });
 
 test('caminho por serial não esconde a URL personalizada compatível', async () => {

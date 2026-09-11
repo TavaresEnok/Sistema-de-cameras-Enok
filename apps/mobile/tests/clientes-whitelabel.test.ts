@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 const RAIZ = new URL('../clients/', import.meta.url).pathname;
 
-type Config = { appName?: string; packageId?: string; apiUrl?: string };
+type Config = { appName?: string; packageId?: string; apiUrl?: string; apkBaseUrl?: string; pushEnabled?: boolean };
 
 function clientes(): Array<{ slug: string; config: Config }> {
   return readdirSync(RAIZ, { withFileTypes: true })
@@ -43,5 +43,13 @@ test('todo cliente declara packageId e nome', () => {
     assert.ok(config.packageId, `${slug}: sem packageId`);
     assert.match(config.packageId!, /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/, `${slug}: packageId inválido para Android`);
     assert.ok(config.appName, `${slug}: sem appName`);
+  }
+});
+
+test('todo app publicado usa a infraestrutura oficial e declara o estado do push', () => {
+  for (const { slug, config } of clientes()) {
+    assert.match(config.apiUrl ?? '', /^https:\/\/[a-z0-9-]+\.s2cam\.com\.br\/api$/, `${slug}: API fora do domínio oficial`);
+    assert.equal(config.apkBaseUrl, 'https://s2cam.com.br/apk', `${slug}: atualização não está centralizada`);
+    assert.equal(typeof config.pushEnabled, 'boolean', `${slug}: push não pode ficar implicitamente ligado/desligado`);
   }
 });

@@ -187,7 +187,7 @@ function WizardModal({
     ip: string;
     rtspPort: number;
     onvifPort?: number;
-    httpPort?: number;
+    httpPort: number;
     username: string;
     password: string;
     rtspPath?: string;
@@ -375,7 +375,14 @@ function WizardModal({
 
   const canAdvance = (() => {
     if (step === 0) {
-      return form.ip.trim().length > 0 && form.port.trim().length > 0 && form.username.trim().length > 0 && form.password.trim().length > 0;
+      const httpPort = Number(form.httpPort);
+      return form.ip.trim().length > 0
+        && form.port.trim().length > 0
+        && Number.isInteger(httpPort)
+        && httpPort >= 1
+        && httpPort <= 65535
+        && form.username.trim().length > 0
+        && form.password.trim().length > 0;
     }
     if (step === 1) {
       return form.name.trim().length > 0;
@@ -451,7 +458,7 @@ function WizardModal({
         ip: form.ip.trim(),
         rtspPort: Number(form.port),
         onvifPort: form.onvifPort.trim() ? Number(form.onvifPort) : undefined,
-        httpPort: form.httpPort.trim() ? Number(form.httpPort) : undefined,
+        httpPort: Number(form.httpPort),
         username: form.username.trim(),
         password: form.password,
         rtspPath: form.rtspPath.trim() || undefined,
@@ -666,23 +673,21 @@ function WizardModal({
                   <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Canal</label>
                   <input value={form.channel} onChange={(e) => updateField('channel', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="1" />
                 </div>
-                {/* ONVIF e HTTP saíram de "Avançado para técnico" (pedido do dono
-                    em 14/08/2026): é onde se resolve câmera atrás de roteador, e
-                    ninguém procura isso dentro de uma gaveta fechada. Continuam
-                    OPCIONAIS — sem asterisco, e o rótulo diz o que acontece
-                    quando ficam em branco. */}
+                {/* A porta web é obrigatória em câmera RTSP: além de preservar o
+                    acesso administrativo, vira a primeira tentativa de ONVIF
+                    quando o instalador não conhece uma porta separada. */}
                 <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta ONVIF</label>
-                  <input value={form.onvifPort} onChange={(e) => updateField('onvifPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Vazio: detecção automática" />
+                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta ONVIF <span className="font-normal">(opcional)</span></label>
+                  <input value={form.onvifPort} onChange={(e) => updateField('onvifPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Vazio: usar a porta web" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta HTTP</label>
-                  <input value={form.httpPort} onChange={(e) => updateField('httpPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Vazio: detecção automática" />
+                  <label className="text-[11px] font-medium text-[hsl(var(--muted-foreground))]">Porta de acesso web (HTTP)<span className="ml-0.5 text-red-500">*</span></label>
+                  <input value={form.httpPort} onChange={(e) => updateField('httpPort', e.target.value)} className="w-full h-9 px-3 rounded border border-border bg-background text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary))]" placeholder="Ex.: 80, 8080 ou 8081" inputMode="numeric" />
                 </div>
               </div>
               <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                <span className="text-red-500">*</span> obrigatórios. As portas ONVIF e HTTP só são
-                necessárias quando a câmera está atrás de um roteador com portas encaminhadas.
+                <span className="text-red-500">*</span> obrigatórios. Se a porta ONVIF ficar vazia,
+                o S2Cam também testará a porta web para ONVIF, PTZ e eventos da câmera.
               </p>
               <details className="rounded border border-border bg-background/60 px-3 py-2">
                 <summary className="cursor-pointer text-xs font-medium text-[hsl(var(--muted-foreground))]">Avançado para técnico</summary>

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DRAC Central</title>
+    <title>S2Cam Central</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23161826%22%2F%3E%3Crect%20x%3D%222%22%20y%3D%222%22%20width%3D%2260%22%20height%3D%2260%22%20rx%3D%2214%22%20fill%3D%22none%22%20stroke%3D%22%239184d9%22%20stroke-opacity%3D%22.55%22%20stroke-width%3D%222.5%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2232%22%20r%3D%2217%22%20fill%3D%22none%22%20stroke%3D%22%239184d9%22%20stroke-width%3D%223%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2232%22%20r%3D%226.5%22%20fill%3D%22%23b5abfc%22%2F%3E%3Ccircle%20cx%3D%2247%22%20cy%3D%2217%22%20r%3D%223.5%22%20fill%3D%22%236fc79b%22%2F%3E%3C%2Fsvg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -993,7 +993,7 @@
         <div class="login-brand">
           <div class="brand-mark">D</div>
           <div>
-            <div class="brand-title">DRAC Central</div>
+            <div class="brand-title">S2Cam Central</div>
             <div class="brand-subtitle">Operação da frota</div>
           </div>
         </div>
@@ -1036,7 +1036,7 @@
         <div class="brand">
           <div class="brand-mark">D</div>
           <div class="brand-text">
-            <div class="brand-title">DRAC Central</div>
+            <div class="brand-title">S2Cam Central</div>
             <div class="brand-subtitle">Operação da frota</div>
           </div>
         </div>
@@ -1262,7 +1262,7 @@
             <div class="page-head">
               <div>
                 <h1>Clientes e servidores</h1>
-                <p>Inventário técnico recebido automaticamente de cada instalação DRAC.</p>
+                <p>Inventário técnico recebido automaticamente de cada instalação S2Cam.</p>
               </div>
               <div class="page-head-actions">
                 <input id="inventory-search" type="search" placeholder="Filtrar inventário" style="width:220px" />
@@ -1509,7 +1509,7 @@
           <section id="tecnico-view" class="view">
             <div class="page-head">
               <div>
-                <h1>Portal técnico do AjustCam</h1>
+                <h1>Portal técnico do S2Cam</h1>
                 <p>Arquitetura, regras de funcionamento, fluxos de vídeo, falhas, recuperação e operação reunidos em uma referência pesquisável.</p>
               </div>
               <div class="page-head-actions technical-page-actions">
@@ -1548,7 +1548,7 @@
       <div class="wall-head">
         <div class="brand-mark">D</div>
         <div>
-          <div class="wall-title">DRAC Central</div>
+          <div class="wall-title">S2Cam Central</div>
           <div class="wall-sub" id="wall-health">—</div>
         </div>
         <div class="wall-clock"><strong id="wall-clock">—</strong><span id="wall-date">M ou Esc sai</span></div>
@@ -1594,8 +1594,10 @@
         </div>
         <div class="field">
           <label for="app-edit-api">Servidor (URL da API)</label>
-          <input id="app-edit-api" placeholder="http://168.194.13.70:5173/api" class="mono" />
+          <input id="app-edit-api" placeholder="https://cliente.s2cam.com.br/api" class="mono" />
         </div>
+        <label class="brand-toggle" style="margin-top:12px"><input type="checkbox" id="app-edit-push" /> Notificações em segundo plano</label>
+        <div class="subtext">Só habilite depois de registrar o pacote Android no Firebase. Se faltar a credencial, a geração será bloqueada em vez de entregar um app incompleto.</div>
         <section class="brand-editor" aria-labelledby="brand-editor-title">
           <div class="brand-editor-head">
             <div>
@@ -4153,7 +4155,7 @@
             <div>Nome</div><div>${escapeHtml(item.server?.hostname || '—')}</div>
             <div>Sistema</div><div>${escapeHtml(platformLabel(item.server?.platform))}</div>
             <div>Processador</div><div>${escapeHtml(item.server?.cpuCount ?? '—')} núcleos</div>
-            <div>Versão do DRAC</div><div>${escapeHtml(item.version || '—')}</div>
+            <div>Versão do S2Cam</div><div>${escapeHtml(item.version || '—')}</div>
             <div>Armazenamento</div><div>${item.storage?.disk ? `${bytes(item.storage.disk.usedBytes)} / ${bytes(item.storage.disk.totalBytes)}` : '—'}</div>
           </div>
           <div class="section">
@@ -4606,7 +4608,7 @@
         const crumb = document.querySelector('#crumb-view');
         const label = view === 'detalhe' ? (displayName(selectedItem()) || 'Instalação') : (VIEW_LABELS[view] || view);
         if (crumb) crumb.textContent = label;
-        document.title = `${label} — DRAC Central`;
+        document.title = `${label} — S2Cam Central`;
         if (updateHistory && view !== 'tecnico' && previousView === 'tecnico' && state.user && !state.technicalRoutePending) {
           updateTechnicalUrl('', { push: true });
         }
@@ -5383,6 +5385,8 @@
               <div class="kv">
                 <div>Pacote</div><div>${pkg}</div>
                 <div>Servidor</div><div class="mono">${escapeHtml((ac && ac.apiUrl) || '—')}</div>
+                <div>Notificações</div><div>${ac && ac.pushEnabled ? '<span class="badge ok">Ativas</span>' : '<span class="badge neutral">Desativadas</span>'}</div>
+                <div>Relatório de falhas</div><div>${ac && ac.crashReportingEnabled ? '<span class="badge ok">Ativo</span>' : '<span class="badge warn">Não configurado</span>'}</div>
                 <div>APK</div><div>${link(ac && ac.apkUrl ? centralUrl(`/api/admin/apk/clients/${encodeURIComponent(slug)}/download`) : '', 'Baixar APK')}</div>
                 <div>AAB</div><div>${link(ac && ac.aabUrl ? centralUrl(`/api/admin/apk/clients/${encodeURIComponent(slug)}/download-aab`) : '', 'Baixar AAB')}</div>
                 <div>Kit Play Store</div><div>${link(ac && ac.kitUrl ? centralUrl(`/api/admin/apk/clients/${encodeURIComponent(slug)}/download-kit`) : '', 'Baixar kit (.zip)')}</div>
@@ -5420,6 +5424,7 @@
           document.querySelector('#app-edit-name').value = data.appName || '';
           document.querySelector('#app-edit-pkg').value = data.packageId || '';
           document.querySelector('#app-edit-api').value = data.apiUrl || '';
+          document.querySelector('#app-edit-push').checked = data.pushEnabled === true;
           const branding = data.branding || {};
           appEditLogoDataUrl = branding.brandLogoDataUrl || '';
           const custom = branding.brandUseDefaultColors === false && validHexColor(branding.brandPrimaryColor);
@@ -5448,6 +5453,7 @@
         const appName = document.querySelector('#app-edit-name').value.trim();
         const packageId = document.querySelector('#app-edit-pkg').value.trim();
         const apiUrl = document.querySelector('#app-edit-api').value.trim();
+        const pushEnabled = document.querySelector('#app-edit-push').checked;
         const customColors = document.querySelector('#app-edit-custom-colors').checked;
         const customBackground = customColors && document.querySelector('#app-edit-custom-background').checked;
         const primaryColor = document.querySelector('#app-edit-primary-hex').value.trim().toLowerCase();
@@ -5464,7 +5470,7 @@
         try {
           const res = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(id)}/app`), {
             method: 'PATCH', credentials: 'include', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ appName, packageId, apiUrl, branding }),
+            body: JSON.stringify({ appName, packageId, apiUrl, pushEnabled, branding }),
           });
           const data = await res.json();
           if (!res.ok) { showToast(data.message || data.error || 'Falha ao salvar.'); return; }
@@ -5546,7 +5552,7 @@
         const apply = document.querySelector('#technical-access-apply');
         if (message) {
           message.textContent = grant
-            ? `Conceder a ${user.email} acesso à arquitetura, regras internas e procedimentos técnicos do AjustCam?`
+            ? `Conceder a ${user.email} acesso à arquitetura, regras internas e procedimentos técnicos do S2Cam?`
             : `Revogar imediatamente de ${user.email} o acesso ao Portal técnico? A sessão continuará válida para as demais áreas permitidas.`;
         }
         if (apply) {

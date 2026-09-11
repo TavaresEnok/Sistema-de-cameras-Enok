@@ -11,6 +11,7 @@ import { lerCapacidades, lerServicos, reescreverParaHostAlcancavel } from './hel
 import { lerPresets, lerPosicao, limitarEixo, escaparXml, type PresetDaCamera } from './helpers/presets-ptz.helper';
 import { assertCameraTargetAllowed } from '../common/network/safe-url.helper';
 import { PtzStateStore } from './ptz-state.store';
+import { cameraControlPortCandidates } from '../cameras/helpers/camera-control-port.helper';
 
 type DigestSoapRequestInput = {
   method?: 'GET' | 'POST';
@@ -34,6 +35,7 @@ type DigestSoapResult = {
 type DetectOnvifInput = {
   ip: string;
   onvifPort?: number;
+  httpPort?: number;
   username?: string;
   password?: string;
   onvifPath?: string;
@@ -781,7 +783,8 @@ export class OnvifPtzService {
 
   private shouldPreferProprietaryPtz(camera: Camera) {
     const rtspPath = (camera.rtspPath ?? '').toLowerCase();
-    return rtspPath.includes('/cam/realmonitor') || [8075, 8076, 8077].includes(camera.onvifPort ?? 0);
+    return rtspPath.includes('/cam/realmonitor')
+      || [8075, 8076, 8077].some((port) => port === camera.onvifPort || port === camera.httpPort);
   }
 
   private proprietaryPorts(camera: Camera) {
@@ -1019,8 +1022,7 @@ export class OnvifPtzService {
   }
 
   private async findOnvifPort(camera: Camera) {
-    const preferredPort = camera.onvifPort ?? this.onvifFallbackPorts[0];
-    const ports = Array.from(new Set([preferredPort, ...this.onvifFallbackPorts, 80, 2020]));
+    const ports = cameraControlPortCandidates(camera, [...this.onvifFallbackPorts, 80, 2020]);
     for (const port of ports) {
       const reachable = await this.portChecker.check(camera.ip, port);
       if (reachable) {
@@ -1386,7 +1388,7 @@ export class OnvifPtzService {
   }
 
   async detectPtzEndpoint(input: DetectOnvifInput) {
-    const ports = Array.from(new Set([input.onvifPort, ...this.onvifFallbackPorts, 80, 2020].filter((v): v is number => Number.isFinite(v as number))));
+    const ports = cameraControlPortCandidates(input, [...this.onvifFallbackPorts, 80, 2020]);
     const palpitesDeCaminho = this.candidatePaths(input.onvifPath);
     const discoveryByPort: Record<number, Awaited<ReturnType<OnvifPtzService['discoverProfileTokens']>>> = {};
 
@@ -1487,6 +1489,7 @@ export class OnvifPtzService {
     const detection = await this.detectPtzEndpoint({
       ip: camera.ip,
       onvifPort: camera.onvifPort ?? undefined,
+      httpPort: camera.httpPort ?? undefined,
       username: auth.username,
       password: auth.password,
       onvifPath: camera.onvifPath ?? undefined,
@@ -1498,6 +1501,7 @@ export class OnvifPtzService {
       ip: camera.ip,
       configured: {
         onvifPort: camera.onvifPort ?? null,
+        httpPort: camera.httpPort ?? null,
         onvifPath: camera.onvifPath ?? null,
         onvifProfileToken: camera.onvifProfileToken ?? null,
         channel: camera.channel,

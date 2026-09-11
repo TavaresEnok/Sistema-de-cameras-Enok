@@ -34,7 +34,7 @@ test('push aceita local e área, que são os únicos campos que fazem sentido', 
 
 test('o modo tradicional continua exigindo conexão completa', () => {
   const faltando = erros({ name: 'Câmera comum' });
-  for (const campo of ['ip', 'rtspPort', 'username', 'password']) {
+  for (const campo of ['ip', 'rtspPort', 'httpPort', 'username', 'password']) {
     assert.ok(faltando.includes(campo), `${campo} deveria continuar obrigatório no modo pull`);
   }
 });
@@ -51,7 +51,7 @@ test('modo inventado é recusado', () => {
 
 test('cadastro tradicional válido passa sem erro', () => {
   assert.deepEqual(
-    erros({ name: 'Cam', ip: '192.168.1.50', rtspPort: 554, username: 'admin', password: 'x' }),
+    erros({ name: 'Cam', ip: '192.168.1.50', rtspPort: 554, httpPort: 80, username: 'admin', password: 'x' }),
     [],
   );
 });

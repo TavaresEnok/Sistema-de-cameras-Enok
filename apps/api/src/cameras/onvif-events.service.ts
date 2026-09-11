@@ -13,6 +13,10 @@ import { assertCameraTargetAllowed } from '../common/network/safe-url.helper';
 import { candidateOnvifPorts, streamUriIdentifiesCamera } from './helpers/onvif-port-discovery.helper';
 import { classificarEventoOnvif, deveGravar, tipoDeEventoDoSistema, type EventoOnvifClassificado } from './helpers/evento-onvif.helper';
 import { modoArmado } from './helpers/gatilho-de-gravacao.helper';
+import {
+  cameraControlPortCandidates,
+  preferredCameraControlPort,
+} from './helpers/camera-control-port.helper';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const onvif = require('onvif');
 
@@ -205,7 +209,7 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
     if (!this.portDiscoveryEnabled()) return;
     const semPorta = await this.prisma.camera.findMany({
       where: { enabled: true, onvifPort: null },
-      select: { id: true, name: true, ip: true, rtspPort: true, username: true, passwordEncrypted: true },
+      select: { id: true, name: true, ip: true, rtspPort: true, httpPort: true, username: true, passwordEncrypted: true },
     });
     if (semPorta.length === 0) return;
 
@@ -233,7 +237,10 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
       try { password = this.cryptoService.decrypt(camera.passwordEncrypted); }
       catch { continue; }
 
-      const candidatas = candidateOnvifPorts(camera, irmasPorIp.get(camera.ip) ?? []);
+      const candidatas = cameraControlPortCandidates(
+        camera,
+        candidateOnvifPorts(camera, irmasPorIp.get(camera.ip) ?? []),
+      );
       let encontrada: number | null = null;
       for (const porta of candidatas) {
         if (await this.confirmOnvifPort(camera, porta, password)) { encontrada = porta; break; }
@@ -270,9 +277,10 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
    */
   private probeMotionSupport(camera: any): Promise<boolean | null> {
     return new Promise((resolve) => {
-      if (!camera.onvifPort) return resolve(null); // sem porta ONVIF → não dá pra sondar
+      const controlPort = preferredCameraControlPort(camera);
+      if (!controlPort) return resolve(null);
       try {
-        assertCameraTargetAllowed(camera.ip, camera.onvifPort);
+        assertCameraTargetAllowed(camera.ip, controlPort);
       } catch {
         return resolve(null);
       }
@@ -284,7 +292,7 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
       catch { clearTimeout(timer); return finish(null); }
       try {
         const cam = new onvif.Cam(
-          { hostname: camera.ip, username: camera.username, password, port: camera.onvifPort, timeout: 5000 },
+          { hostname: camera.ip, username: camera.username, password, port: controlPort, timeout: 5000 },
           (err: any) => {
             if (settled) return;
             if (err) { clearTimeout(timer); return finish(null); }
@@ -318,7 +326,7 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`Falha na descoberta de porta ONVIF: ${error.message}`));
 
       const cameras = await this.prisma.camera.findMany({
-        select: { id: true, name: true, ip: true, onvifPort: true, username: true, passwordEncrypted: true, motionTrigger: true, recordingMode: true, enabled: true, detectionZones: true },
+        select: { id: true, name: true, ip: true, onvifPort: true, httpPort: true, username: true, passwordEncrypted: true, motionTrigger: true, recordingMode: true, enabled: true, detectionZones: true },
       });
       for (const cam of cameras) {
         if (cam.enabled === false) continue;
@@ -462,8 +470,13 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private connectCamera(camera: any) {
+    const controlPort = preferredCameraControlPort(camera);
+    if (!controlPort) {
+      this.activeCams.delete(camera.id);
+      return;
+    }
     try {
-      assertCameraTargetAllowed(camera.ip, camera.onvifPort || 80);
+      assertCameraTargetAllowed(camera.ip, controlPort);
     } catch {
       this.activeCams.delete(camera.id);
       return;
@@ -476,7 +489,7 @@ export class OnvifEventsService implements OnModuleInit, OnModuleDestroy {
     catch { this.activeCams.delete(camera.id); return; }
 
     const cam = new onvif.Cam(
-      { hostname: camera.ip, username: camera.username, password, port: camera.onvifPort || 80 },
+      { hostname: camera.ip, username: camera.username, password, port: controlPort },
       (err: any) => {
         if (err) {
           const failure = this.connectFailures.get(camera.id) ?? { count: 0, nextRetryAt: 0 };

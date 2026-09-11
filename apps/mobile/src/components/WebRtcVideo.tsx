@@ -6,6 +6,8 @@ import { discoverWhepIceServers } from '../services/whep-ice-servers';
 
 const CONNECT_TIMEOUT_MS = 12_000;
 const ICE_GATHER_TIMEOUT_MS = 2_000;
+const MEDIA_STALL_TIMEOUT_MS = 15_000;
+const MEDIA_WATCHDOG_INTERVAL_MS = 3_000;
 
 // react-native-webrtc expõe addEventListener em runtime (EventTarget do event-target-shim),
 // mas os tipos publicados não declaram. Tipamos só os eventos que usamos e fazemos cast.
@@ -114,6 +116,7 @@ export function WebRtcVideo({
     let sessionUrl: string | null = null;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let disconnectedTimer: ReturnType<typeof setTimeout> | undefined;
+    let mediaWatchdog: ReturnType<typeof setInterval> | undefined;
     let appActive = AppState.currentState === 'active';
     let connectionLost = false;
     let connectionReady = false;
@@ -140,6 +143,39 @@ export function WebRtcVideo({
         pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
         pc.addTransceiver('video', { direction: 'recvonly' });
         pc.addTransceiver('audio', { direction: 'recvonly' });
+
+        // ICE "connected" não garante vídeo avançando. Algumas quedas de NAT,
+        // encoder ou relay deixam a sessão viva com a última imagem congelada.
+        // O contador RTP detecta isso e aciona o HLS/autorreconexão.
+        let lastMediaProgressAt = Date.now();
+        let lastFrames = -1;
+        let lastBytes = -1;
+        let hasInboundVideoStats = false;
+        mediaWatchdog = setInterval(() => {
+          if (cancelled || !pc || !connectionReady || !mediaReady || !appActive) return;
+          void pc.getStats().then((stats: any) => {
+            if (cancelled) return;
+            let frames = 0;
+            let bytes = 0;
+            let found = false;
+            stats?.forEach?.((report: any) => {
+              if (report?.type === 'inbound-rtp' && report?.kind === 'video' && !report?.isRemote) {
+                found = true;
+                frames += Number(report.framesDecoded || report.framesReceived || 0);
+                bytes += Number(report.bytesReceived || 0);
+              }
+            });
+            if (!found) return;
+            hasInboundVideoStats = true;
+            if (frames > lastFrames || bytes > lastBytes) {
+              lastFrames = frames;
+              lastBytes = bytes;
+              lastMediaProgressAt = Date.now();
+              return;
+            }
+            if (hasInboundVideoStats && Date.now() - lastMediaProgressAt >= MEDIA_STALL_TIMEOUT_MS) failover();
+          }).catch(() => undefined);
+        }, MEDIA_WATCHDOG_INTERVAL_MS);
 
         const ev = pc as unknown as PcEvents;
         ev.addEventListener('track', (event) => {
@@ -236,6 +272,7 @@ export function WebRtcVideo({
       cancelled = true;
       if (timeout) clearTimeout(timeout);
       if (disconnectedTimer) clearTimeout(disconnectedTimer);
+      if (mediaWatchdog) clearInterval(mediaWatchdog);
       appSub.remove();
       if (sessionUrl) {
         fetch(sessionUrl, {
