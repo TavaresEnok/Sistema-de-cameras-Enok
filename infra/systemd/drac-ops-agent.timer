@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll AjustCam Central for approved operations
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=20s
+RandomizedDelaySec=5s
+Persistent=true
+Unit=drac-ops-agent.service
+
+[Install]
+WantedBy=timers.target

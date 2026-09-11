@@ -57,7 +57,7 @@ test('a busca casa por código E por nome', () => {
   // "21" tem que achar a Cam-21 — buscar só por nome quebraria isso, que é o
   // jeito mais rápido de achar câmera numa frota numerada.
   const fonte = read('src/components/SeletorDeCamera.tsx');
-  assert.match(fonte, /value=\{`\$\{camera\.name\} \$\{camera\.code[^}]*\} \$\{camera\.id\}`\}/);
+  assert.match(fonte, /value=\{`\$\{camera\.name\} \$\{camera\.code[^}]*\} \$\{camera\.floor[^}]*\} \$\{camera\.id\}`\}/);
 });
 
 test('câmera offline continua SELECIONÁVEL', () => {

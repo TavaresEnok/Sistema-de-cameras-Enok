@@ -40,7 +40,9 @@ test('gaveta de edição descreve o conteúdo para leitores de tela', () => {
 
 test('barra de rolagem horizontal permanece visível em tabelas estreitas', () => {
   assert.match(camerasPage, /ops-card overflow-x-auto/);
-  assert.match(css, /::-webkit-scrollbar \{ width: 12px; height: 12px; \}/);
-  assert.match(css, /scrollbar-color: hsl\(var\(--muted-foreground\) \/ 0\.68\)/);
-  assert.doesNotMatch(css, /::-webkit-scrollbar-track\s*\{\s*background:\s*transparent/);
+  // A interface operacional usa uma barra propositalmente discreta, mas com
+  // contraste suficiente para continuar encontrável em tabelas horizontais.
+  assert.match(css, /::-webkit-scrollbar \{ width: 3px; height: 3px; \}/);
+  assert.match(css, /scrollbar-color: hsl\(var\(--primary\) \/ 0\.62\) transparent/);
+  assert.match(css, /::-webkit-scrollbar-thumb\s*\{[\s\S]*background: hsl\(var\(--primary\) \/ 0\.58\)/);
 });

@@ -1,4 +1,5 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Query, Req, Res, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Optional, Param, Post, Query, Req, Res, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { RtmpDiscoveryService } from '../cameras/rtmp-discovery.service';
 import { ConfigService } from '@nestjs/config';
 import { SkipThrottle } from '@nestjs/throttler';
 import { UserRole } from '@prisma/client';
@@ -101,6 +102,7 @@ export class CameraStreamController {
     private readonly streamResourceAdvisor: StreamResourceAdvisorService,
     private readonly configService: ConfigService,
     private readonly pendingIngest: PendingIngestRegistry,
+    @Optional() private readonly discovery?: RtmpDiscoveryService,
   ) {}
 
   private extractBearerToken(req: Request): string | null {
@@ -181,6 +183,7 @@ export class CameraStreamController {
       return res.status(200).json({ code: 1, message: 'Caminho de publicação inválido.' });
     }
 
+    if (this.discovery?.allows(path, body?.ip)) return res.status(200).json({ code: 0 });
     const cachedUntil = this.rejectedSrsPaths.get(path) ?? 0;
     if (cachedUntil > Date.now()) {
       this.pendingIngest.record(path, body?.ip ?? null);
@@ -192,7 +195,7 @@ export class CameraStreamController {
     let camera: any;
     try {
       camera = ingestKey
-        ? await this.camerasService.findCameraByIngestKey(ingestKey)
+        ? (await this.camerasService.findCameraByIngestKey(ingestKey) || await this.camerasService.findCameraByIngestPath(path))
         : await this.camerasService.findCameraByIngestPath(path);
     } catch {
       // Autorização fail-closed: banco indisponível nunca abre uma publicação.
@@ -264,7 +267,8 @@ export class CameraStreamController {
     // Único caminho em que publicar é permitido sem a credencial administrativa,
     // e ele é estreito de propósito:
     //  · só a ação 'publish', só nos protocolos rtmp/rtmps;
-    //  · só em `drac/<32 hex>` ou no alias equivalente `d/<22 base64url>` —
+    //  · só em `drac/<32 hex>`, `d2/<22 base62>` ou no alias histórico
+    //    `d/<22 base64url>` —
     //    nenhum nome de path de câmera casa com esses padrões;
     //  · a chave autentica por hash, em tempo constante, e some se a câmera for
     //    desabilitada ou tirada do modo push.
@@ -277,13 +281,14 @@ export class CameraStreamController {
         return deny('Publicação permitida apenas por RTMP.');
       }
       const caminho = String(body?.path ?? '');
+      if (this.discovery?.allows(caminho)) return res.status(200).json({ authorized: true });
 
       // 1ª via: a chave que NÓS geramos, no formato histórico hexadecimal ou
-      // no alias Base64URL que preserva os mesmos 128 bits.
+      // no alias Base62 atual ou Base64URL histórico, ambos com 128 bits.
       const chave = ingestKeyFromPathName(caminho);
       if (chave) {
         const camera = await this.camerasService.findCameraByIngestKey(chave).catch(() => null);
-        if (camera) return res.status(200).json({ authorized: true });
+        if (camera || await this.camerasService.findCameraByIngestPath(caminho).catch(() => null)) return res.status(200).json({ authorized: true });
         this.pendingIngest.record(caminho, body?.ip ?? null);
         return deny('Chave de publicação inválida.');
       }

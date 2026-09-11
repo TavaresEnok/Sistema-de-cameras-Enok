@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Cpu, MemoryStick, HardDrive, Activity, Gauge, RefreshCw,
+  Cpu, MemoryStick, HardDrive, Activity, RefreshCw,
   Server, Video, Brain, ArrowUp, ArrowDown, Minus, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import {
@@ -18,7 +18,6 @@ import { getApiBaseUrl } from '@/lib/api-base';
 import { useAuthStore } from '@/store/authStore';
 import { useVmsDataStore } from '@/store/vmsDataStore';
 import { toast } from '../hooks/use-toast';
-import { formatarBytes } from '@/lib/formato';
 
 const API_URL = getApiBaseUrl();
 const HISTORY = 40; // samples in sparkline
@@ -29,6 +28,34 @@ type OptimizationReport = {
   optimizationPlan?: { safeActionCount?: number; manualActionCount?: number; canApplySafely?: boolean };
   recommendations?: Array<{ code: string; severity: 'info' | 'warning' | 'critical'; message: string; action: string; cameras: string[] }>;
 };
+
+function recommendationCopy(recommendation: NonNullable<OptimizationReport['recommendations']>[number]) {
+  const common = { cameras: recommendation.cameras, severity: recommendation.severity };
+  switch (recommendation.code) {
+    case 'audio_opus_transcode':
+      return { ...common, title: 'Áudio ao vivo pode aumentar o processamento', detail: 'Esta câmera precisa de processamento adicional quando alguém ativa o áudio. Mantenha o áudio ligado apenas onde a escuta ao vivo for necessária.' };
+    case 'hevc_live_transcode':
+      return { ...common, title: 'Esta câmera pode exigir processamento extra de vídeo', detail: 'Alguns navegadores não exibem este formato diretamente. O sistema mantém uma alternativa para preservar a visualização.' };
+    case 'analytics_reuses_live':
+      return { ...common, title: 'A análise inteligente está dividindo o mesmo vídeo da visualização', detail: 'Separar um perfil mais leve para análise reduz o consumo do servidor sem alterar a imagem principal do operador.' };
+    case 'analytics_hevc_decode':
+      return { ...common, title: 'A análise inteligente pode consumir mais processamento nesta câmera', detail: 'O formato recebido exige mais trabalho do servidor. Um perfil secundário mais leve ajuda a manter a operação fluida.' };
+    case 'live_protocol_not_webrtc':
+      return { ...common, title: 'A visualização pode abrir mais devagar', detail: 'A câmera não está priorizando o modo de vídeo mais rápido. O sistema ainda usa alternativas quando necessário.' };
+    case 'recording_not_main_stream':
+      return { ...common, title: 'A gravação pode estar usando uma imagem menor que a disponível', detail: 'Revisar o perfil de gravação ajuda a preservar a melhor qualidade para consultas futuras.' };
+    case 'recording_not_hevc':
+      return { ...common, title: 'A gravação pode ocupar mais espaço que o necessário', detail: 'O formato atual pode gerar arquivos maiores. Esta é apenas uma sugestão de economia de disco.' };
+    case 'live_metadata_missing':
+      return { ...common, title: 'Ainda faltam dados técnicos desta câmera', detail: 'Abra a câmera ou execute o teste de conexão para o sistema confirmar o perfil de vídeo.' };
+    case 'multi_reader_transcode_pressure':
+      return { ...common, title: 'Muitas pessoas podem estar assistindo esta câmera ao mesmo tempo', detail: 'A visualização continua disponível, mas o servidor pode consumir mais processamento enquanto houver vários acessos.' };
+    case 'repeated_live_failures':
+      return { ...common, title: 'Esta câmera apresentou instabilidade recente', detail: 'Verifique a conexão da câmera e a rede do local. O sistema continua tentando recuperar o vídeo automaticamente.' };
+    default:
+      return { ...common, title: 'Ajuste recomendado', detail: recommendation.message.replace(/Opus/gi, 'processamento de áudio').replace(/WebRTC/gi, 'modo de vídeo rápido') };
+  }
+}
 
 function Sparkline({ data, color }: { data: number[]; color: string }) {
   if (data.length < 2) return <div className="h-10" />;
@@ -65,18 +92,6 @@ function severityTone(s: 'info' | 'warning' | 'critical') {
   if (s === 'critical') return 'border-[hsl(var(--destructive)_/_0.35)] bg-[hsl(var(--destructive)_/_0.08)] text-[hsl(var(--destructive))]';
   if (s === 'warning') return 'border-[hsl(var(--status-warning)_/_0.35)] bg-[hsl(var(--status-warning)_/_0.10)] text-[hsl(var(--status-warning))]';
   return 'border-border bg-[hsl(var(--muted)_/_0.4)] text-muted-foreground';
-}
-
-/** Cor da pílula de estado da tabela de saúde por câmera (mesma paleta de severityTone). */
-function friendlyRecommendation(recommendation: NonNullable<OptimizationReport['recommendations']>[number]) {
-  const technicalText = `${recommendation.message} ${recommendation.action}`.toLowerCase();
-  if (/opus|audio.*transcod|transcod.*audio/.test(technicalText)) {
-    return {
-      message: 'O áudio de algumas câmeras precisa de conversão para tocar no navegador.',
-      action: 'Isso aumenta o consumo de processamento. Mantenha o áudio apenas onde ele for necessário.',
-    };
-  }
-  return { message: recommendation.message, action: recommendation.action };
 }
 
 function fmtUptime(seconds?: number) {
@@ -171,29 +186,28 @@ export default function PerformancePage() {
   const diskHist = history.map((h) => h.disk);
   const prev = history.length > 1 ? history[history.length - 2] : { cpu, ram, disk };
 
-  const load1 = system?.server.loadAverage[0] ?? 0;
   const totalRamGB = system ? (system.server.totalMemoryBytes / 1024 / 1024 / 1024).toFixed(1) : '0';
   const usedRamGB = system ? ((system.server.totalMemoryBytes - system.server.freeMemoryBytes) / 1024 / 1024 / 1024).toFixed(1) : '0';
 
   const METRICS = [
-    { key: 'cpu', label: 'CPU', value: cpu, sub: `${system?.server.cpuCount ?? '—'} núcleos disponíveis`, hist: cpuHist, icon: Cpu },
+    { key: 'cpu', label: 'Processamento', value: cpu, sub: `${system?.server.cpuCount ?? '—'} núcleos · uso estimado agora`, hist: cpuHist, icon: Cpu },
     { key: 'ram', label: 'Memória', value: ram, sub: `${usedRamGB} / ${totalRamGB} GB`, hist: ramHist, icon: MemoryStick },
-    { key: 'disk', label: 'Disco', value: disk, sub: system ? `${formatarBytes(system.disk.usedBytes)} de ${formatarBytes(system.disk.totalBytes)}` : '—', hist: diskHist, icon: HardDrive },
+    { key: 'disk', label: 'Disco', value: disk, sub: system ? `${(system.disk.usedBytes / 1024 ** 4).toFixed(1)} / ${(system.disk.totalBytes / 1024 ** 4).toFixed(1)} TB` : '—', hist: diskHist, icon: HardDrive },
   ];
 
   const canApplySafely = isAdmin && Boolean(report?.optimizationPlan?.canApplySafely);
   const recommendations = report?.recommendations ?? [];
 
   return (
-    // Mesma regra do contrato de rolagem: esta página é longa (3 cartões +
-    // 4 indicadores + 2 tabelas por câmera) e seria cortada sem isto.
+    // A tela é voltada à instalação local: mostra capacidade do equipamento,
+    // sem despejar diagnósticos por câmera que o operador já tem em Ao Vivo.
     <div className="h-full overflow-y-auto">
     <div className="p-4 md:p-6 space-y-5">
       {/* ── Header ── */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Recursos do servidor e orientações para manter o sistema fluido.
+            Uso de processamento, memória e disco desta instalação em tempo real.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -252,12 +266,11 @@ export default function PerformancePage() {
       </div>
 
       {/* ── Secondary KPIs ── */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-3">
         {[
-          { label: 'Streams ativos', value: `${onlineCams}/${cameras.length}`, icon: Video, hint: 'câmeras online' },
-          { label: 'Processadores IA', value: `${runningProc}/${aiCams || 0}`, icon: Brain, hint: 'rodando / habilitados' },
-          { label: 'Carga recente', value: `${load1.toFixed(1)} / ${system?.server.cpuCount ?? '—'}`, icon: Gauge, hint: 'trabalho atual em relação aos núcleos disponíveis', mono: true },
-          { label: 'Uptime', value: fmtUptime(system?.server.uptimeSeconds), icon: Server, hint: system?.server.hostname ?? 'servidor' },
+          { label: 'Câmeras disponíveis', value: `${onlineCams}/${cameras.length}`, icon: Video, hint: 'enviando vídeo agora' },
+          { label: 'Análise inteligente', value: `${runningProc}/${aiCams || 0}`, icon: Brain, hint: 'câmeras sendo analisadas' },
+          { label: 'Servidor ligado há', value: fmtUptime(system?.server.uptimeSeconds), icon: Server, hint: system?.server.hostname ?? 'equipamento local' },
         ].map((k) => {
           const Icon = k.icon;
           return (
@@ -266,36 +279,42 @@ export default function PerformancePage() {
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{k.label}</span>
                 <Icon className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
-              <div className={`mt-2 text-xl font-semibold ${k.mono ? 'font-mono text-lg' : ''}`}>{k.value}</div>
+              <div className="mt-2 text-xl font-semibold">{k.value}</div>
               <div className="mt-0.5 text-[10px] text-muted-foreground">{k.hint}</div>
             </div>
           );
         })}
       </div>
 
-      {/* ── Orientações de desempenho ── */}
+      {/* Sugestões traduzidas para impacto operacional. Código/codec não é
+          uma decisão que o operador precise conhecer para agir corretamente. */}
       {recommendations.length > 0 && (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="flex items-center gap-2 px-5 py-3.5 border-b border-border">
             <AlertTriangle className="h-4 w-4 text-[hsl(var(--primary))]" />
-            <h2 className="text-[13px] font-semibold">Atenção ao desempenho</h2>
+            <div>
+              <h2 className="text-[13px] font-semibold">Ajustes sugeridos</h2>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">São recomendações para reduzir consumo do equipamento; a visualização continua funcionando.</p>
+            </div>
           </div>
           <div className="divide-y divide-border/60">
-            {recommendations.map((r) => {
-              const copy = friendlyRecommendation(r);
-              return (
+            {recommendations.map((r) => (
               <div key={r.code} className="px-5 py-3 space-y-1">
+                {(() => {
+                  const copy = recommendationCopy(r);
+                  return <>
                 <div className="flex items-center gap-2">
-                  <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${severityTone(r.severity)}`}>
-                    {r.severity === 'critical' ? 'crítico' : r.severity === 'warning' ? 'atenção' : 'info'}
+                  <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${severityTone(copy.severity)}`}>
+                    {copy.severity === 'critical' ? 'importante' : copy.severity === 'warning' ? 'atenção' : 'informação'}
                   </span>
-                  <span className="text-[12.5px] font-medium">{copy.message}</span>
+                  <span className="text-[12.5px] font-medium">{copy.title}</span>
                 </div>
-                <p className="text-[11px] text-muted-foreground">{copy.action}</p>
-                {r.cameras?.length ? <p className="truncate text-[10px] text-muted-foreground/80">{r.cameras.join(', ')}</p> : null}
+                <p className="text-[11px] leading-relaxed text-muted-foreground">{copy.detail}</p>
+                {copy.cameras?.length ? <p className="truncate text-[10px] text-muted-foreground/80">Câmeras: {copy.cameras.join(', ')}</p> : null}
+                  </>;
+                })()}
               </div>
-              );
-            })}
+            ))}
           </div>
         </div>
       )}
@@ -311,7 +330,7 @@ export default function PerformancePage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Aplicar ajustes seguros de streaming?</AlertDialogTitle>
             <AlertDialogDescription>
-              O S2Cam não vai alterar IP, senha, RTSP, ONVIF, codec físico da câmera ou áudio — apenas parâmetros de entrega/streaming considerados seguros.
+              O AjustCam não vai alterar IP, senha, RTSP, ONVIF, codec físico da câmera ou áudio — apenas parâmetros de entrega/streaming considerados seguros.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

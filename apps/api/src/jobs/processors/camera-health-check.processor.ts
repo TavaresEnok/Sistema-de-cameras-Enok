@@ -482,7 +482,7 @@ export class CameraHealthCheckProcessor extends WorkerHost {
             camera.id,
             'HEALTH_MOTION_DETECTOR_STALE',
             camera.status === CameraStatus.ONLINE ? 'ERROR' : 'WARNING',
-            'Câmera armada por movimento sem frames recentes no detector.',
+            'A detecção de movimento está sem sinal recente. A gravação de segurança foi mantida ativa.',
             {
               aiServiceOnline: serviceReachable,
               aiServiceStatus: serviceStatus,
@@ -515,7 +515,7 @@ export class CameraHealthCheckProcessor extends WorkerHost {
           camera.id,
           'HEALTH_MOTION_DETECTOR_RECOVERED',
           'INFO',
-          'Detector de movimento voltou a receber frames.',
+          'A detecção de movimento voltou a receber imagens normalmente.',
           { frameAgeSeconds, staleThresholdSeconds: staleSeconds },
         );
       }

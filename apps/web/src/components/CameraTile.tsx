@@ -16,6 +16,7 @@ interface CameraTileProps {
   streamStartDelayMs?: number;
   showDetectionOverlay?: boolean;
   liveViewMode?: 'selected' | 'grid';
+  wallMode?: boolean;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -38,10 +39,12 @@ export function CameraTile({
   streamStartDelayMs = 0,
   showDetectionOverlay = false,
   liveViewMode = 'grid',
+  wallMode: wallModeProp,
 }: CameraTileProps) {
   const [hovered, setHovered] = useState(false);
   const [playerStatus, setPlayerStatus] = useState<LivePlayerStatus | null>(null);
-  const wallMode = useGridStore((state) => state.wallMode);
+  const storedWallMode = useGridStore((state) => state.wallMode);
+  const wallMode = wallModeProp ?? storedWallMode;
 
   // Câmera privada que ESTE usuário não pode ver (ex.: admin numa câmera do
   // cliente). O player NÃO é montado — mostramos um aviso de privacidade limpo
@@ -55,7 +58,10 @@ export function CameraTile({
   const showOfflineOverlay = isOffline && playerStatus?.state !== 'playing';
   const isAlarm    = camera.status === 'alarm';
   const isMotion   = camera.status === 'motion';
-  const isManualRecordingActive = camera.status === 'recording';
+  // Regras de movimento/objeto podem estar gravando automaticamente; elas não
+  // são o REC acionado na grade e não devem pintar o botão de vermelho.
+  const isManualRecordingActive = camera.manualRecordingActive === true
+    || (camera.recordingMode === 'manual' && camera.status === 'recording');
 
   return (
     <motion.div
@@ -115,7 +121,7 @@ export function CameraTile({
       {/* Offline overlay — só quando o player também não tem imagem viva (status
           "offline" com stream tocando = sondagem desatualizada; mostra o vídeo). */}
       {showOfflineOverlay && (
-        <div className="absolute inset-0 z-20 bg-black/60 flex items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 z-20 bg-black/60 flex items-center justify-center">
           <div className="text-center">
             <AlertTriangle className="w-4 h-4 text-[hsl(var(--status-offline))] mx-auto mb-1" />
             <div className="font-mono text-[9px] text-[hsl(var(--muted-foreground))] tracking-widest uppercase">
@@ -145,6 +151,11 @@ export function CameraTile({
             {isMotion && (
               <span className="text-[9px] text-[hsl(var(--status-motion))] bg-[hsl(var(--status-motion)_/_0.15)] border border-[hsl(var(--status-motion)_/_0.35)] px-1.5 py-px rounded-sm">
                 Movimento
+              </span>
+            )}
+            {isManualRecordingActive && (
+              <span className="text-[9px] font-medium text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)_/_0.18)] border border-[hsl(var(--destructive)_/_0.45)] px-1.5 py-px rounded-sm rec-pulse">
+                Gravação manual
               </span>
             )}
           </div>

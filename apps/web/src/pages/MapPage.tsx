@@ -61,6 +61,7 @@ export default function MapPage() {
   const [autoLocating, setAutoLocating] = useState(false);
   const [autoLocationDone, setAutoLocationDone] = useState(false);
   const [search, setSearch] = useState('');
+  const [groupFilter, setGroupFilter] = useState('__all__');
   const [zoneFilter, setZoneFilter] = useState('__all__');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [sidebarPosterUrls, setSidebarPosterUrls] = useState<Record<string, string>>({});
@@ -101,6 +102,10 @@ export default function MapPage() {
     () => ['__all__', ...Array.from(new Set(panelCameras.map((camera) => camera.zone)))],
     [panelCameras],
   );
+  const groupFilters = useMemo(
+    () => ['__all__', ...Array.from(new Set(panelCameras.map((camera) => camera.floor).filter((group) => group && group !== '-')))],
+    [panelCameras],
+  );
   const filteredPanelCameras = useMemo(() => {
     const query = search.trim().toLowerCase();
     return panelCameras.filter((camera) => {
@@ -110,10 +115,11 @@ export default function MapPage() {
         || camera.ipAddress.includes(query)
         || (camera.locationAddress ?? '').toLowerCase().includes(query);
       const matchesZone = zoneFilter === '__all__' || camera.zone === zoneFilter;
+      const matchesGroup = groupFilter === '__all__' || camera.floor === groupFilter;
       const matchesStatus = statusFilter === 'all' || camera.status === statusFilter;
-      return matchesSearch && matchesZone && matchesStatus;
+      return matchesSearch && matchesGroup && matchesZone && matchesStatus;
     });
-  }, [panelCameras, search, statusFilter, zoneFilter]);
+  }, [groupFilter, panelCameras, search, statusFilter, zoneFilter]);
   const posterCameraIdsKey = useMemo(
     () => panelCameras
       .filter((camera) => camera.canViewContent !== false)
@@ -383,6 +389,17 @@ export default function MapPage() {
           </div>
 
           <div className="grid grid-cols-2 gap-1.5">
+            <Select value={groupFilter} onValueChange={setGroupFilter}>
+              <SelectTrigger className="col-span-2 h-8 min-w-0 px-2 text-[10px]">
+                <Filter className="mr-1.5 h-3 w-3 shrink-0 text-muted-foreground" />
+                <SelectValue placeholder="Todos os grupos" />
+              </SelectTrigger>
+              <SelectContent>
+                {groupFilters.map((group) => (
+                  <SelectItem key={group} value={group} className="text-xs">{group === '__all__' ? 'Todos os grupos' : group}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={zoneFilter} onValueChange={setZoneFilter}>
               <SelectTrigger className="h-8 min-w-0 px-2 text-[10px]">
                 <Filter className="mr-1.5 h-3 w-3 shrink-0 text-muted-foreground" />

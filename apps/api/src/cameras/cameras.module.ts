@@ -19,11 +19,13 @@ import { PortCheckerService } from '../common/network/port-checker.service';
 import { OnvifEventsService } from './onvif-events.service';
 import { IntelbrasEventsService } from './intelbras-events.service';
 import { RtmpIngestSourceService } from './rtmp-ingest-source.service';
+import { RtmpDiscoveryService } from './rtmp-discovery.service';
+import { RtmpDiscoveryController } from './rtmp-discovery.controller';
 
 @Module({
   imports: [AuditModule, AccessControlModule, AlarmsModule, forwardRef(() => RecordingsModule)],
-  controllers: [CamerasController],
-  providers: [PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
-  exports: [PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
+  controllers: [RtmpDiscoveryController, CamerasController],
+  providers: [RtmpDiscoveryService, PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
+  exports: [RtmpDiscoveryService, PendingIngestRegistry, RtmpIngestSourceService, CamerasService, CryptoService, PortCheckerService, OnvifEventsService, IntelbrasEventsService],
 })
 export class CamerasModule {}
