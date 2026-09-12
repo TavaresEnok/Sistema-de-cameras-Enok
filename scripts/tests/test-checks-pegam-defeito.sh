@@ -100,6 +100,12 @@ exige_reprovacao 'imagem móvel na Gateway é pega' \
   'Gateway usa tag móvel' \
   "sed -i 's|nginx:1.27-alpine@sha256:[a-f0-9]*|nginx:1.27-alpine|' infra/gateway/docker-compose.yml"
 
+# 6) Porta 1935 com dois donos: é a edição à mão da Vibe (MediaMTX na 1935)
+#    somada ao SRS que volta com o compose do Git numa atualização.
+exige_reprovacao 'dois serviços na porta RTMP 1935 são pegos' \
+  'borda RTMP padrão errada' \
+  "sed -i 's|DRAC_MEDIAMTX_RTMP_PUBLISH:-127.0.0.1:19350|DRAC_MEDIAMTX_RTMP_PUBLISH:-1935|' infra/docker-compose.yml"
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os checks provaram que enxergam o defeito.\033[0m\n\n'

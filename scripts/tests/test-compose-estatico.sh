@@ -246,6 +246,36 @@ else
   falha "healthcheck do MediaMTX cobre só parte do pipeline" "os quatro listeners críticos precisam ser observados sem conexões artificiais"
 fi
 
+# ─── 9. Uma única borda RTMP na porta 1935 ─────────────────────────────────
+# A 1935 pública é do SRS (padrão) OU do MediaMTX (câmeras via Gateway), por
+# variável. Dois serviços nela = o segundo não sobe; nenhum = câmera nenhuma
+# entra. Na Vibe (12/09/2026) a troca foi feita editando o compose à mão, fora
+# do Git — a próxima atualização desfaria em silêncio.
+secao '9. Uma única borda RTMP na porta 1935'
+
+donos_1935() { # [VAR=valor...] -> serviços que publicam a 1935 em todas as interfaces
+  env "$@" docker compose --env-file "$ENV_EXEMPLO" \
+    -f "$INFRA/docker-compose.yml" -f "$INFRA/docker-compose.prod.yml" config 2>/dev/null \
+  | awk '
+      /^  [a-zA-Z0-9_-]+:$/ { s=$1; sub(/:$/, "", s) }
+      /^ +- mode:/ { hip="" }
+      /host_ip:/ { hip=$2 }
+      /published:/ { p=$2; gsub(/"/, "", p); if (p == "1935" && (hip == "" || hip == "0.0.0.0")) print s }
+    ' | sort -u | paste -sd' '
+}
+borda_padrao="$(donos_1935)"
+borda_gateway="$(donos_1935 DRAC_SRS_RTMP_PUBLISH=127.0.0.1:19351 DRAC_MEDIAMTX_RTMP_PUBLISH=1935)"
+if [ "$borda_padrao" = "rtmp-ingest" ]; then
+  ok "padrão: só o SRS atende a 1935"
+else
+  falha "borda RTMP padrão errada" "esperava só rtmp-ingest na 1935, veio: '${borda_padrao:-nenhum}'"
+fi
+if [ "$borda_gateway" = "mediamtx" ]; then
+  ok "câmeras via Gateway: só o MediaMTX atende a 1935"
+else
+  falha "borda RTMP via Gateway errada" "esperava só mediamtx na 1935, veio: '${borda_gateway:-nenhum}'"
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mChecks estáticos de infraestrutura: todos passaram.\033[0m\n\n'

@@ -310,6 +310,22 @@ else
   nok 'watchdog cobre cadeia RTMP' 'SRS/callback/forward não podem falhar fora do monitoramento'
 fi
 
+if grep -qF 'live:webrtc-host-nao-e-desta-maquina' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && grep -qF 'live:webrtc-host-nao-aplicado' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && grep -qF 'MEDIAMTX_WEBRTC_ADDITIONAL_HOST' "$RAIZ/scripts/trocar-ip.sh" \
+  && grep -qF -- '--force-recreate mediamtx' "$RAIZ/scripts/trocar-ip.sh"; then
+  ok 'troca de IP: watchdog acusa host WebRTC alheio e o script recria o MediaMTX'
+else
+  nok 'troca de IP coberta' 'o IP anunciado ao navegador pode envelhecer em silêncio (incidente Vibe 12/09)'
+fi
+
+if grep -qF 'RTMP_EDGE=mediamtx' "$RAIZ/scripts/runtime-watchdog.sh" \
+  && grep -qF 'if [ "$RTMP_EDGE" = "srs" ]; then' "$RAIZ/scripts/runtime-watchdog.sh"; then
+  ok 'watchdog não cobra o elo SRS→MediaMTX quando a borda RTMP é a Gateway'
+else
+  nok 'watchdog respeita a borda RTMP' 'com MediaMTX na 1935 o SRS local fica ocioso e não deve ser cobrado nem reiniciado'
+fi
+
 if grep -qF 'backup_interval="$(load_env_var POSTGRES_BACKUP_INTERVAL_SECONDS)"' "$RAIZ/scripts/runtime-watchdog.sh" \
   && grep -qF 'backup_max_age=$((backup_interval + 86400))' "$RAIZ/scripts/runtime-watchdog.sh" \
   && ! grep -qF 'backup:mais-velho-que-36h' "$RAIZ/scripts/runtime-watchdog.sh"; then

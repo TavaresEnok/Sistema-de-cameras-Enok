@@ -69,6 +69,16 @@ if [ "$(load_env_var DRAC_GPU_ENABLED)" = "true" ] && [ -f "$INFRA_DIR/docker-co
   COMPOSE_MEDIAMTX+=(-f "$INFRA_DIR/docker-compose.gpu.yml")
 fi
 
+# Borda RTMP (ver infra/docker-compose.yml, serviço mediamtx): com câmeras
+# entrando pelo SRS da Gateway, o MediaMTX local atende a 1935 e o SRS local
+# fica ocioso. Nesse modo não existe elo SRS→MediaMTX para provar nem forward
+# para reconectar — cobrar isso seria acusar/curar algo fora do caminho.
+RTMP_EDGE=srs
+case "$(load_env_var DRAC_MEDIAMTX_RTMP_PUBLISH)" in
+  ''|127.0.0.1:*|localhost:*) ;;
+  *) RTMP_EDGE=mediamtx ;;
+esac
+
 # Docker não reinicia um container apenas por ele ficar `unhealthy`.
 # `restart: unless-stopped` cobre crash, mas não processo vivo com subsistema
 # travado. A cada ciclo, cura SOMENTE os dois componentes RTMP degradados; nunca
@@ -172,7 +182,9 @@ if docker inspect vms-mediamtx >/dev/null 2>&1; then
       # Forwards RTMP que estavam conectados ao MediaMTX antigo podem continuar
       # presos ao socket morto. Reiniciar o tradutor força um handshake limpo;
       # os equipamentos configurados para publicação contínua reconectam.
-      docker restart vms-rtmp-ingest >/dev/null 2>&1 && actions+=("reconectou-forward-rtmp")
+      if [ "$RTMP_EDGE" = "srs" ]; then
+        docker restart vms-rtmp-ingest >/dev/null 2>&1 && actions+=("reconectou-forward-rtmp")
+      fi
     else
       mediamtx_ports_ok || issues+=("live:mediamtx-sem-portas")
       mediamtx_turn_ok || issues+=("live:mediamtx-sem-turn")
@@ -206,8 +218,12 @@ mediamtx_rtmp_count() {
       .catch(() => process.exit(1));
   ' 2>/dev/null
 }
-SRS_STREAMS="$(srs_stream_count)"
-MTX_RTMP_STREAMS="$(mediamtx_rtmp_count)"
+SRS_STREAMS=""
+MTX_RTMP_STREAMS=""
+if [ "$RTMP_EDGE" = "srs" ]; then
+  SRS_STREAMS="$(srs_stream_count)"
+  MTX_RTMP_STREAMS="$(mediamtx_rtmp_count)"
+fi
 if [[ "$SRS_STREAMS" =~ ^[0-9]+$ && "$MTX_RTMP_STREAMS" =~ ^[0-9]+$ ]] && [ "$SRS_STREAMS" -gt 0 ]; then
   if [ "$MTX_RTMP_STREAMS" -eq 0 ]; then
     sleep 5
@@ -222,6 +238,44 @@ if [[ "$SRS_STREAMS" =~ ^[0-9]+$ && "$MTX_RTMP_STREAMS" =~ ^[0-9]+$ ]] && [ "$SR
     fi
   elif [ "$MTX_RTMP_STREAMS" -lt $((SRS_STREAMS - 1)) ]; then
     issues+=("rtmp:forward-parcial:srs=$SRS_STREAMS:mediamtx=$MTX_RTMP_STREAMS")
+  fi
+fi
+
+# ── 3b) ENDEREÇO QUE O NAVEGADOR RECEBE PARA O VÍDEO (WebRTC/ICE) ────────────
+# Incidente Vibe 12/09/2026: a VM trocou de IP e o .env seguiu anunciando o
+# antigo. Câmeras publicando, portas respondendo, watchdog "ok" — e toda sessão
+# morrendo em "deadline exceeded": o navegador mandava UDP para um IP morto.
+# Com webrtcIPsFromInterfaces: no, esse host é o ÚNICO candidato anunciado.
+#
+# Só DETECTA. Adivinhar o IP certo e recriar sozinho seria pior que alertar.
+#   1) container rodando com host diferente do .env (esqueceram de recriar);
+#   2) host anunciado que não pertence a esta máquina (o IP trocou).
+# NAT 1:1 legítimo (IP público só no roteador): DRAC_WEBRTC_HOST_NAT=true.
+webrtc_host_is_local() { # host -> 0 se algum IPv4 dele está numa interface daqui
+  local host="$1" locais ip resolvidos
+  locais="$(ip -4 -o addr show 2>/dev/null | awk '{split($4, a, "/"); print a[1]}')"
+  if [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    resolvidos="$host"
+  else
+    resolvidos="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u)"
+  fi
+  while IFS= read -r ip; do
+    [ -n "$ip" ] || continue
+    grep -qxF "$ip" <<< "$locais" && return 0
+  done <<< "$resolvidos"
+  return 1
+}
+if docker inspect vms-mediamtx >/dev/null 2>&1 && command -v ip >/dev/null 2>&1; then
+  webrtc_host_env="$(load_env_var MEDIAMTX_WEBRTC_ADDITIONAL_HOST)"
+  webrtc_host_run="$(docker inspect vms-mediamtx --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+    | sed -n 's/^MTX_WEBRTCADDITIONALHOSTS=//p' | tail -n1)"
+  if [ -n "$webrtc_host_env" ] && [ -n "$webrtc_host_run" ] && [ "$webrtc_host_env" != "$webrtc_host_run" ]; then
+    issues+=("live:webrtc-host-nao-aplicado:env=${webrtc_host_env}:container=${webrtc_host_run}")
+  fi
+  if [ "$(load_env_var DRAC_WEBRTC_HOST_NAT)" != "true" ]; then
+    for webrtc_host in ${webrtc_host_run//,/ }; do
+      webrtc_host_is_local "$webrtc_host" || issues+=("live:webrtc-host-nao-e-desta-maquina:${webrtc_host}")
+    done
   fi
 fi
 

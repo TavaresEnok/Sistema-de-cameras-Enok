@@ -297,7 +297,7 @@ services:
 
   # ── TRADUTOR DE DIALETO RTMP (SRS) ────────────────────────────────────────
   #
-  # Atende a porta pública 1935 e repassa ao MediaMTX interno. Existe porque
+  # Atende a porta pública 1935 (borda padrão; ver MediaMTX) e repassa ao MediaMTX interno. Existe porque
   # câmera legada Adobe/FMLE (medido: Positivo CIP-B1312-M) exige a resposta
   # `onFCPublish` antes de enviar vídeo, e o MediaMTX 1.18.2 não a envia — a
   # câmera conecta, é aceita e desliga em ~150 ms sem um quadro. O SRS responde
@@ -331,7 +331,10 @@ services:
     logging: *default-logging
     command: ["./objs/srs", "-c", "conf/srs.conf"]
     ports:
-      - "${MEDIAMTX_RTMP_PORT:-1935}:1935/tcp"
+      # Borda RTMP escolhida por instalação (ver o comentário no mediamtx):
+      # padrão = SRS na 1935 pública; câmeras via SRS da Gateway = SRS em
+      # loopback e MediaMTX na 1935. Nunca os dois na 1935.
+      - "${DRAC_SRS_RTMP_PUBLISH:-${MEDIAMTX_RTMP_PORT:-1935}}:1935/tcp"
       - "127.0.0.1:${SRS_EXPORTER_PORT:-9972}:9972/tcp"
     volumes:
       - ./rtmp-ingest/srs.conf:/usr/local/srs/conf/srs.conf:ro
@@ -904,12 +907,25 @@ services:
       # Mídia WebRTC (ICE/UDP): PRECISA ser pública — o browser conecta direto no IP anunciado
       # (mediamtx.yml webrtcAdditionalHosts) nesta porta. Sem ela o vídeo WebRTC não flui.
       - "${DRAC_MEDIAMTX_WEBRTC_UDP_BIND:-0.0.0.0}:8189:8189/udp"
-      # INGESTÃO RTMP: a porta pública 1935 é atendida pelo serviço `rtmp-ingest`
-      # (SRS, tradutor de dialeto), NÃO diretamente pelo MediaMTX. Medido em
-      # campo: câmera legada Adobe/FMLE exige `onFCPublish`, que o MediaMTX não
-      # envia — ver o comentário no serviço rtmp-ingest. O MediaMTX segue
-      # escutando RTMP na rede interna (:1935 dentro do compose), que é por onde
-      # o SRS repassa, e é lá que a publicação é autorizada contra o cadastro.
+      # INGESTÃO RTMP — quem atende a 1935 PÚBLICA (a "borda") é escolha da instalação:
+      #
+      #  · PADRÃO: o `rtmp-ingest` (SRS). Câmera legada Adobe/FMLE exige
+      #    `onFCPublish`, que o MediaMTX 1.18.2 não envia (a string não existe no
+      #    binário — reconferido em 12/09/2026). O SRS responde e repassa pela
+      #    rede interna (:1935 dentro do compose); aqui o MediaMTX fica em loopback.
+      #  · CÂMERAS ENTRANDO PELA GATEWAY: o SRS da Gateway JÁ é o tradutor. Um
+      #    segundo SRS aqui vira salto duplo — observado na Vibe em 12/09: o
+      #    repasse Gateway→SRS local morria em "not annexb" e o vídeo não chegava.
+      #    Nesse caso o MediaMTX atende a 1935 direto e o SRS local fica ocioso:
+      #        DRAC_SRS_RTMP_PUBLISH=127.0.0.1:19351
+      #        DRAC_MEDIAMTX_RTMP_PUBLISH=1935
+      #    Só vale se TODA câmera usar o domínio da Gateway: equipamento FMLE
+      #    discando direto no IP desta máquina não seria traduzido.
+      #
+      # Por variável, nunca editando esta linha: edição local some na próxima
+      # atualização — foi o que deixou a Vibe dependendo de um compose fora do Git.
+      # Nas duas bordas a autorização continua no MediaMTX → API.
+      - "${DRAC_MEDIAMTX_RTMP_PUBLISH:-127.0.0.1:19350}:1935/tcp"
       # TCP na mesma porta: REMOVIDO a pedido do dono, restaurando o transporte
       # de 21/07 (só UDP), que rodava estável.
       #
