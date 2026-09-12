@@ -180,6 +180,24 @@ else
   falha "segredo TURN pode ser versionado" "mantenha apenas turnserver.conf.example e ignore o arquivo real"
 fi
 
+gateway_srs="$GATEWAY/srs/srs.conf"
+if grep -qF 'vhost ibtelecom.s2cam.com.br' "$gateway_srs" \
+   && grep -qF 'vhost cortex.s2cam.com.br' "$gateway_srs" \
+   && grep -qF 'vhost vibe.s2cam.com.br' "$gateway_srs" \
+   && [ "$(grep -c 'normal_timeout[[:space:]]*30000' "$gateway_srs")" -ge 3 ]; then
+  ok "Gateway versiona todos os tenants RTMP e tolera pausas breves"
+else
+  falha "matriz RTMP da Gateway incompleta" "todo tenant deve ter vhost explícito e timeout de publicação de 30s"
+fi
+
+if [ -f "$GATEWAY/nginx/conf.d/ibtelecom.conf" ] \
+   && [ -f "$GATEWAY/nginx/conf.d/cortex.conf" ] \
+   && [ -f "$GATEWAY/nginx/conf.d/vibe.conf" ]; then
+  ok "rotas web dos tenants atuais estão reproduzíveis"
+else
+  falha "rota web de tenant existe só na máquina" "versione IBTelecom, Cortex e Vibe em nginx/conf.d"
+fi
+
 # ─── 6. Central aceita agentes privados sem abrir o painel aos tenants ──────
 secao '6. Fronteira privada da Central'
 
