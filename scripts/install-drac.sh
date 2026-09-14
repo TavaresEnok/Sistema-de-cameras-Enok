@@ -959,6 +959,61 @@ provision_watchdog() {
   return 0
 }
 
+# ── AGENTE OPERACIONAL DA CENTRAL ─────────────────────────────────────────
+#
+# A Central nunca abre SSH, Docker API ou uma porta de volta para o cliente.
+# Este timer roda localmente como root, consulta a Central por HTTPS e só
+# executa a pequena lista de ações permitidas em drac-ops-agent.sh. Sem ele a
+# instalação aparece no inventário, mas não pode receber atualização ou um
+# reinício seguro pelo painel da Central.
+provision_operations_agent() {
+  local script_path="$DRAC_INSTALL_DIR/scripts/drac-ops-agent.sh"
+  local service_source="$DRAC_INSTALL_DIR/infra/systemd/drac-ops-agent.service"
+  local timer_source="$DRAC_INSTALL_DIR/infra/systemd/drac-ops-agent.timer"
+  local config_file="/etc/drac/ops-agent.env"
+
+  if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+    warn "systemd indisponivel; agente operacional da Central nao pode ser agendado automaticamente."
+    return 0
+  fi
+  if [ ! -f "$script_path" ] || [ ! -f "$service_source" ] || [ ! -f "$timer_source" ]; then
+    warn "Arquivos do agente operacional ausentes; a Central nao podera operar esta instalacao remotamente."
+    return 0
+  fi
+  if [ -z "$DRAC_CENTRAL_URL" ] || [ -z "$DRAC_INSTALLATION_ID" ] || [ -z "$DRAC_LICENSE_KEY" ]; then
+    warn "Dados da Central incompletos; agente operacional nao foi instalado."
+    return 0
+  fi
+
+  log "Configurando agente operacional da Central"
+  run_sudo install -d -m 700 /etc/drac
+  # Não copiar o .env inteiro: ele contém segredos de banco/mídia que o agente
+  # não precisa conhecer. O arquivo abaixo contém somente a identidade mínima
+  # para consultar ações destinadas a ESTA instalação.
+  run_sudo tee "$config_file" >/dev/null <<EOF
+DRAC_OPS_CENTRAL_URL=$DRAC_CENTRAL_URL
+DRAC_OPS_INSTALLATION_ID=$DRAC_INSTALLATION_ID
+DRAC_OPS_LICENSE_KEY=$DRAC_LICENSE_KEY
+DRAC_OPS_ROOT_DIR=$DRAC_INSTALL_DIR
+EOF
+  run_sudo chmod 600 "$config_file"
+  run_sudo chown root:root "$config_file"
+  run_sudo chmod 0755 "$script_path"
+  # O unit aponta para /opt/drac para que a atualização troque o agente junto
+  # com o produto; não mantemos uma segunda cópia que poderia ficar defasada.
+  run_sudo install -m 0644 -o root -g root "$service_source" /etc/systemd/system/drac-ops-agent.service
+  run_sudo install -m 0644 -o root -g root "$timer_source" /etc/systemd/system/drac-ops-agent.timer
+  run_sudo systemctl daemon-reload
+  if run_sudo systemctl enable --now drac-ops-agent.timer >/dev/null 2>&1; then
+    # Uma execução imediata confirma a identidade na Central; o timer segue a
+    # cada 20 segundos depois disso. A ausência de operação pendente é sucesso.
+    run_sudo systemctl start drac-ops-agent.service >/dev/null 2>&1 || true
+    log "Agente operacional ativo (Central pode atualizar e reiniciar esta instalacao)."
+  else
+    warn "Nao foi possivel ativar drac-ops-agent.timer; confira systemctl status drac-ops-agent.timer."
+  fi
+}
+
 # ── O WATCHDOG PRECISA TER RESPONDIDO UMA VEZ ───────────────────────────────
 #
 # Agendar não é o mesmo que funcionar. Na instalação do D-GUARDIAN o watchdog
@@ -1185,6 +1240,7 @@ main() {
   # monitoramento provou que funciona. Ambos falham alto.
   seed_admin
   provision_watchdog || warn "Watchdog nao pode ser agendado automaticamente; agende scripts/runtime-watchdog.sh manualmente."
+  provision_operations_agent
   verify_watchdog
   register_central_now
   validate_installation
