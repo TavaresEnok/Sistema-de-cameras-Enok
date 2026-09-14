@@ -15,8 +15,16 @@ CONFIG_FILE="${DRAC_OPS_CONFIG_FILE:-/etc/drac/ops-agent.env}"
 : "${DRAC_OPS_LICENSE_KEY:?DRAC_OPS_LICENSE_KEY ausente}"
 DRAC_OPS_ROOT_DIR="${DRAC_OPS_ROOT_DIR:-/opt/drac}"
 DRAC_OPS_LOG_DIR="${DRAC_OPS_LOG_DIR:-/var/log/drac}"
+DRAC_OPS_STATE_DIR="${DRAC_OPS_STATE_DIR:-/var/lib/drac-ops}"
 mkdir -p "$DRAC_OPS_LOG_DIR"
 chmod 700 "$DRAC_OPS_LOG_DIR"
+# O serviço usa ProtectHome=true. Sem um DOCKER_CONFIG fora de /root, um
+# `docker compose build` tenta criar /root/.docker e a atualização falha no
+# rollback/build mesmo tendo acesso ao daemon. /var é explicitamente gravável
+# com ProtectSystem=full; esse diretório é privado do agente.
+mkdir -p "$DRAC_OPS_STATE_DIR/docker"
+chmod 700 "$DRAC_OPS_STATE_DIR" "$DRAC_OPS_STATE_DIR/docker"
+export DOCKER_CONFIG="${DOCKER_CONFIG:-$DRAC_OPS_STATE_DIR/docker}"
 
 central="${DRAC_OPS_CENTRAL_URL%/}"
 headers=(-H "X-DRAC-Installation-Id: $DRAC_OPS_INSTALLATION_ID" -H "X-DRAC-License-Key: $DRAC_OPS_LICENSE_KEY")
@@ -56,6 +64,11 @@ run_action() {
       # atualização morria ANTES do fetch. A exceção é deliberadamente o
       # diretório exato configurado, nunca um curinga.
       git config --global --add safe.directory "$DRAC_OPS_ROOT_DIR"
+      # Alguns instaladores tornam o script do agente executável ao copiá-lo.
+      # Isso é só bit de arquivo, não conteúdo. Ignorar SOMENTE filemode evita
+      # que uma atualização segura pare por 100644→100755, mas qualquer edição
+      # real continua deixando a árvore suja e é bloqueada pelo atualizador.
+      git -C "$DRAC_OPS_ROOT_DIR" config core.filemode false
       DRAC_UPDATE_ALLOW_DIRTY=false bash "$DRAC_OPS_ROOT_DIR/scripts/atualizar-instalacao.sh"
       ;;
     restart_web) run_container_restart vms-web ;;

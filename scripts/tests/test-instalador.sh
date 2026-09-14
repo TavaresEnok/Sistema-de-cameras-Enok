@@ -350,10 +350,12 @@ else
 fi
 
 if grep -qF 'git config --global --add safe.directory "$DRAC_OPS_ROOT_DIR"' "$RAIZ/scripts/drac-ops-agent.sh" \
+  && grep -qF 'git -C "$DRAC_OPS_ROOT_DIR" config core.filemode false' "$RAIZ/scripts/drac-ops-agent.sh" \
+  && grep -qF 'export DOCKER_CONFIG="${DOCKER_CONFIG:-$DRAC_OPS_STATE_DIR/docker}"' "$RAIZ/scripts/drac-ops-agent.sh" \
   && grep -qF 'DRAC_UPDATE_ALLOW_DIRTY=false' "$RAIZ/scripts/drac-ops-agent.sh"; then
-  ok 'agente remoto confia somente no repositório exato da instalação antes de atualizar'
+  ok 'agente remoto atualiza sem confiar em curinga nem escrever no home do root'
 else
-  falha 'agente remoto não prepara Git para o usuário root' 'a atualização remota volta a falhar por dubious ownership'
+  falha 'agente remoto não prepara Git/Docker para atualização isolada' 'a atualização remota pode falhar por ownership, filemode ou ProtectHome'
 fi
 
 printf '\n'
