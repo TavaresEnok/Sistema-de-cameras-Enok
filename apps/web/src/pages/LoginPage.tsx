@@ -120,7 +120,10 @@ export default function LoginPage() {
   };
 
   useEffect(() => {
-    if (isAuthenticated) setLocation('/painel');
+    // `/painel` existia na interface anterior. A rota inicial oficial é o Ao
+    // Vivo; manter o destino antigo autenticava o operador e, logo em seguida,
+    // mostrava uma página 404.
+    if (isAuthenticated) setLocation('/live');
   }, [isAuthenticated, setLocation]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -131,7 +134,7 @@ export default function LoginPage() {
     setError('');
     try {
       await login(username, password);
-      setLocation('/painel');
+      setLocation('/live');
     } catch (err) {
       setError(getLoginErrorMessage(err));
     } finally {
