@@ -42,6 +42,8 @@ server {
   # UDP media still needs port 8189/udp reachable unless you configure TURN.
   location /webrtc/ {
     proxy_pass http://127.0.0.1:8889/;
+    proxy_redirect ~^/(cam_.*)$ /webrtc/$1;
+    proxy_redirect ~^https?://[^/]+/(cam_.*)$ /webrtc/$1;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
@@ -57,6 +59,8 @@ server {
   # HLS fallback under the same HTTPS origin.
   location /hls/ {
     proxy_pass http://127.0.0.1:8888/;
+    proxy_redirect ~^/(cam_.*)$ /hls/$1;
+    proxy_redirect ~^https?://[^/]+/(cam_.*)$ /hls/$1;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;

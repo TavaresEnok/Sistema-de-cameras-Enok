@@ -85,3 +85,14 @@ test('servidor HTTP interno não força recursos para HTTPS', () => {
     'HSTS deve ser emitido apenas pelo proxy TLS externo, nunca pelo servidor HTTP interno',
   );
 });
+
+test('redirecionamentos absolutos do MediaMTX permanecem na origem HTTPS do cliente', () => {
+  for (const prefixo of ['webrtc', 'hls']) {
+    const bloco = conf.split(`location /${prefixo}/ {`)[1]?.split('\n    }')[0] ?? '';
+    assert.match(
+      bloco,
+      new RegExp(`proxy_redirect\\s+~\\^https\\?://\\[\\^/\\]\\+/\\(cam_\\.\\*\\)\\$\\s+/${prefixo}/\\$1;`),
+      `${prefixo}: Location absoluto em http:// escaparia do HTTPS e seria bloqueado pelo Android`,
+    );
+  }
+});

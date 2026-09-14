@@ -83,6 +83,29 @@ test('D1 chooseLiveSource: main já saudável NÃO sonda alternativa', async () 
   assert.match(result.sourceUrl, /\/Streaming\/Channels\/101$/);
 });
 
+test('D1 chooseLiveSource: Máxima usa perfil principal, não o substream do Live', async () => {
+  const mgr = makeProxy();
+  mgr.resolveLiveStreamIsHevc = async () => true;
+  const camera = {
+    ...degradedCamera(),
+    rtspPath: '/cam/realmonitor?channel=1&subtype=1',
+    detectedWidth: 1920,
+    detectedHeight: 1080,
+    liveChannel: 1,
+    liveSubtype: 1,
+    recordingChannel: 1,
+    recordingSubtype: 0,
+    detectedVideoCodec: 'h265',
+  };
+
+  const instantaneo = await mgr.chooseLiveSource('cam-perfil', camera, 'senha', 'tcp', false);
+  const maxima = await mgr.chooseLiveSource('cam-perfil', camera, 'senha', 'tcp', true);
+
+  assert.match(instantaneo.sourceUrl, /subtype=1$/, 'Live continua usando o perfil configurado');
+  assert.match(maxima.sourceUrl, /subtype=0$/, 'Máxima deve pedir o stream principal original');
+  assert.equal(maxima.isHevc, true);
+});
+
 // ── Autocura da GRADE: decisão cacheada morta é descartada e re-sondada ──────
 //
 // Caso real (Cam-03/09 do Grupo Flash): câmera OEM responde ao ffprobe no

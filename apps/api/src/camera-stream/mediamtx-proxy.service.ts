@@ -7,6 +7,7 @@ import {
   isHevcCodec,
   resolveGridRtspProfile,
   resolveLiveRtspProfile,
+  resolveOriginalRtspProfile,
 } from '../cameras/helpers/rtsp-url.helper';
 import * as os from 'node:os';
 import { envNumber } from '../common/config/env-number.helper';
@@ -1366,8 +1367,19 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     return Number.isFinite(width) && Number.isFinite(height) ? width * height : 0;
   }
 
-  private async chooseLiveSource(cameraId: string, camera: any, password: string, transport: string) {
-    const configuredProfile = resolveLiveRtspProfile(camera);
+  private async chooseLiveSource(
+    cameraId: string,
+    camera: any,
+    password: string,
+    transport: string,
+    original = false,
+  ) {
+    // A visualizacao comum usa o perfil live. "Maxima resolucao" precisa usar
+    // o perfil principal/de gravacao, mesmo quando o administrador escolheu um
+    // substream leve para a tela instantanea.
+    const configuredProfile = original
+      ? resolveOriginalRtspProfile(camera)
+      : resolveLiveRtspProfile(camera);
     const sourceUrl = buildRtspUrl({
       username: camera.username,
       password,
@@ -2413,15 +2425,31 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       ? await this.resolvePushLiveSource(camera, rtspTransport)
       : deliveryMode === 'grid' || deliveryMode === 'grid-audio' || deliveryMode === 'grid-hevc'
         ? await this.chooseGridSource(cameraId, camera, password, rtspTransport)
-        : await this.chooseLiveSource(cameraId, camera, password, rtspTransport);
+        : await this.chooseLiveSource(
+            cameraId,
+            camera,
+            password,
+            rtspTransport,
+            deliveryMode === 'original' || deliveryMode === 'original-audio',
+          );
     const liveProfile = selected.profile;
     const sourceUrl = selected.sourceUrl;
     const isHevc = selected.isHevc;
     const sourceVideoCodec = String(('codec' in selected ? selected.codec : null) ?? '').trim().toLowerCase()
       || (isHevc ? 'h265' : 'h264');
-    const sourceWidth = Number(('width' in selected ? selected.width : null) ?? camera.streamWidth) || null;
-    const sourceHeight = Number(('height' in selected ? selected.height : null) ?? camera.streamHeight) || null;
-    const sourceFps = Number(('fps' in selected ? selected.fps : null) ?? camera.streamFps) || null;
+    const originalDelivery = deliveryMode === 'original' || deliveryMode === 'original-audio';
+    const sourceWidth = Number(
+      ('width' in selected ? selected.width : null)
+      ?? (originalDelivery ? camera.detectedWidth : camera.streamWidth),
+    ) || null;
+    const sourceHeight = Number(
+      ('height' in selected ? selected.height : null)
+      ?? (originalDelivery ? camera.detectedHeight : camera.streamHeight),
+    ) || null;
+    const sourceFps = Number(
+      ('fps' in selected ? selected.fps : null)
+      ?? (originalDelivery ? camera.detectedFps : camera.streamFps),
+    ) || null;
     const sourceBitrateKbps = Number(('bitrateKbps' in selected ? selected.bitrateKbps : null)) || null;
     const usingSubStream = Boolean('usedSubStream' in selected && selected.usedSubStream);
     const sanitizeGridSource =
