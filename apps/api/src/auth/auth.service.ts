@@ -27,21 +27,24 @@ export class AuthService {
     private readonly settingsService: SettingsService,
   ) {}
 
-  private registerFailedAttempt(email: string, maxAttempts: number) {
-    const current = this.loginAttempts.get(email) ?? { count: 0, lockedUntil: 0 };
+  private registerFailedAttempt(username: string, maxAttempts: number) {
+    const current = this.loginAttempts.get(username) ?? { count: 0, lockedUntil: 0 };
     current.count += 1;
     if (current.count >= maxAttempts) {
       current.lockedUntil = Date.now() + AuthService.LOCKOUT_MS;
       current.count = 0;
     }
-    this.loginAttempts.set(email, current);
+    this.loginAttempts.set(username, current);
   }
 
   private sanitizeUser(user: User): AuthUser {
     return {
       id: user.id,
       name: user.name,
-      email: user.email,
+      username: user.username || user.email || '',
+      // Compatibilidade temporária para clientes antigos que exibem `email`.
+      // A UI nova recebe `username` e nunca precisa que isto seja um e-mail.
+      email: user.email || user.username,
       role: user.role,
     };
   }
@@ -59,7 +62,8 @@ export class AuthService {
   private async signAccessToken(user: User, expiresInOverride?: string) {
     const payload: JwtAuthPayload = {
       sub: user.id,
-      email: user.email,
+      username: user.username || user.email || '',
+      email: user.email || user.username,
       role: user.role,
       ver: user.authVersion,
       type: 'access',
@@ -92,30 +96,40 @@ export class AuthService {
     }
   }
 
-  async login(email: string, password: string, accessExpiresIn?: string) {
-    const normalizedEmail = email.trim().toLowerCase();
+  async login(identifier: string, password: string, accessExpiresIn?: string) {
+    const normalizedUsername = identifier.trim().toLowerCase();
+    if (!normalizedUsername) throw new UnauthorizedException('Credenciais inválidas.');
 
-    const lock = this.loginAttempts.get(normalizedEmail);
+    const lock = this.loginAttempts.get(normalizedUsername);
     if (lock && lock.lockedUntil > Date.now()) {
       const remainingMin = Math.ceil((lock.lockedUntil - Date.now()) / 60000);
       throw new UnauthorizedException(`Conta temporariamente bloqueada por excesso de tentativas. Tente novamente em ${remainingMin} min.`);
     }
 
     const maxAttempts = await this.settingsService.getMaxLoginAttempts().catch(() => 5);
-    const user = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
+    // E-mail segue funcionando como identificador para contas antigas, mas
+    // nomes simples (ex.: beira_mar) consultam a chave de usuário primeiro.
+    // `findFirst` consulta os dois identificadores sem revelar qual deles
+    // existe. O fallback mantém compatibilidade com adaptadores antigos que
+    // ainda expõem somente findUnique(email) durante uma atualização gradual.
+    const user = typeof this.prisma.user.findFirst === 'function'
+      ? await this.prisma.user.findFirst({
+          where: { OR: [{ username: normalizedUsername }, { email: normalizedUsername }] },
+        })
+      : await this.prisma.user.findUnique({ where: { email: normalizedUsername } });
 
     if (!user || !user.isActive) {
-      this.registerFailedAttempt(normalizedEmail, maxAttempts);
+      this.registerFailedAttempt(normalizedUsername, maxAttempts);
       throw new UnauthorizedException('Credenciais inválidas.');
     }
 
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
-      this.registerFailedAttempt(normalizedEmail, maxAttempts);
+      this.registerFailedAttempt(normalizedUsername, maxAttempts);
       throw new UnauthorizedException('Credenciais inválidas.');
     }
 
-    this.loginAttempts.delete(normalizedEmail);
+    this.loginAttempts.delete(normalizedUsername);
 
     const accessToken = await this.signAccessToken(user, accessExpiresIn);
     const refresh = await this.createRefreshSession(user);
@@ -316,7 +330,9 @@ export class AuthService {
       data: { resetTokenHash, resetTokenExpiresAt },
     });
 
-    await this.sendResetPasswordEmail(user.email, rawToken);
+    // `email` é opcional para contas por usuário. A busca acima só encontra
+    // contas com e-mail, mas a guarda deixa a regra explícita para o tipo.
+    if (user.email) await this.sendResetPasswordEmail(user.email, rawToken);
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {

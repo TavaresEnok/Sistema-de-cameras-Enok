@@ -145,10 +145,10 @@ export class LiveLayoutsService {
     const registros = await this.prisma.liveLayout.findMany({
       orderBy: { updatedAt: 'desc' },
       include: {
-        user: { select: { id: true, name: true, email: true } },
+        user: { select: { id: true, name: true, username: true, email: true } },
         shares: {
           include: {
-            user: { select: { id: true, name: true, email: true } },
+            user: { select: { id: true, name: true, username: true, email: true } },
             group: { select: { id: true, name: true } },
           },
         },
@@ -166,11 +166,11 @@ export class LiveLayoutsService {
     showOnMobile: boolean;
     userId: string;
     updatedAt: Date;
-    user: { id: string; name: string; email: string };
+    user: { id: string; name: string; username: string; email: string | null };
     shares: {
       userId: string | null;
       groupId: string | null;
-      user: { id: string; name: string; email: string } | null;
+      user: { id: string; name: string; username: string; email: string | null } | null;
       group: { id: string; name: string } | null;
     }[];
   }) {
@@ -188,7 +188,7 @@ export class LiveLayoutsService {
       showOnMobile: l.showOnMobile,
       dono: l.user,
       destinatarios: {
-        usuarios: l.shares.filter((s) => s.user).map((s) => s.user as { id: string; name: string; email: string }),
+        usuarios: l.shares.filter((s) => s.user).map((s) => s.user),
         grupos: l.shares.filter((s) => s.group).map((s) => s.group as { id: string; name: string }),
       },
       // O número que a lista mostra: gente que de fato recebeu, sem contar o

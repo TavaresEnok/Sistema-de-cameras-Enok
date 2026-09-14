@@ -377,16 +377,18 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
     return this.prisma.$transaction(async (tx) => {
       const userIds = new Map<string, string>();
       for (const raw of rows(source.users)) {
-        if (!raw.id || !raw.email) continue;
-        const existing = await tx.user.findUnique({ where: { email: String(raw.email) } });
+        if (!raw.id || (!raw.email && !raw.username)) continue;
+        const login = String(raw.username || raw.email).toLowerCase();
+        const existing = await tx.user.findFirst({ where: { OR: [{ username: login }, { email: String(raw.email || '').toLowerCase() }] } });
         if (existing) {
           userIds.set(String(raw.id), existing.id);
           continue;
         }
         const user = await tx.user.create({ data: {
           id: String(raw.id),
-          name: String(raw.name || raw.email),
-          email: String(raw.email).toLowerCase(),
+          name: String(raw.name || raw.username || raw.email),
+          username: login,
+          email: raw.email ? String(raw.email).toLowerCase() : null,
           role: raw.role,
           isActive: false,
           passwordHash: recoveryHash,

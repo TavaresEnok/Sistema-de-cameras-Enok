@@ -98,6 +98,7 @@ export default function UsuariosPage() {
   const [userSaving, setUserSaving] = useState(false);
   const [userForm, setUserForm] = useState({
     name: '',
+    username: '',
     email: '',
     password: '',
     role: 'VIEWER' as ApiUserRole,
@@ -107,7 +108,7 @@ export default function UsuariosPage() {
   const availableRoleOptions = canManageGlobalAccess ? roleOptions : roleOptions.filter((option) => option.value !== 'ADMIN');
 
   const filtered = useMemo(() => userList.filter(u =>
-    (!search || u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase()))
+    (!search || u.name.toLowerCase().includes(search.toLowerCase()) || (u.username || u.email || '').toLowerCase().includes(search.toLowerCase()))
     && (roleFilter === 'all' || u.role === roleFilter)
   ), [userList, search, roleFilter]);
 
@@ -169,7 +170,8 @@ export default function UsuariosPage() {
     if (editUser) {
       setUserForm({
         name: editUser.name,
-        email: editUser.email,
+        username: editUser.username || editUser.email || '',
+        email: editUser.email || '',
         password: '',
         role: editUser.role === 'admin' ? 'ADMIN' : editUser.role === 'operator' ? 'OPERATOR' : 'VIEWER',
         isActive: editUser.active,
@@ -177,7 +179,7 @@ export default function UsuariosPage() {
       return;
     }
     if (addOpen) {
-      setUserForm({ name: '', email: '', password: '', role: 'VIEWER', isActive: true });
+      setUserForm({ name: '', username: '', email: '', password: '', role: 'VIEWER', isActive: true });
     }
   }, [addOpen, editUser]);
 
@@ -243,9 +245,10 @@ export default function UsuariosPage() {
 
   const saveUser = async () => {
     const name = userForm.name.trim();
+    const username = userForm.username.trim().toLowerCase();
     const email = userForm.email.trim().toLowerCase();
-    if (!name || !email) {
-      toast({ title: 'Dados incompletos', description: 'Informe nome e e-mail.', variant: 'destructive' });
+    if (!name || !username) {
+      toast({ title: 'Dados incompletos', description: 'Informe nome e usuário.', variant: 'destructive' });
       return;
     }
     if (!editUser && !userForm.password) {
@@ -270,7 +273,8 @@ export default function UsuariosPage() {
         const mappedOriginalRole: ApiUserRole = editUser.role === 'admin' ? 'ADMIN' : editUser.role === 'operator' ? 'OPERATOR' : 'VIEWER';
         await apiClient().patch(`/users/${editUser.id}`, {
           name,
-          email,
+          username,
+          ...(email ? { email } : { email: '' }),
           ...(userForm.role !== mappedOriginalRole ? { role: userForm.role } : {}),
           isActive: userForm.isActive,
           ...(userForm.password ? { password: userForm.password } : {}),
@@ -279,7 +283,8 @@ export default function UsuariosPage() {
       } else {
         await apiClient().post('/users', {
           name,
-          email,
+          username,
+          ...(email ? { email } : {}),
           password: userForm.password,
           role: userForm.role,
           ...(!canManageGlobalAccess && selectedGroup ? { groupIds: [selectedGroup.id], permissionLevel: selectedLevel } : {}),
@@ -288,7 +293,7 @@ export default function UsuariosPage() {
       }
       setAddOpen(false);
       setEditUser(null);
-      setUserForm({ name: '', email: '', password: '', role: 'VIEWER', isActive: true });
+      setUserForm({ name: '', username: '', email: '', password: '', role: 'VIEWER', isActive: true });
       await Promise.all([loadData(), loadAccess()]);
     } catch (error) {
       toast({
@@ -351,7 +356,7 @@ export default function UsuariosPage() {
                         <div className="flex items-center justify-center text-[13px] font-bold shrink-0" style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--surf-3)', border: '1px solid var(--bdr)', color: 'var(--tx-2)' }}>{initials}</div>
                         <div className="min-w-0">
                           <div className="font-medium truncate">{u.name}</div>
-                          <div className="text-[10px] font-mono text-[hsl(var(--muted-foreground))] truncate">{u.email}</div>
+                          <div className="text-[10px] font-mono text-[hsl(var(--muted-foreground))] truncate">{u.username || u.email || '—'}</div>
                         </div>
                       </div>
                     </td>
@@ -385,7 +390,7 @@ export default function UsuariosPage() {
                         </button>
                         {u.id !== currentUser?.id && (
                           <button
-                            onClick={() => setExcluirAlvo({ id: u.id, name: u.name, email: u.email })}
+                            onClick={() => setExcluirAlvo({ id: u.id, name: u.name, email: u.email || u.username || '—' })}
                             className="w-6 h-6 flex items-center justify-center rounded text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--destructive))] hover:bg-[hsl(var(--accent))] transition-colors"
                             title="Excluir permanentemente" aria-label="Excluir permanentemente"
                           >
@@ -431,13 +436,17 @@ export default function UsuariosPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">E-mail</label>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">Usuário</label>
               <input
-                value={userForm.email}
-                onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))}
-                placeholder="cliente@empresa.com"
+                value={userForm.username}
+                onChange={(event) => setUserForm((current) => ({ ...current, username: event.target.value }))}
+                placeholder="ex.: beira_mar"
                 className="h-8 w-full rounded border border-border bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
               />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">E-mail <span className="font-normal">(opcional, para recuperar senha)</span></label>
+              <input value={userForm.email} onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))} placeholder="cliente@empresa.com" type="email" className="h-8 w-full rounded border border-border bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-primary" />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-muted-foreground">Perfil</label>

@@ -70,18 +70,18 @@ export function LoginScreen({
         <View style={[styles.field, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <Icon name="mail" size={19} color={theme.textMuted} />
           <View style={{ flex: 1 }}>
-            <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>E-MAIL</Text>
+            <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>USUÁRIO</Text>
             <TextInput
               value={email}
               onChangeText={onEmailChange}
               autoCapitalize="none"
               autoCorrect={false}
-              keyboardType="email-address"
-              placeholder="voce@empresa.com"
+              keyboardType="default"
+              placeholder="beira_mar ou voce@empresa.com"
               placeholderTextColor={theme.textMuted}
-              accessibilityLabel="E-mail"
-              textContentType="emailAddress"
-              autoComplete="email"
+              accessibilityLabel="Usuário"
+              textContentType="username"
+              autoComplete="username"
               returnKeyType="next"
               editable={!loading}
               maxLength={254}

@@ -115,10 +115,17 @@ export class UsersService {
     const groupIds = await this.resolveManagedGroupIds(actor, dto.groupIds);
     await this.assertPasswordStrength(dto.password);
     const passwordHash = await bcrypt.hash(dto.password, 10);
+    // APKs e integrações anteriores ainda enviam somente `email`. Até que
+    // todos atualizem, o e-mail recebido também vira o nome de usuário.
+    const username = (dto.username || dto.email)?.trim().toLowerCase();
+    if (!username) {
+      throw new BadRequestException('Informe um nome de usuário.');
+    }
     const user = await this.prisma.user.create({
       data: {
         name: dto.name,
-        email: dto.email.trim().toLowerCase(),
+        username,
+        email: dto.email?.trim().toLowerCase() || null,
         passwordHash,
         role: dto.role,
         ...(groupIds.length
@@ -177,7 +184,10 @@ export class UsersService {
       where: { id },
       data: {
         name: dto.name,
-        email: dto.email?.trim().toLowerCase(),
+        username: dto.username?.trim().toLowerCase(),
+        // Campo omitido mantém o e-mail existente. Campo vazio remove o e-mail
+        // de recuperação de propósito, sem gravar uma string vazia inválida.
+        ...(dto.email !== undefined ? { email: dto.email.trim().toLowerCase() || null } : {}),
         role: dto.role,
         isActive: dto.isActive,
         ...(dto.password

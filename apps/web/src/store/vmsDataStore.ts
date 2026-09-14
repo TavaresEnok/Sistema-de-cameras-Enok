@@ -99,8 +99,9 @@ export interface Camera {
 export interface User {
   id: string;
   name: string;
+  username?: string;
   role: 'viewer' | 'operator' | 'admin';
-  email: string;
+  email?: string | null;
   badge: string;
   lastLogin: string;
   shift: 'morning' | 'afternoon' | 'night';
@@ -615,7 +616,7 @@ export const useVmsDataStore = create<VmsDataState>((set, get) => ({
     const alarms = rawAlarms ? mapAlarmItems(rawAlarms, cameras) : previous.alarms;
     const users: User[] = Array.isArray(usersRes.data)
       ? usersRes.data.map((user: any) => ({
-          id: user.id, name: user.name, role: mapRole(user.role), email: user.email,
+          id: user.id, name: user.name, role: mapRole(user.role), username: user.username, email: user.email,
           badge: `USR-${user.id.slice(0, 6).toUpperCase()}`, lastLogin: user.updatedAt,
           shift: 'morning', active: Boolean(user.isActive),
         }))

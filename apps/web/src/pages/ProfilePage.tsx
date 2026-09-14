@@ -29,7 +29,8 @@ type MyPermission = {
 type GroupUser = {
   id: string;
   name: string;
-  email: string;
+  username?: string;
+  email?: string | null;
   role: string;
   isActive: boolean;
 };
@@ -65,7 +66,7 @@ export default function ProfilePage() {
 
   // Dialog: criar usuário
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [form, setForm] = useState({ name: '', username: '', email: '', password: '' });
   const [saving, setSaving] = useState(false);
 
   // Dialog: alterar minha senha
@@ -127,23 +128,25 @@ export default function ProfilePage() {
 
   const createUser = async () => {
     const name  = form.name.trim();
+    const username = form.username.trim().toLowerCase();
     const email = form.email.trim().toLowerCase();
-    if (!name || !email || !form.password) {
-      toast({ title: 'Preencha todos os campos.', variant: 'destructive' });
+    if (!name || !username || !form.password) {
+      toast({ title: 'Preencha nome, usuário e senha.', variant: 'destructive' });
       return;
     }
     setSaving(true);
     try {
       await apiClient(accessToken).post('/users', {
         name,
-        email,
+        username,
+        ...(email ? { email } : {}),
         password: form.password,
         role: 'VIEWER',
         groupIds: adminGroupIds,
         permissionLevel: 'VIEW',
       });
       setCreateOpen(false);
-      setForm({ name: '', email: '', password: '' });
+      setForm({ name: '', username: '', email: '', password: '' });
       toast({
         title: 'Usuário criado',
         description: `${name} já pode acessar o sistema.`,
@@ -314,7 +317,7 @@ export default function ProfilePage() {
               </div>
               <button
                 className="btn btn-primary btn-sm"
-                onClick={() => { setForm({ name: '', email: '', password: '' }); setCreateOpen(true); }}
+                onClick={() => { setForm({ name: '', username: '', email: '', password: '' }); setCreateOpen(true); }}
               >
                 <UserPlus className="w-3.5 h-3.5" />
                 Novo usuário
@@ -340,7 +343,7 @@ export default function ProfilePage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-[12.5px] font-medium truncate">{user.name}</div>
-                      <div className="text-[10px] font-mono text-muted-foreground truncate">{user.email}</div>
+                      <div className="text-[10px] font-mono text-muted-foreground truncate">{user.username || user.email || '—'}</div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span
@@ -393,12 +396,21 @@ export default function ProfilePage() {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">E-mail</label>
+              <label className="text-xs font-medium text-muted-foreground">Usuário</label>
+              <input
+                value={form.username}
+                onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+                placeholder="ex.: beira_mar ou email@empresa.com"
+                className="h-8 w-full rounded border border-border bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">E-mail para recuperação <span className="font-normal">(opcional)</span></label>
               <input
                 type="email"
                 value={form.email}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="email@exemplo.com"
+                placeholder="email@empresa.com"
                 className="h-8 w-full rounded border border-border bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
@@ -428,7 +440,7 @@ export default function ProfilePage() {
               </button>
               <button
                 onClick={() => void createUser()}
-                disabled={saving || !form.name.trim() || !form.email.trim() || !form.password}
+                disabled={saving || !form.name.trim() || !form.username.trim() || !form.password}
                 className="btn btn-primary btn-sm flex-1 justify-center"
               >
                 {saving ? 'Criando...' : 'Criar usuário'}

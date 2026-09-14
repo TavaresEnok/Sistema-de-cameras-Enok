@@ -2,6 +2,8 @@ import { UserRole } from '@prisma/client';
 
 export type AuthUser = {
   id: string;
+  username: string;
+  /** Identificador legado e e-mail de recuperação quando configurado. */
   email: string;
   name: string;
   role: UserRole;
@@ -9,6 +11,7 @@ export type AuthUser = {
 
 export type JwtAuthPayload = {
   sub: string;
+  username?: string;
   email: string;
   role: UserRole;
   ver: number;

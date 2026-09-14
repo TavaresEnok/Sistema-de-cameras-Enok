@@ -492,7 +492,7 @@ function AppInner() {
         user: User;
       }>(nextApiUrl, '/auth/login', undefined, {
         method: 'POST',
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ username: email, password }),
       });
       const nextSession: Session = {
         apiUrl: nextApiUrl,

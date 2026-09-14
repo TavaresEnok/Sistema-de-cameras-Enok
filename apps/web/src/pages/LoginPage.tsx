@@ -208,7 +208,7 @@ export default function LoginPage() {
                 type="text"
                 value={username}
                 onChange={(e) => { setUsername(e.target.value); setError(''); }}
-                placeholder="seu@email.com"
+                placeholder="ex.: beira_mar ou voce@empresa.com"
                 autoFocus
                 name="username"
                 autoComplete="username"

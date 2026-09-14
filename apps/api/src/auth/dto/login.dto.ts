@@ -1,8 +1,16 @@
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class LoginDto {
-  @IsEmail()
-  email!: string;
+  /** `email` permanece aceito por compatibilidade com versões já instaladas. */
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  username?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  email?: string;
 
   @IsString()
   @MinLength(8)

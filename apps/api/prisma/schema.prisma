@@ -461,7 +461,11 @@ model AlarmInstance {
 model User {
   id           String   @id @default(uuid())
   name         String
-  email        String   @unique
+  /// Identificador usado no login. Aceita e-mail, mas não DEPENDE dele:
+  /// `beira_mar`, por exemplo, é uma conta válida.
+  username     String   @unique
+  /// Canal opcional de recuperação de senha. Não é mais a identidade da conta.
+  email        String?  @unique
   passwordHash String
   authVersion  Int      @default(0)
   role         UserRole @default(VIEWER)

@@ -28,8 +28,9 @@ export class AuthController {
   ) {
     try {
       const cookieMode = this.isCookieMode(req);
+      const identifier = String(dto.username || dto.email || '').trim();
       const result = await this.authService.login(
-        dto.email,
+        identifier,
         dto.password,
         cookieMode ? '15m' : undefined,
       );
@@ -46,7 +47,7 @@ export class AuthController {
         'auth.login.failed',
         'User',
         null,
-        { email: dto.email.trim().toLowerCase() },
+        { username: String(dto.username || dto.email || '').trim().toLowerCase() },
         req,
       );
       throw error;

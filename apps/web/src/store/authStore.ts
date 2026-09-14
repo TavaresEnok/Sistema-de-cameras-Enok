@@ -7,6 +7,7 @@ type UiRole = 'viewer' | 'operator' | 'admin';
 export interface AuthUser {
   id: string;
   name: string;
+  username?: string;
   role: UiRole;
   email: string;
   badge: string;
@@ -20,6 +21,7 @@ interface LoginResponse {
   user: {
     id: string;
     name: string;
+    username?: string;
     email: string;
     role: 'SUPER_ADMIN' | 'ADMIN' | 'OPERATOR' | 'VIEWER';
   };
@@ -33,7 +35,7 @@ interface AuthState {
   isBootstrapped: boolean;
   bootstrap: () => Promise<void>;
   revalidate: () => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -71,6 +73,7 @@ function mapUser(user: LoginResponse['user']): AuthUser {
   return {
     id: user.id,
     name: user.name,
+    username: user.username ?? user.email,
     email: user.email,
     role: mapRole(user.role),
     badge: `SEC-${user.id.slice(0, 6).toUpperCase()}`,
@@ -219,14 +222,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     }
   },
-  login: async (email, password) => {
+  login: async (username, password) => {
     clearSessionRetry();
     set({ isLoading: true });
 
     try {
       const { data } = await axios.post<LoginResponse>(
         `${API_URL}/auth/login`,
-        { email, password },
+        { username, password },
         {
           withCredentials: true,
           headers: { 'X-DRAC-Auth-Mode': 'cookie' },

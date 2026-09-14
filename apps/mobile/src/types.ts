@@ -39,6 +39,7 @@ export type MosaicArea = {
 export type User = {
   id: string;
   name: string;
+  username?: string;
   email: string;
   role: 'SUPER_ADMIN' | 'ADMIN' | 'OPERATOR' | 'VIEWER';
 };
