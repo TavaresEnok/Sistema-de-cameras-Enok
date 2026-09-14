@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera as CameraIcon, Crosshair, LocateFixed } from 'lucide-react';
+import { Camera as CameraIcon, Crosshair } from 'lucide-react';
 import * as L from 'leaflet';
 import { divIcon, latLngBounds, type Map as LeafletMap } from 'leaflet';
 import { MapContainer, Marker, Popup, Tooltip, useMap, useMapEvents } from 'react-leaflet';
@@ -375,19 +375,9 @@ export function GeographicCameraMap({
 
       <button
         type="button"
-        onClick={() => mapRef.current && fitPositions(mapRef.current, positions)}
-        className="absolute right-3 top-3 z-[800] flex h-9 w-9 items-center justify-center rounded-md border border-border bg-card text-foreground shadow-lg hover:bg-accent"
-        aria-label="Mostrar todas as câmeras"
-        title="Mostrar todas as câmeras"
-      >
-        <LocateFixed className="h-4 w-4" />
-      </button>
-
-      <button
-        type="button"
         onClick={mostrarMinhaLocalizacao}
         disabled={localizando}
-        className="absolute right-3 top-14 z-[800] flex h-9 w-9 items-center justify-center rounded-md border border-border bg-card text-foreground shadow-lg hover:bg-accent disabled:cursor-wait disabled:opacity-70"
+        className="absolute right-3 top-3 z-[800] flex h-9 w-9 items-center justify-center rounded-md border border-border bg-card text-foreground shadow-lg hover:bg-accent disabled:cursor-wait disabled:opacity-70"
         aria-label="Mostrar minha localização"
         title="Mostrar minha localização"
       >
@@ -395,7 +385,7 @@ export function GeographicCameraMap({
       </button>
 
       {erroLocalizacao && (
-        <div className="absolute right-3 top-24 z-[800] max-w-64 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground shadow-lg">
+        <div className="absolute right-3 top-14 z-[800] max-w-64 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground shadow-lg">
           {erroLocalizacao}
         </div>
       )}
