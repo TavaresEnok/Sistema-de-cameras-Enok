@@ -588,6 +588,12 @@ export const useVmsDataStore = create<VmsDataState>((set, get) => ({
     set({ isLoading: true, error: null });
     const client = api();
     const role = useAuthStore.getState().user?.role;
+    // Saúde do host é deliberadamente restrita a administradores. Um
+    // visualizador não precisa (nem deve tentar) consultar CPU, disco e
+    // processos do servidor; 403 aqui não é falha operacional.
+    const systemHealthRequest = role === 'admin'
+      ? fetchResource<any>('saúde', client.get('/health/system'))
+      : Promise.resolve({ data: null, error: null });
     const [camerasRes, usersRes, overviewRes, eventsRes, alarmsRes, recordingsRes, operationsTimelineRes, recordingStatusesRes, systemRes, auditRes] = await Promise.all([
       fetchResource<any[]>('câmeras', client.get('/cameras')),
       role === 'viewer' ? Promise.resolve({ data: [] as any[], error: null }) : fetchResource<any[]>('usuários', client.get('/users')),
@@ -597,7 +603,7 @@ export const useVmsDataStore = create<VmsDataState>((set, get) => ({
       fetchResource<any>('gravações', client.get('/recordings?limit=100&sort=desc')),
       fetchResource<any>('linha operacional', client.get('/cameras/operations-timeline?limit=120')),
       fetchResource<any>('estado de gravação', client.get('/recordings/statuses')),
-      fetchResource<any>('saúde', client.get('/health/system')),
+      systemHealthRequest,
       role === 'admin' ? fetchResource<any>('auditoria', client.get('/audit-logs?limit=100')) : Promise.resolve({ data: { items: [] }, error: null }),
     ]);
 
@@ -665,13 +671,19 @@ export const useVmsDataStore = create<VmsDataState>((set, get) => ({
     if (!useAuthStore.getState().accessToken || get().isRefreshing || get().isLoading) return;
     set({ isRefreshing: true });
     const client = api();
+    const role = useAuthStore.getState().user?.role;
+    // Ver comentário equivalente em load(): não transformar a permissão
+    // correta de um visualizador em alerta de dados desatualizados.
+    const systemHealthRequest = role === 'admin'
+      ? fetchResource<any>('saúde', client.get('/health/system'))
+      : Promise.resolve({ data: null, error: null });
     const [camerasRes, overviewRes, eventsRes, alarmsRes, recordingStatusesRes, systemRes] = await Promise.all([
       fetchResource<any[]>('câmeras', client.get('/cameras')),
       fetchResource<any>('resumo', client.get('/cameras/overview')),
       fetchResource<any>('eventos', client.get('/cameras/events-feed?limit=100')),
       fetchResource<any>('alarmes', client.get('/cameras/alarms?limit=100')),
       fetchResource<any>('estado de gravação', client.get('/recordings/statuses')),
-      fetchResource<any>('saúde', client.get('/health/system')),
+      systemHealthRequest,
     ]);
     const previous = get();
     const rawEvents = Array.isArray(eventsRes.data?.items) ? eventsRes.data.items : null;
