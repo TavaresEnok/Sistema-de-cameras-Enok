@@ -56,7 +56,6 @@ const ReviewPage      = lazyWithReload(() => import('./pages/ReviewPage'));
 // Páginas que existiam sem rota nenhuma — 1.441 linhas inalcançáveis.
 const PerformancePage = lazyWithReload(() => import('./pages/PerformancePage'));
 const AuditLogsPage   = lazyWithReload(() => import('./pages/AuditLogsPage'));
-const EventsPage      = lazyWithReload(() => import('./pages/EventsPage'));
 const AlarmsPage      = lazyWithReload(() => import('./pages/AlarmsPage'));
 const CamerasPage     = lazyWithReload(() => import('./pages/CamerasPage'));
 const PTZPage         = lazyWithReload(() => import('./pages/PTZPage'));
@@ -82,6 +81,16 @@ function AppFallback() {
       Carregando...
     </div>
   );
+}
+
+/**
+ * A antiga tela de "Eventos" misturava telemetria bruta, saúde de stream e
+ * alarmes operacionais. Ocorrências que exigem ação vivem em /alarms; dados
+ * históricos ficam em Reprodução/Investigação. Preservamos o endereço salvo
+ * sem manter uma segunda fila com ações incompatíveis.
+ */
+function LegacyEventsRedirect() {
+  return <Redirect to="/alarms" />;
 }
 
 /** Loading leve, só na área de conteúdo (mantém a sidebar/header fixos). */
@@ -340,7 +349,7 @@ function AppRoutes() {
         {() => <ProtectedRoute component={InvestigationPage} minRole="operator" />}
       </Route>
       <Route path="/events">
-        {() => <ProtectedRoute component={EventsPage} minRole="operator" />}
+        {() => <ProtectedRoute component={LegacyEventsRedirect} minRole="operator" />}
       </Route>
       <Route path="/performance">
         {() => <ProtectedRoute component={PerformancePage} minRole="operator" />}

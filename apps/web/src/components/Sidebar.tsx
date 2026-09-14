@@ -47,7 +47,6 @@ const NAV_SECTIONS: NavSection[] = [
       // mosaicos, cada parada com seu tempo. O nome é o do ofício — o vigia faz
       // a ronda, passando de ponto em ponto.
       { path: '/ronda',    label: 'Minhas rondas',  icon: LayoutGrid },
-      { path: '/events',   label: 'Eventos',        icon: Bell,      roles: ['admin', 'operator'] },
     ],
   },
   {
