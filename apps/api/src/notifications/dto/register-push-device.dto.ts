@@ -2,7 +2,9 @@ import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class RegisterPushDeviceDto {
   @IsString()
-  @MaxLength(255)
+  // FCM não fixa publicamente um teto curto para registration tokens. O banco
+  // usa TEXT; aceitar até 4096 evita recusar um aparelho válido por suposição.
+  @MaxLength(4096)
   token!: string;
 
   @IsOptional()

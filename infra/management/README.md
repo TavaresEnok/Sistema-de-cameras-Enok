@@ -72,3 +72,13 @@ A conta de serviço não é enviada para APK, build-agent, banco ou Git. Ao marc
 reaproveita) o pacote no Firebase e só então permite o build. Sem a credencial,
 o build é recusado claramente — nunca gera um APK dizendo que possui push sem
 possuir.
+
+### Entrega direta Android (FCM)
+
+O aplicativo Android novo registra o token nativo do FCM e a instalação envia
+o pedido autenticado à Central. A Central é o único servidor que chama o FCM;
+a conta de serviço não deve ser copiada para VMs de clientes. A API **Firebase
+Cloud Messaging** também precisa estar ativa no mesmo projeto e a conta de
+serviço precisa ter permissão para enviar mensagens FCM. Tokens Expo antigos
+permanecem apenas como compatibilidade durante a migração dos aplicativos já
+instalados.

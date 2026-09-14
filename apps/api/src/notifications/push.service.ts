@@ -21,9 +21,11 @@ type ExpoTicket = {
 };
 
 /**
- * Envio de push via Expo Push Service (https://exp.host). Sem SDK: HTTP direto.
- * Tokens são do formato `ExponentPushToken[...]`. Retorna a lista de tokens que
- * o Expo reportou como INVÁLIDOS (DeviceNotRegistered) para o chamador removê-los.
+ * Entrega de push com migração segura:
+ * - apps novos Android usam token nativo `fcm:<token>` e a Central envia direto
+ *   ao Firebase; a chave administrativa jamais entra nesta instalação;
+ * - tokens Expo existentes continuam temporariamente para não cortar alertas de
+ *   aparelhos ainda não atualizados.
  */
 @Injectable()
 export class PushService {
@@ -37,10 +39,72 @@ export class PushService {
     return /^ExponentPushToken\[.+\]$/.test(token) || /^ExpoPushToken\[.+\]$/.test(token);
   }
 
+  isFcmPushToken(token: string): boolean {
+    return /^fcm:[A-Za-z0-9:_-]{20,4096}$/.test(token);
+  }
+
+  private directFcmConfig() {
+    const centralUrl = String(this.configService.get<string>('CLOUD_API_URL') ?? process.env.CLOUD_API_URL ?? '').replace(/\/+$/, '');
+    const installationId = String(this.configService.get<string>('CLOUD_INSTALLATION_ID') ?? process.env.CLOUD_INSTALLATION_ID ?? '').trim();
+    const licenseKey = String(this.configService.get<string>('CLOUD_LICENSE_KEY') ?? process.env.CLOUD_LICENSE_KEY ?? '').trim();
+    if (!centralUrl || !installationId || !licenseKey) {
+      throw new Error('Push FCM direto não configurado: faltam dados da Central nesta instalação.');
+    }
+    let parsed: URL;
+    try { parsed = new URL(centralUrl); } catch { throw new Error('URL da Central inválida para push FCM direto.'); }
+    if (parsed.protocol !== 'https:' && !(process.env.NODE_ENV !== 'production' && ['localhost', '127.0.0.1'].includes(parsed.hostname))) {
+      throw new Error('Push FCM direto exige Central HTTPS.');
+    }
+    return { centralUrl, installationId, licenseKey };
+  }
+
+  private async sendFcmDirect(tokens: string[], message: PushMessage): Promise<string[]> {
+    const unique = Array.from(new Set(tokens.filter((token) => this.isFcmPushToken(token))));
+    if (!unique.length) return [];
+    const { centralUrl, installationId, licenseKey } = this.directFcmConfig();
+    const invalidTokens: string[] = [];
+    for (let i = 0; i < unique.length; i += PushService.CHUNK) {
+      const chunk = unique.slice(i, i + PushService.CHUNK);
+      try {
+        const response = await axios.post<{ invalidTokens?: string[] }>(
+          `${centralUrl}/api/agent/push/fcm`,
+          {
+            tokens: chunk.map((token) => token.slice(4)),
+            message,
+          },
+          {
+            timeout: 20_000,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-DRAC-Installation-Id': installationId,
+              'X-DRAC-License-Key': licenseKey,
+            },
+          },
+        );
+        for (const token of response.data?.invalidTokens ?? []) {
+          if (/^[A-Za-z0-9:_-]{20,4096}$/.test(token)) invalidTokens.push(`fcm:${token}`);
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'unknown';
+        this.logger.warn(`Falha ao enviar push FCM direto (lote ${i / PushService.CHUNK}): ${msg}`);
+        throw error;
+      }
+    }
+    return invalidTokens;
+  }
+
   /** Envia a MESMA mensagem para vários tokens. Devolve os tokens inválidos. */
   async sendToTokens(tokens: string[], message: PushMessage): Promise<{ invalidTokens: string[]; receiptIds: Record<string, string> }> {
     const valid = Array.from(new Set(tokens.filter((t) => this.isExpoPushToken(t))));
-    if (!valid.length) return { invalidTokens: [], receiptIds: {} };
+    const directFcm = Array.from(new Set(tokens.filter((t) => this.isFcmPushToken(t))));
+    if (!valid.length && !directFcm.length) return { invalidTokens: [], receiptIds: {} };
+
+    // FCM não possui o estágio de receipt do Expo: resposta 200 significa que o
+    // Firebase aceitou a mensagem. Token UNREGISTERED volta no mesmo request e
+    // pode ser removido imediatamente. O envio corre antes do legado para que
+    // o app novo não dependa de exp.host.
+    const invalidTokens = await this.sendFcmDirect(directFcm, message);
+    if (!valid.length) return { invalidTokens, receiptIds: {} };
 
     const accessToken = String(this.configService.get<string>('expoAccessToken') ?? '').trim();
     const headers: Record<string, string> = {
@@ -50,7 +114,7 @@ export class PushService {
     };
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
-    const invalidTokens: string[] = [];
+    const expoInvalidTokens: string[] = [];
     // receiptId → token, para o estágio 2 (fetchReceipts) conferir a entrega depois.
     const receiptIds: Record<string, string> = {};
     for (let i = 0; i < valid.length; i += PushService.CHUNK) {
@@ -75,7 +139,7 @@ export class PushService {
             receiptIds[ticket.id] = chunk[idx];
           } else if (ticket.status === 'error') {
             const err = ticket.details?.error;
-            if (shouldRemoveToken(err)) invalidTokens.push(chunk[idx]);
+            if (shouldRemoveToken(err)) expoInvalidTokens.push(chunk[idx]);
             this.logger.warn(`Expo push error token=${chunk[idx]?.slice(0, 24)}… error=${err ?? ticket.message}`);
           }
         });
@@ -86,7 +150,7 @@ export class PushService {
         throw error;
       }
     }
-    return { invalidTokens, receiptIds };
+    return { invalidTokens: [...invalidTokens, ...expoInvalidTokens], receiptIds };
   }
 
   /**

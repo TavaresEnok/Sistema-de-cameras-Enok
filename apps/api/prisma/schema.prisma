@@ -522,12 +522,14 @@ model LiveLayout {
   @@index([userId, updatedAt])
 }
 
-/// Dispositivo móvel registrado para receber push de alarmes (Expo Push).
+/// Dispositivo móvel registrado para receber push de alarmes. Tokens novos
+/// Android usam o prefixo `fcm:`; tokens Expo legados são mantidos durante a
+/// migração para não interromper alertas de aplicativos já instalados.
 model PushDevice {
   id         String   @id @default(uuid())
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token      String   @unique // Expo push token: ExponentPushToken[...]
+  token      String   @unique
   platform   String? // ios | android
   deviceName String?
   createdAt  DateTime @default(now())

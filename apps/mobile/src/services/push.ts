@@ -1,5 +1,4 @@
 import { Platform } from 'react-native';
-import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { request } from './api';
@@ -15,13 +14,7 @@ Notifications.setNotificationHandler({
   }),
 });
 
-let cachedExpoToken: string | null = null;
-
-/** projectId (EAS) — necessário para o Expo emitir o ExponentPushToken. */
-function resolveProjectId(): string | null {
-  const extra = Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined;
-  return extra?.eas?.projectId ?? (Constants as any)?.easConfig?.projectId ?? null;
-}
+let cachedDeviceToken: string | null = null;
 
 async function ensureAndroidChannel() {
   if (Platform.OS !== 'android') return;
@@ -68,9 +61,9 @@ async function ensureAndroidChannel() {
  * Registra o aparelho para push de alarmes:
  *  1) cria o canal Android 'alarms';
  *  2) pede permissão (Android 13+/iOS);
- *  3) obtém o ExponentPushToken;
+ *  3) obtém o token nativo do FCM (Android), sem Expo Push Service;
  *  4) envia ao backend (POST /notifications/devices).
- * Retorna o token Expo (para desregistrar no logout) ou null se indisponível.
+ * Retorna o token nativo (para desregistrar no logout) ou null se indisponível.
  * NUNCA lança — falha de push jamais deve quebrar o login.
  */
 export async function registerForPush(apiUrl: string, authToken: string, signal?: AbortSignal): Promise<string | null> {
@@ -89,23 +82,30 @@ export async function registerForPush(apiUrl: string, authToken: string, signal?
     }
     if (!granted) return null;
 
-    const projectId = resolveProjectId();
-    if (!projectId) {
-      // Sem projectId (EAS) o Expo não emite token. App segue normal, sem push.
-      console.warn('[push] projectId (EAS) ausente — push desativado. Rode `eas init` e preencha extra.eas.projectId.');
+    // O SDK Expo continua apenas como biblioteca nativa de notificações. Não
+    // pedimos ExponentPushToken nem usamos exp.host: no Android o valor abaixo
+    // é o registration token do FCM, enviado pela Central diretamente ao FCM.
+    if (Platform.OS !== 'android') {
+      // iOS exigirá credencial APNs própria antes da migração direta. Não
+      // registramos um token que a Central ainda não sabe entregar.
+      console.warn('[push] entrega direta está habilitada apenas para Android nesta versão.');
       return null;
     }
-
-    const { data: expoToken } = await Notifications.getExpoPushTokenAsync({ projectId });
+    const nativeToken = await Notifications.getDevicePushTokenAsync();
+    const fcmToken = String(nativeToken.data || '').trim();
+    if (!fcmToken) return null;
+    // Prefixo persiste o provedor junto ao token sem migração destrutiva no
+    // banco: aparelhos antigos Expo continuam recebendo até serem atualizados.
+    const token = `fcm:${fcmToken}`;
     if (signal?.aborted) return null;
-    cachedExpoToken = expoToken;
+    cachedDeviceToken = token;
 
     await request(apiUrl, '/notifications/devices', authToken, {
       method: 'POST',
-      body: JSON.stringify({ token: expoToken, platform: Platform.OS }),
+      body: JSON.stringify({ token, platform: Platform.OS }),
       signal,
     });
-    return expoToken;
+    return token;
   } catch (error) {
     console.warn('[push] registro falhou:', error instanceof Error ? error.message : String(error));
     return null;
@@ -113,8 +113,8 @@ export async function registerForPush(apiUrl: string, authToken: string, signal?
 }
 
 /** Remove o token do backend (logout). Best-effort, nunca lança. */
-export async function unregisterFromPush(apiUrl: string, authToken: string, expoToken?: string | null) {
-  const token = expoToken ?? cachedExpoToken;
+export async function unregisterFromPush(apiUrl: string, authToken: string, deviceToken?: string | null) {
+  const token = deviceToken ?? cachedDeviceToken;
   if (!token) return;
   try {
     await request(apiUrl, '/notifications/devices', authToken, {
@@ -124,7 +124,7 @@ export async function unregisterFromPush(apiUrl: string, authToken: string, expo
   } catch {
     /* ignore */
   } finally {
-    cachedExpoToken = null;
+    cachedDeviceToken = null;
   }
 }
 

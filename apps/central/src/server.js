@@ -32,6 +32,7 @@ const { testS3Access, measureS3Performance, diagnosticarConexao, localizarServid
 const { resolverEndpoint } = require('./endpoint-scheme');
 const { ReactivationArchiveStore, expiresAfterMonths } = require('./reactivation-archives');
 const firebaseManagement = require('./firebase-management');
+const firebaseMessaging = require('./firebase-messaging');
 const { selecionarVencidos } = require('./expiracao-de-arquivo');
 const scheduler = require('./scheduler');
 const timeseries = require('./datastore/timeseries');
@@ -1918,6 +1919,47 @@ async function handleHeartbeat(req, res) {
   });
 }
 
+// Push direto FCM: a instalação autentica-se com a mesma identidade já usada
+// pelo heartbeat. Ela nunca recebe a conta de serviço Firebase; a Central é o
+// único ponto que possui a credencial e envia somente para tokens fornecidos
+// pela própria instalação autenticada.
+async function handleFcmPush(req, res) {
+  const installationId = String(req.headers['x-drac-installation-id'] || '').trim();
+  const licenseKey = String(req.headers['x-drac-license-key'] || '').trim();
+  if (!installationId || !licenseKey) return json(req, res, 401, { error: 'missing_installation_or_license' });
+
+  const db = await loadDb();
+  const installation = db.installations[installationId];
+  if (!installation || !installation.licenseKey || !timingSafeTextEquals(installation.licenseKey, licenseKey)) {
+    addAuditEvent(db, req, { type: 'agent.fcm_push_denied', actor: installationId || 'unknown', result: 'denied' });
+    await saveDb(db);
+    return json(req, res, 403, { error: 'invalid_installation_identity' });
+  }
+
+  const body = await readBody(req);
+  const tokens = Array.isArray(body.tokens) ? body.tokens.map((value) => String(value || '').trim()) : [];
+  if (!tokens.length || tokens.length > firebaseMessaging.MAX_TOKENS || tokens.some((token) => !firebaseMessaging.TOKEN_RE.test(token))) {
+    return json(req, res, 400, { error: 'invalid_fcm_tokens' });
+  }
+  const message = body.message && typeof body.message === 'object' ? body.message : null;
+  if (!message) return json(req, res, 400, { error: 'invalid_fcm_message' });
+
+  try {
+    const result = await firebaseMessaging.sendToTokens(tokens, message);
+    addAuditEvent(db, req, {
+      type: 'agent.fcm_push_sent', actor: installationId, result: 'accepted', installationId,
+      accepted: result.accepted, invalidTokens: result.invalidTokens.length,
+    });
+    await saveDb(db);
+    return json(req, res, 200, result);
+  } catch (error) {
+    const code = String(error?.code || 'fcm_send_failed');
+    addAuditEvent(db, req, { type: 'agent.fcm_push_failed', actor: installationId, result: 'failed', installationId, reason: code });
+    await saveDb(db);
+    return json(req, res, Number(error?.status) || 502, { error: code, message: 'Não foi possível entregar a notificação agora.' });
+  }
+}
+
 async function handleAgentStatus(req, res) {
   const installationId = String(req.headers['x-drac-installation-id'] || '').trim();
   const licenseKey = String(req.headers['x-drac-license-key'] || '').trim();
@@ -3745,6 +3787,9 @@ async function route(req, res) {
     }
     if (req.method === 'POST' && url.pathname === '/api/agent/heartbeat') {
       return handleHeartbeat(req, res);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/agent/push/fcm') {
+      return handleFcmPush(req, res);
     }
     if (req.method === 'POST' && url.pathname === '/api/agent/reactivation-archive') {
       return handleUploadReactivationArchive(req, res);
