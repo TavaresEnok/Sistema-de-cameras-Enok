@@ -51,6 +51,11 @@ run_action() {
       # O atualizador já confere a release aprovada, preserva overlays,
       # cria backup e executa rollback caso a validação reprove.
       [ -n "$target_commit" ] || { echo 'Atualização recusada: release alvo ausente.'; return 2; }
+      # O timer roda como root, mas /opt/drac pertence ao usuário operador.
+      # Git 2.35+ recusa isso por segurança ("dubious ownership") e a
+      # atualização morria ANTES do fetch. A exceção é deliberadamente o
+      # diretório exato configurado, nunca um curinga.
+      git config --global --add safe.directory "$DRAC_OPS_ROOT_DIR"
       DRAC_UPDATE_ALLOW_DIRTY=false bash "$DRAC_OPS_ROOT_DIR/scripts/atualizar-instalacao.sh"
       ;;
     restart_web) run_container_restart vms-web ;;
