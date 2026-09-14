@@ -96,3 +96,9 @@ test('redirecionamentos absolutos do MediaMTX permanecem na origem HTTPS do clie
     );
   }
 });
+
+test('HLS aceita o token do app na query sem quebrar o Bearer do navegador', () => {
+  assert.match(conf, /map\s+\$http_authorization\s+\$media_authorization\s*{[\s\S]*default\s+\$http_authorization;[\s\S]*""\s+"Bearer \$arg_token";/);
+  const hls = conf.split('location /hls/ {')[1]?.split('\n    }')[0] ?? '';
+  assert.match(hls, /proxy_set_header\s+Authorization\s+\$media_authorization;/);
+});

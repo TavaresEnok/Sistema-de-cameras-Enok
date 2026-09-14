@@ -6,6 +6,11 @@ map $http_upgrade $connection_upgrade {
   '' close;
 }
 
+map $http_authorization $media_authorization {
+  default $http_authorization;
+  ""      "Bearer $arg_token";
+}
+
 server {
   listen 80;
   server_name drac.example.com;
@@ -59,6 +64,7 @@ server {
   # HLS fallback under the same HTTPS origin.
   location /hls/ {
     proxy_pass http://127.0.0.1:8888/;
+    proxy_set_header Authorization $media_authorization;
     proxy_redirect ~^/(cam_.*)$ /hls/$1;
     proxy_redirect ~^https?://[^/]+/(cam_.*)$ /hls/$1;
     proxy_http_version 1.1;
