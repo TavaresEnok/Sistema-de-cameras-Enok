@@ -101,10 +101,14 @@ function ensureBuildWorktree(commit, slug) {
 
   // Dependências não entram no Git. O link evita uma instalação de pacotes a
   // cada APK e mantém o build isolado do código ativo do agente.
-  const sourceModules = path.join(MOBILE_DIR, 'node_modules');
-  const worktreeModules = path.join(mobile, 'node_modules');
-  if (!fs.existsSync(worktreeModules) && fs.existsSync(sourceModules)) {
-    fs.symlinkSync(sourceModules, worktreeModules, 'dir');
+  const moduleLinks = [
+    [path.join(REPO_ROOT, 'node_modules'), path.join(worktree, 'node_modules')],
+    [path.join(MOBILE_DIR, 'node_modules'), path.join(mobile, 'node_modules')],
+  ];
+  for (const [sourceModules, worktreeModules] of moduleLinks) {
+    if (!fs.existsSync(worktreeModules) && fs.existsSync(sourceModules)) {
+      fs.symlinkSync(sourceModules, worktreeModules, 'dir');
+    }
   }
 
   // Branding/configuração do cliente é estado do agente, não parte da release.
