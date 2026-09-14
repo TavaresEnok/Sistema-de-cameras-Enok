@@ -184,7 +184,8 @@ gateway_srs="$GATEWAY/srs/srs.conf"
 if grep -qF 'vhost ibtelecom.s2cam.com.br' "$gateway_srs" \
    && grep -qF 'vhost cortex.s2cam.com.br' "$gateway_srs" \
    && grep -qF 'vhost vibe.s2cam.com.br' "$gateway_srs" \
-   && [ "$(grep -c 'normal_timeout[[:space:]]*30000' "$gateway_srs")" -ge 3 ]; then
+   && grep -qF 'vhost demo-03.s2cam.com.br' "$gateway_srs" \
+   && [ "$(grep -c 'normal_timeout[[:space:]]*30000' "$gateway_srs")" -ge 4 ]; then
   ok "Gateway versiona todos os tenants RTMP e tolera pausas breves"
 else
   falha "matriz RTMP da Gateway incompleta" "todo tenant deve ter vhost explícito e timeout de publicação de 30s"
@@ -192,7 +193,8 @@ fi
 
 if [ -f "$GATEWAY/nginx/conf.d/ibtelecom.conf" ] \
    && [ -f "$GATEWAY/nginx/conf.d/cortex.conf" ] \
-   && [ -f "$GATEWAY/nginx/conf.d/vibe.conf" ]; then
+   && [ -f "$GATEWAY/nginx/conf.d/vibe.conf" ] \
+   && [ -f "$GATEWAY/nginx/conf.d/demo-03.conf" ]; then
   ok "rotas web dos tenants atuais estão reproduzíveis"
 else
   falha "rota web de tenant existe só na máquina" "versione IBTelecom, Cortex e Vibe em nginx/conf.d"

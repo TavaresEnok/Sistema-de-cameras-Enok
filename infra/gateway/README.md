@@ -7,8 +7,8 @@ Rotas administrativas:
 
 - Central por hostname: `central.s2cam.com.br` para `10.10.0.11:8080`;
 - instalação principal: `principal.s2cam.com.br` para o HTTPS legado;
-- tenants atuais: `ibtelecom.s2cam.com.br`, `cortex.s2cam.com.br` e
-  `vibe.s2cam.com.br` para seus ingressos web;
+- tenants atuais: `ibtelecom.s2cam.com.br`, `cortex.s2cam.com.br`,
+  `vibe.s2cam.com.br` e `demo-03.s2cam.com.br` para seus ingressos web;
 - rota legada `/central/`: também deve apontar para `10.10.0.11:8080`;
 - `10.10.0.20` pertence à instalação IBtelecom e nunca à Central.
 
@@ -48,3 +48,7 @@ esses limites: o padrão de 5 segundos do SRS derrubava câmeras saudáveis que
 fazem pausas breves de envio. Ao adicionar ou mover um tenant, atualize juntos
 o vhost do SRS e o `server_name` do Nginx, valide a configuração e só então
 recarregue a Gateway.
+
+`demo_03` pode ser o código interno da instalação, mas o hostname público é
+`demo-03.s2cam.com.br`: `_` não é válido em hostname HTTPS/RTMP para câmeras e
+navegadores. A rota já aponta para `10.10.0.22`, reservada para esta VM.
