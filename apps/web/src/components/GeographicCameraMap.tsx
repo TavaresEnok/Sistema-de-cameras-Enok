@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera as CameraIcon, LocateFixed } from 'lucide-react';
+import { Camera as CameraIcon, Crosshair, LocateFixed } from 'lucide-react';
 import * as L from 'leaflet';
 import { divIcon, latLngBounds, type Map as LeafletMap } from 'leaflet';
 import { MapContainer, Marker, Popup, Tooltip, useMap, useMapEvents } from 'react-leaflet';
@@ -243,6 +243,9 @@ export function GeographicCameraMap({
   onPickPosition?: (position: Center) => void;
 }) {
   const mapRef = useRef<LeafletMap | null>(null);
+  const minhaPosicaoRef = useRef<L.CircleMarker | null>(null);
+  const [localizando, setLocalizando] = useState(false);
+  const [erroLocalizacao, setErroLocalizacao] = useState('');
   const positioned = useMemo(
     () => cameras.filter((camera) => Number.isFinite(camera.latitude) && Number.isFinite(camera.longitude)),
     [cameras],
@@ -262,6 +265,51 @@ export function GeographicCameraMap({
   // dependesse dos grupos, cada mudança de zoom reenquadraria o mapa e o
   // operador nunca conseguiria aproximar — o mapa puxaria a visão de volta.
   const signature = positioned.map((c) => `${c.id}:${c.latitude}:${c.longitude}`).join('|');
+
+  const mostrarMinhaLocalizacao = () => {
+    if (!navigator.geolocation) {
+      setErroLocalizacao('Este navegador não oferece localização.');
+      return;
+    }
+    setLocalizando(true);
+    setErroLocalizacao('');
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        const map = mapRef.current;
+        if (!map) return;
+        const ponto: L.LatLngExpression = [coords.latitude, coords.longitude];
+        map.setView(ponto, Math.max(map.getZoom(), 16), { animate: true });
+        if (minhaPosicaoRef.current) {
+          minhaPosicaoRef.current.setLatLng(ponto);
+        } else {
+          minhaPosicaoRef.current = L.circleMarker(ponto, {
+            radius: 8,
+            color: '#ffffff',
+            weight: 3,
+            fillColor: '#2563eb',
+            fillOpacity: 1,
+            interactive: false,
+          }).addTo(map);
+        }
+        setLocalizando(false);
+      },
+      (erro) => {
+        const mensagem = erro.code === 1 // GeolocationPositionError.PERMISSION_DENIED
+          ? 'Permita a localização no navegador para usar este recurso.'
+          : 'Não foi possível obter sua localização agora.';
+        setErroLocalizacao(mensagem);
+        setLocalizando(false);
+      },
+      // Não solicita GPS de precisão máxima: para enquadrar o mapa, a precisão
+      // de rede já basta e evita consumo desnecessário de bateria no celular.
+      { enableHighAccuracy: false, timeout: 10_000, maximumAge: 60_000 },
+    );
+  };
+
+  useEffect(() => () => {
+    minhaPosicaoRef.current?.remove();
+    minhaPosicaoRef.current = null;
+  }, []);
 
   return (
     <div className="relative h-full min-h-[420px] overflow-hidden bg-[#dbe4e8]">
@@ -334,6 +382,23 @@ export function GeographicCameraMap({
       >
         <LocateFixed className="h-4 w-4" />
       </button>
+
+      <button
+        type="button"
+        onClick={mostrarMinhaLocalizacao}
+        disabled={localizando}
+        className="absolute right-3 top-14 z-[800] flex h-9 w-9 items-center justify-center rounded-md border border-border bg-card text-foreground shadow-lg hover:bg-accent disabled:cursor-wait disabled:opacity-70"
+        aria-label="Mostrar minha localização"
+        title="Mostrar minha localização"
+      >
+        <Crosshair className={`h-4 w-4 ${localizando ? 'animate-spin' : ''}`} />
+      </button>
+
+      {erroLocalizacao && (
+        <div className="absolute right-3 top-24 z-[800] max-w-64 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground shadow-lg">
+          {erroLocalizacao}
+        </div>
+      )}
 
       {!positions.length && (
         <div className="pointer-events-none absolute inset-0 z-[700] flex items-center justify-center p-6">
