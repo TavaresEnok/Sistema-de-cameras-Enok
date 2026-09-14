@@ -2402,9 +2402,10 @@ function sanitizePkgSegment(s) {
 }
 
 // Package ID padrão LIMPO, derivado do NOME do cliente (não do id com IP).
-// Ex.: "DRAC Local" → com.ajustconsulting.draclocal. Editável por cliente.
+// Ex.: "Cliente Acme" → com.s2cam.clienteacme. Pacotes já definidos no
+// cadastro permanecem imutáveis: mudá-los cria outro app para Android/Play.
 function deriveAppPackageId(item) {
-  return `com.ajustconsulting.${sanitizePkgSegment(item.customerName || item.name || item.id)}`;
+  return `com.s2cam.${sanitizePkgSegment(item.customerName || item.name || item.id)}`;
 }
 
 const PKG_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;

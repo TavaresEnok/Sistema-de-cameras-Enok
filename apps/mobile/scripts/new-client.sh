@@ -2,7 +2,7 @@
 # new-client.sh — cadastra um novo cliente white-label (sem editar código).
 #
 #   ./scripts/new-client.sh --slug acme --name "Acme VMS" \
-#       --api http://1.2.3.4:5173/api [--package com.ajustconsulting.dracacme] \
+#       --api https://acme.s2cam.com.br/api [--package com.s2cam.acme] \
 #       [--color "#3b82f6"] [--logo /caminho/logo.png]
 #
 # Cria clients/<slug>/config.json (e copia a logo, se informada). Depois:
@@ -24,7 +24,7 @@ done
 
 [[ -n "$SLUG" && -n "$NAME" && -n "$API" ]] || { echo "obrigatórios: --slug --name --api" >&2; exit 2; }
 [[ "$SLUG" =~ ^[a-z0-9][a-z0-9-]{1,38}$ ]] || { echo "slug inválido (a-z 0-9 -): $SLUG" >&2; exit 2; }
-[[ -z "$PACKAGE" ]] && PACKAGE="com.ajustconsulting.drac${SLUG//-/}"
+[[ -z "$PACKAGE" ]] && PACKAGE="com.s2cam.${SLUG//-/}"
 [[ "$PACKAGE" =~ ^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$ ]] || { echo "package inválido: $PACKAGE" >&2; exit 2; }
 
 MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

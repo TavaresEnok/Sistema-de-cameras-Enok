@@ -13,7 +13,7 @@
       "backgroundColor": "#071013"
     },
     "ios": {
-      "bundleIdentifier": "com.ajustconsulting.dracmobile",
+      "bundleIdentifier": "com.s2cam.app",
       "buildNumber": "6",
       "supportsTablet": true,
       "infoPlist": {
@@ -27,7 +27,7 @@
       }
     },
     "android": {
-      "package": "com.ajustconsulting.dracmobile",
+      "package": "com.s2cam.app",
       "versionCode": 6,
       "permissions": [
         "android.permission.ACCESS_NETWORK_STATE",

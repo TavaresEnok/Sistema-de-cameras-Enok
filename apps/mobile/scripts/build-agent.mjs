@@ -186,7 +186,9 @@ function writeClient(body) {
   if (!appName || !apiUrl) throw new Error('appName e apiUrl são obrigatórios');
   if (!APP_NAME_RE.test(String(appName))) throw new Error('appName inválido (letras, números, espaço e . _ - ( ), até 60)');
   if (!API_URL_RE.test(String(apiUrl))) throw new Error('apiUrl inválida (use http(s)://host[:porta][/caminho])');
-  const packageId = body.packageId || `com.ajustconsulting.drac${String(slug).replace(/-/g, '')}`;
+  // Identidade padrão de novos white-labels. Pacotes já gravados no cliente
+  // continuam explícitos e, portanto, não trocam de identidade por acidente.
+  const packageId = body.packageId || `com.s2cam.${String(slug).replace(/-/g, '')}`;
   if (!PKG_RE.test(packageId)) throw new Error('packageId inválido');
   let firebaseConfig = null;
   if (body.firebaseConfigBase64 !== undefined) {

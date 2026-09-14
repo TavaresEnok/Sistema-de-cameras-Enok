@@ -1,0 +1,12 @@
+{
+  "appName": "S2Cam",
+  "slug": "s2cam",
+  "packageId": "com.s2cam.app",
+  "apiUrl": "https://principal.s2cam.com.br/api",
+  "apkBaseUrl": "https://s2cam.com.br/apk",
+  "primaryColor": "#3b82f6",
+  "splashBackgroundColor": "#0A0D13",
+  "redesign": true,
+  "pushEnabled": false,
+  "crashDsn": ""
+}
