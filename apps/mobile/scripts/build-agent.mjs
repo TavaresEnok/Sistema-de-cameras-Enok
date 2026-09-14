@@ -377,10 +377,10 @@ const server = http.createServer(async (req, res) => {
       if (!/^[0-9a-f]{40}$/i.test(String(body.sourceCommit || ''))) {
         return send(res, 409, { error: 'release não aprovada: sourceCommit completo é obrigatório' });
       }
-      const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: MOBILE_DIR, encoding: 'utf8' });
-      if (head.status !== 0 || head.stdout.trim().toLowerCase() !== String(body.sourceCommit).toLowerCase()) {
-        return send(res, 409, { error: 'o build-agent não está no commit aprovado pela Central' });
-      }
+      // A comparação com o HEAD do agente bloqueava exatamente o caso normal:
+      // a Central pode estar liberando uma release anterior enquanto o agente
+      // já recebeu manutenção. `ensureBuildWorktree` confere o commit pedido e
+      // executa o build naquele checkout isolado, pouco antes da compilação.
       if (!fs.existsSync(path.join(CLIENTS_DIR, body.slug, 'config.json'))) return send(res, 404, { error: 'cliente não existe' });
       const job = { id: `${Date.now()}-${body.slug}`, slug: body.slug, sourceCommit: String(body.sourceCommit).toLowerCase(), status: 'queued', queuedAt: new Date().toISOString(), log: '' };
       state.jobs.push(job);
