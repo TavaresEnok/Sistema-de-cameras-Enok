@@ -5,8 +5,9 @@ const DEVELOPMENT_CAMERA_CIDRS = '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::
 // CGNAT normalmente é bloqueado: não é roteável na Internet e aceitá-lo sem
 // contexto tornaria a proteção SSRF permeável. Há instalações em que o
 // provedor cria uma rota L3 privada até o servidor; nesses casos aceitamos
-// SOMENTE IPs individuais declarados pelo administrador da instalação (ver
-// CAMERA_TRUSTED_CGNAT_IPS), nunca uma sub-rede CGNAT inteira.
+// SOMENTE redes declaradas pelo administrador da instalação (ver
+// CAMERA_TRUSTED_CGNAT_CIDRS). A variável antiga de IPs individuais continua
+// aceita para compatibilidade com instalações já configuradas.
 const CGNAT_CAMERA_CIDR = '100.64.0.0/10';
 const ALWAYS_DENIED_CAMERA_CIDRS = [
   '0.0.0.0/8',
@@ -89,20 +90,23 @@ function blockListHas(list: BlockList, ip: string): boolean {
       : false;
 }
 
-function parseTrustedCgnatIps(value: string | undefined): Set<string> {
-  const trusted = new Set<string>();
+function parseTrustedCgnatCidrs(value: string | undefined): BlockList {
+  const trusted = new BlockList();
   const cgnat = parseCidrList(CGNAT_CAMERA_CIDR, 'CGNAT');
   for (const rawEntry of String(value || '').split(',')) {
     const entry = rawEntry.trim();
     if (!entry) continue;
-    // A exceção é propositalmente host-a-host. CIDR aqui transformaria uma
-    // rota especial de cliente numa abertura ampla de rede interna.
-    if (entry.includes('/') || isIP(entry) !== 4 || !blockListHas(cgnat, entry)) {
+    const slash = entry.lastIndexOf('/');
+    const address = slash === -1 ? entry : entry.slice(0, slash);
+    const prefix = slash === -1 ? 32 : Number(entry.slice(slash + 1));
+    // Só é permitido descrever partes do 100.64.0.0/10. Prefixo menor que /10
+    // escaparia da faixa CGNAT e transformaria a exceção numa allowlist geral.
+    if (isIP(address) !== 4 || !Number.isInteger(prefix) || prefix < 10 || prefix > 32 || !blockListHas(cgnat, address)) {
       throw new CameraNetworkPolicyError(
-        'CAMERA_TRUSTED_CGNAT_IPS aceita somente IPs individuais da faixa CGNAT.',
+        'CAMERA_TRUSTED_CGNAT_CIDRS aceita somente redes contidas em 100.64.0.0/10.',
       );
     }
-    trusted.add(entry);
+    trusted.addSubnet(address, prefix, 'ipv4');
   }
   return trusted;
 }
@@ -138,7 +142,10 @@ export function assertCameraTargetAllowed(
 
   const cgnat = parseCidrList(CGNAT_CAMERA_CIDR, 'CGNAT');
   if (blockListHas(cgnat, ip)) {
-    if (!parseTrustedCgnatIps(source.CAMERA_TRUSTED_CGNAT_IPS).has(ip)) {
+    const trustedCgnat = parseTrustedCgnatCidrs(
+      `${source.CAMERA_TRUSTED_CGNAT_CIDRS || ''},${source.CAMERA_TRUSTED_CGNAT_IPS || ''}`,
+    );
+    if (!blockListHas(trustedCgnat, ip)) {
       throw new CameraNetworkPolicyError('Destino de câmera bloqueado pela política de rede.');
     }
     return ip;

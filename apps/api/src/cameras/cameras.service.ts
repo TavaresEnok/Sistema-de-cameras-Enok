@@ -232,6 +232,7 @@ export class CamerasService implements OnApplicationBootstrap {
         NODE_ENV: process.env.NODE_ENV,
         CAMERA_ALLOWED_CIDRS: this.configService.get<string>('cameraAllowedCidrs'),
         CAMERA_DENIED_CIDRS: this.configService.get<string>('cameraDeniedCidrs'),
+        CAMERA_TRUSTED_CGNAT_CIDRS: this.configService.get<string>('cameraTrustedCgnatCidrs'),
         CAMERA_TRUSTED_CGNAT_IPS: this.configService.get<string>('cameraTrustedCgnatIps'),
       });
     } catch (error) {

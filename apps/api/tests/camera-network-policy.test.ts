@@ -61,7 +61,7 @@ test('loopback, link-local/metadata, CGNAT e multicast são sempre negados', () 
   }
 });
 
-test('CGNAT só é aceito por exceção explícita de IP individual', () => {
+test('CGNAT aceita IP legado ou sub-rede explicitamente roteada pelo provedor', () => {
   assert.equal(
     assertCameraTargetAllowed('100.64.9.57', 8001, {
       ...production(),
@@ -76,17 +76,31 @@ test('CGNAT só é aceito por exceção explícita de IP individual', () => {
     }),
     /bloqueado pela política/,
   );
+  assert.equal(
+    assertCameraTargetAllowed('100.64.9.58', 65535, {
+      ...production(),
+      CAMERA_TRUSTED_CGNAT_CIDRS: '100.64.9.0/24',
+    }),
+    '100.64.9.58',
+  );
+  assert.throws(
+    () => assertCameraTargetAllowed('100.65.9.58', 8001, {
+      ...production(),
+      CAMERA_TRUSTED_CGNAT_CIDRS: '100.64.9.0/24',
+    }),
+    /bloqueado pela política/,
+  );
   assert.throws(
     () => assertCameraTargetAllowed('100.64.9.57', 8001, {
       ...production(),
-      CAMERA_TRUSTED_CGNAT_IPS: '100.64.9.0/24',
+      CAMERA_TRUSTED_CGNAT_CIDRS: '100.0.0.0/8',
     }),
-    /IPs individuais/,
+    /contidas em 100\.64\.0\.0\/10/,
   );
   assert.throws(
     () => assertCameraTargetAllowed('100.64.9.57', 8001, {
       ...production('192.168.50.0/24', '100.64.9.57/32'),
-      CAMERA_TRUSTED_CGNAT_IPS: '100.64.9.57',
+      CAMERA_TRUSTED_CGNAT_CIDRS: '100.64.0.0/10',
     }),
     /bloqueado pela política/,
   );

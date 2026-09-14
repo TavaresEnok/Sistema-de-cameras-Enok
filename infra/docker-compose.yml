@@ -541,6 +541,7 @@ services:
       - CAMERA_TEST_ALLOW_PUBLIC_IP=${CAMERA_TEST_ALLOW_PUBLIC_IP:-false}
       - CAMERA_ALLOWED_CIDRS=${CAMERA_ALLOWED_CIDRS:-}
       - CAMERA_DENIED_CIDRS=${CAMERA_DENIED_CIDRS:-}
+      - CAMERA_TRUSTED_CGNAT_CIDRS=${CAMERA_TRUSTED_CGNAT_CIDRS:-}
       - CAMERA_TRUSTED_CGNAT_IPS=${CAMERA_TRUSTED_CGNAT_IPS:-}
       # Quantas câmeras degradadas o health check re-sonda por ciclo (60s).
       # NÃO é um número livre: cada sonda abre uma sessão RTSP no equipamento do
