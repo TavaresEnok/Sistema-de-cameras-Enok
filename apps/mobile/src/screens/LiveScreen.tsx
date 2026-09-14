@@ -31,7 +31,7 @@ interface LiveScreenProps {
   posterUrl: string | null;
   /** URL HLS de máxima qualidade (passthrough H.265); null até o usuário pedir. */
   hdUrl: string | null;
-  onRequestHd: () => void;
+  onRequestHd: () => Promise<boolean>;
   onExitHd: () => void;
   detections: LiveDetection[];
   ptzActive: Direction | null;
@@ -135,11 +135,18 @@ export function LiveScreen({
   requestHdRef.current = onRequestHd;
   useEffect(() => {
     setHdMode(true);
-    requestHdRef.current();
+    void requestHdRef.current().then((opened) => {
+      if (!opened) setHdMode(false);
+    });
   }, [camera.id]);
   const toggleHd = () => {
     if (hdMode) { setHdMode(false); onExitHd(); }
-    else { setHdMode(true); onRequestHd(); }
+    else {
+      setHdMode(true);
+      void onRequestHd().then((opened) => {
+        if (!opened) setHdMode(false);
+      });
+    }
   };
   const [fullscreen, setFullscreen] = useState(false);
   const [lowerMode, setLowerMode] = useState<'timeline' | 'ptz'>('timeline');

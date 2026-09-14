@@ -460,20 +460,25 @@ function AppInner() {
   }, [liveCamera?.id]);
 
   // Máxima qualidade: busca o HLS passthrough (H.265) sob demanda.
-  const loadHdStream = async (cameraId: string) => {
-    if (!session) return;
+  const loadHdStream = async (cameraId: string): Promise<boolean> => {
+    if (!session) return false;
     const token = session.token;
     const generation = ++hdRequestRef.current;
     try {
       const data = await requestCachedStreamUrls<StreamUrls>(session.apiUrl, cameraId, session.token, undefined, 'original');
-      if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return;
+      if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return false;
       const hls = authenticatedMediaUrl(data.protocols?.hlsUrl, session.apiUrl, data.streamToken);
       if (!hls) throw new Error('sem HLS');
       setHdUrl(hls);
+      return true;
     } catch {
-      if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return;
+      if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return false;
       setHdUrl(null);
-      Alert.alert('Máxima qualidade', 'Não foi possível abrir a máxima qualidade desta câmera agora.');
+      // Falha temporária da fonte original não deve interromper o operador com
+      // um alerta modal. A tela mantém o perfil compatível e uma nova entrada
+      // na câmera tentará a Máxima novamente automaticamente.
+      void loadStream(cameraId, 'selected', true);
+      return false;
     }
   };
 

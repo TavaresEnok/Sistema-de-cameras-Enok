@@ -29,7 +29,7 @@ interface Props {
   posterUrl: string | null;
   /** Máxima qualidade (HLS passthrough), sob demanda. */
   hdUrl: string | null;
-  onRequestHd: () => void;
+  onRequestHd: () => Promise<boolean>;
   onExitHd: () => void;
   recordings: Recording[];
   recordingsLoading: boolean;
@@ -121,11 +121,18 @@ export function LiveScreenRedesign(props: Props) {
   requestHdRef.current = onRequestHd;
   useEffect(() => {
     setHdMode(true);
-    requestHdRef.current();
+    void requestHdRef.current().then((opened) => {
+      if (!opened) setHdMode(false);
+    });
   }, [camera.id]);
   const toggleHd = () => {
     if (hdMode) { setHdMode(false); onExitHd(); }
-    else { setHdMode(true); onRequestHd(); }
+    else {
+      setHdMode(true);
+      void onRequestHd().then((opened) => {
+        if (!opened) setHdMode(false);
+      });
+    }
   };
   const canPtz = camera.ptzCapable !== false && camera.canControl !== false;
 
