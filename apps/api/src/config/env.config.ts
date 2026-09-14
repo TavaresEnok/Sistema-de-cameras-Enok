@@ -148,6 +148,7 @@ export function readEnvConfig(
     internalServiceToken: source.INTERNAL_SERVICE_TOKEN ?? '',
     cameraAllowedCidrs: source.CAMERA_ALLOWED_CIDRS ?? '',
     cameraDeniedCidrs: source.CAMERA_DENIED_CIDRS ?? '',
+    cameraTrustedCgnatIps: source.CAMERA_TRUSTED_CGNAT_IPS ?? '',
     cameraTestAllowPublicIp: flag('CAMERA_TEST_ALLOW_PUBLIC_IP', false),
     // Dias de retenção: 0 ou NaN apagaria o acervo INTEIRO na varredura seguinte.
     // Piso de 1 dia é inegociável.

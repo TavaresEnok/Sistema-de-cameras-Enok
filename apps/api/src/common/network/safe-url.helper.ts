@@ -2,9 +2,14 @@ import { lookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
 
 const DEVELOPMENT_CAMERA_CIDRS = '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7';
+// CGNAT normalmente é bloqueado: não é roteável na Internet e aceitá-lo sem
+// contexto tornaria a proteção SSRF permeável. Há instalações em que o
+// provedor cria uma rota L3 privada até o servidor; nesses casos aceitamos
+// SOMENTE IPs individuais declarados pelo administrador da instalação (ver
+// CAMERA_TRUSTED_CGNAT_IPS), nunca uma sub-rede CGNAT inteira.
+const CGNAT_CAMERA_CIDR = '100.64.0.0/10';
 const ALWAYS_DENIED_CAMERA_CIDRS = [
   '0.0.0.0/8',
-  '100.64.0.0/10',
   '127.0.0.0/8',
   '169.254.0.0/16',
   '224.0.0.0/4',
@@ -84,6 +89,24 @@ function blockListHas(list: BlockList, ip: string): boolean {
       : false;
 }
 
+function parseTrustedCgnatIps(value: string | undefined): Set<string> {
+  const trusted = new Set<string>();
+  const cgnat = parseCidrList(CGNAT_CAMERA_CIDR, 'CGNAT');
+  for (const rawEntry of String(value || '').split(',')) {
+    const entry = rawEntry.trim();
+    if (!entry) continue;
+    // A exceção é propositalmente host-a-host. CIDR aqui transformaria uma
+    // rota especial de cliente numa abertura ampla de rede interna.
+    if (entry.includes('/') || isIP(entry) !== 4 || !blockListHas(cgnat, entry)) {
+      throw new CameraNetworkPolicyError(
+        'CAMERA_TRUSTED_CGNAT_IPS aceita somente IPs individuais da faixa CGNAT.',
+      );
+    }
+    trusted.add(entry);
+  }
+  return trusted;
+}
+
 /**
  * Política de egress das câmeras.
  *
@@ -111,6 +134,14 @@ export function assertCameraTargetAllowed(
   );
   if (blockListHas(denied, ip)) {
     throw new CameraNetworkPolicyError('Destino de câmera bloqueado pela política de rede.');
+  }
+
+  const cgnat = parseCidrList(CGNAT_CAMERA_CIDR, 'CGNAT');
+  if (blockListHas(cgnat, ip)) {
+    if (!parseTrustedCgnatIps(source.CAMERA_TRUSTED_CGNAT_IPS).has(ip)) {
+      throw new CameraNetworkPolicyError('Destino de câmera bloqueado pela política de rede.');
+    }
+    return ip;
   }
 
   const configuredAllowed = String(source.CAMERA_ALLOWED_CIDRS || '').trim();

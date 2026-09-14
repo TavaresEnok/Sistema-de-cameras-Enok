@@ -61,6 +61,37 @@ test('loopback, link-local/metadata, CGNAT e multicast são sempre negados', () 
   }
 });
 
+test('CGNAT só é aceito por exceção explícita de IP individual', () => {
+  assert.equal(
+    assertCameraTargetAllowed('100.64.9.57', 8001, {
+      ...production(),
+      CAMERA_TRUSTED_CGNAT_IPS: '100.64.9.57',
+    }),
+    '100.64.9.57',
+  );
+  assert.throws(
+    () => assertCameraTargetAllowed('100.64.9.58', 8001, {
+      ...production(),
+      CAMERA_TRUSTED_CGNAT_IPS: '100.64.9.57',
+    }),
+    /bloqueado pela política/,
+  );
+  assert.throws(
+    () => assertCameraTargetAllowed('100.64.9.57', 8001, {
+      ...production(),
+      CAMERA_TRUSTED_CGNAT_IPS: '100.64.9.0/24',
+    }),
+    /IPs individuais/,
+  );
+  assert.throws(
+    () => assertCameraTargetAllowed('100.64.9.57', 8001, {
+      ...production('192.168.50.0/24', '100.64.9.57/32'),
+      CAMERA_TRUSTED_CGNAT_IPS: '100.64.9.57',
+    }),
+    /bloqueado pela política/,
+  );
+});
+
 test('produção sem allowlist falha fechada e denylist vence a allowlist', () => {
   assert.throws(
     () => assertCameraTargetAllowed('192.168.50.42', 554, production('')),
