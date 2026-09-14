@@ -75,7 +75,6 @@ const RolesPage       = lazyWithReload(() => import('./pages/RolesPage'));
 const ProfilePage     = lazyWithReload(() => import('./pages/ProfilePage'));
 const MapPage         = lazyWithReload(() => import('./pages/MapPage'));
 const UpdatesPage     = lazyWithReload(() => import('./pages/UpdatesPage'));
-const NotFound        = lazyWithReload(() => import('./pages/not-found'));
 
 function AppFallback() {
   return (
@@ -373,7 +372,10 @@ function AppRoutes() {
           mais a rota /app-builder, nem escondida por URL. */}
 
       <Route path="/" component={RootRedirect} />
-      <Route component={NotFound} />
+      {/* URLs antigas salvas em favoritos (como /painel) e endereços que não
+          existem não devem terminar numa tela morta. Para uma sessão válida,
+          o destino seguro e útil é sempre o Ao Vivo; sem sessão, o login. */}
+      <Route component={RootRedirect} />
       </Switch>}
     </>
   );
