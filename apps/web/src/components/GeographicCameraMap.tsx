@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera as CameraIcon, LocateFixed } from 'lucide-react';
+import * as L from 'leaflet';
 import { divIcon, latLngBounds, type Map as LeafletMap } from 'leaflet';
-import { MapContainer, Marker, Popup, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { MapContainer, Marker, Popup, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import '@maplibre/maplibre-gl-leaflet';
 import type { Camera } from '../store/vmsDataStore';
 import {
   agruparParaZoom,
@@ -16,12 +19,15 @@ type PositionedCamera = { camera: Camera; position: Center };
 
 const FALLBACK_CENTER: [number, number] = [-14.235, -51.9253];
 const WORLD_BOUNDS: [[number, number], [number, number]] = [[-85, -180], [85, 180]];
-// O antigo fundo CARTO passou a devolver ladrilhos com a marca
-// "API KEY REQUIRED". Este fundo nao exige chave e continua usando os dados
-// abertos do OpenStreetMap. As constantes ficam isoladas para que uma futura
-// troca de provedor nao volte a contaminar a logica do mapa.
-const BASE_MAP_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
-const BASE_MAP_ATTRIBUTION =
+// Mapa vetorial, sem chave e sem conta. O navegador busca os tiles diretamente
+// do OpenFreeMap; a VM/Gateway nunca vira proxy de mapa. Liberty equilibra
+// contraste, ruas e nomes de bairro para localizar câmeras rapidamente.
+const OPEN_FREE_MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+
+// Fallback só para browsers sem WebGL ou indisponibilidade de estilo. Mantém o
+// mapa utilizável em máquinas antigas, em vez de trocar a tela por um vazio.
+const FALLBACK_RASTER_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
+const FALLBACK_RASTER_ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, tiles by <a href="https://www.hotosm.org/">HOT</a> / <a href="https://www.openstreetmap.fr/">OSM France</a>';
 
 const CAMERA_MARKER_SVG = `
@@ -138,6 +144,82 @@ function VigiaDeTamanho() {
   return null;
 }
 
+function navegadorTemWebGl() {
+  try {
+    const canvas = document.createElement('canvas');
+    return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mantém toda a interação madura do Leaflet (marcadores, popup e seleção de
+ * ponto), mas substitui o fundo raster por MapLibre + OpenFreeMap vetorial.
+ * A camada tem fallback deliberado: falha de WebGL/rede nunca pode deixar o
+ * operador sem mapa para localizar uma câmera.
+ */
+function BaseVetorialOpenFreeMap() {
+  const map = useMap();
+
+  useEffect(() => {
+    let layer: L.MaplibreGL | null = null;
+    let fallback: L.TileLayer | null = null;
+    let pronto = false;
+    let fallbackAtivo = false;
+
+    const ativarFallback = () => {
+      if (fallbackAtivo) return;
+      fallbackAtivo = true;
+      layer?.remove();
+      layer = null;
+      fallback = L.tileLayer(FALLBACK_RASTER_URL, {
+        attribution: FALLBACK_RASTER_ATTRIBUTION,
+        subdomains: 'abc',
+        maxNativeZoom: 19,
+        bounds: WORLD_BOUNDS,
+        noWrap: true,
+      }).addTo(map);
+    };
+
+    if (!navegadorTemWebGl()) {
+      ativarFallback();
+      return () => fallback?.remove();
+    }
+
+    try {
+      layer = L.maplibreGL({
+        style: OPEN_FREE_MAP_STYLE,
+        interactive: false,
+      }).addTo(map);
+      const mapaVetorial = layer.getMaplibreMap();
+      const aoCarregar = () => { pronto = true; };
+      const aoErroInicial = () => { if (!pronto) ativarFallback(); };
+      mapaVetorial.once('load', aoCarregar);
+      mapaVetorial.once('error', aoErroInicial);
+      // Falha de DNS/CSP ou estilo indisponível não pode criar uma página sem
+      // fundo. Após a janela inicial, erros isolados de tile não desmontam o
+      // mapa inteiro — o próprio MapLibre faz a retentativa.
+      const limite = window.setTimeout(() => {
+        if (!pronto) ativarFallback();
+      }, 8000);
+
+      return () => {
+        window.clearTimeout(limite);
+        mapaVetorial.off('load', aoCarregar);
+        mapaVetorial.off('error', aoErroInicial);
+        layer?.remove();
+        fallback?.remove();
+      };
+    } catch {
+      ativarFallback();
+      return () => fallback?.remove();
+    }
+  }, [map]);
+
+  return null;
+}
+
 function CameraBounds({ positions, signature }: { positions: PositionedCamera[]; signature: string }) {
   const map = useMap();
   useEffect(() => {
@@ -195,14 +277,7 @@ export function GeographicCameraMap({
         scrollWheelZoom
         className="z-0 h-full min-h-[420px] w-full"
       >
-        <TileLayer
-          attribution={BASE_MAP_ATTRIBUTION}
-          url={BASE_MAP_URL}
-          subdomains="abc"
-          maxNativeZoom={19}
-          bounds={WORLD_BOUNDS}
-          noWrap
-        />
+        <BaseVetorialOpenFreeMap />
         <VigiaDeTamanho />
         <OuvinteDeZoom aoMudar={setZoom} />
         <SeletorDePosicaoNoMapa ativo={pickMode} aoEscolher={onPickPosition} />

@@ -56,6 +56,12 @@ export default defineConfig(async () => {
             if (id.includes('mpegts.js')) {
               return 'vendor-mpegts';
             }
+            // Renderização vetorial do mapa: é carregada só ao abrir /map.
+            // Sem este chunk isolado, MapLibre (~800 KB) cairia no vendor-core
+            // e pesaria o login, Ao Vivo e todas as telas que não usam mapa.
+            if (id.includes('maplibre-gl') || id.includes('maplibre-gl-leaflet')) {
+              return 'vendor-maplibre';
+            }
             if (id.includes('lucide-react') || id.includes('react-icons')) {
               return 'vendor-icons';
             }
