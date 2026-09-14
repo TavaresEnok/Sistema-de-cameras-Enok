@@ -98,7 +98,12 @@ test('redirecionamentos absolutos do MediaMTX permanecem na origem HTTPS do clie
 });
 
 test('HLS aceita o token do app na query sem quebrar o Bearer do navegador', () => {
-  assert.match(conf, /map\s+\$http_authorization\s+\$media_authorization\s*{[\s\S]*default\s+\$http_authorization;[\s\S]*""\s+"Bearer \$arg_token";/);
+  assert.match(conf, /map\s+\$arg_token\s+\$media_query_authorization/);
+  assert.match(conf, /map\s+\$http_authorization\s+\$media_header_or_query/);
+  assert.match(conf, /map\s+\$media_header_or_query\s+\$media_authorization/);
+  assert.match(conf, /Bearer \$cookie_s2cam_stream_token/);
   const hls = conf.split('location /hls/ {')[1]?.split('\n    }')[0] ?? '';
   assert.match(hls, /proxy_set_header\s+Authorization\s+\$media_authorization;/);
+  assert.match(hls, /add_header\s+Set-Cookie\s+\$media_token_cookie\s+always;/);
+  assert.match(conf, /Path=\/hls\/; Max-Age=300; HttpOnly; Secure; SameSite=Strict/);
 });
