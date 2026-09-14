@@ -101,13 +101,20 @@ function ensureBuildWorktree(commit, slug) {
 
   // Dependências não entram no Git. O link evita uma instalação de pacotes a
   // cada APK e mantém o build isolado do código ativo do agente.
-  const moduleLinks = [
+  const moduleTrees = [
     [path.join(REPO_ROOT, 'node_modules'), path.join(worktree, 'node_modules')],
     [path.join(MOBILE_DIR, 'node_modules'), path.join(mobile, 'node_modules')],
   ];
-  for (const [sourceModules, worktreeModules] of moduleLinks) {
-    if (!fs.existsSync(worktreeModules) && fs.existsSync(sourceModules)) {
-      fs.symlinkSync(sourceModules, worktreeModules, 'dir');
+  for (const [sourceModules, worktreeModules] of moduleTrees) {
+    // O pnpm cria links RELATIVOS dentro de node_modules. Um único symlink
+    // externo parece válido ao Node, mas o Metro o rejeita ao montar o bundle.
+    // `cp -al` replica a árvore como hardlinks: mesma ocupação real em disco e
+    // caminhos locais íntegros para Gradle/Metro.
+    const isSymlink = (() => { try { return fs.lstatSync(worktreeModules).isSymbolicLink(); } catch { return false; } })();
+    if ((isSymlink || !fs.existsSync(worktreeModules)) && fs.existsSync(sourceModules)) {
+      fs.rmSync(worktreeModules, { recursive: true, force: true });
+      const copied = spawnSync('cp', ['-al', sourceModules, worktreeModules], { encoding: 'utf8' });
+      if (copied.status !== 0) throw new Error(`não foi possível preparar dependências: ${(copied.stderr || '').trim()}`);
     }
   }
 
