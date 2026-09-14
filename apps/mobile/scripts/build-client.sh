@@ -34,7 +34,10 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/toolchain/android-sdk}"
 export PATH="$JAVA_HOME/bin:$PATH"
 BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
 KEYSTORE_DIR="${KEYSTORE_DIR:-$HOME/toolchain/keystores}"
-BUILDS_DIR="$MOBILE_DIR/builds"
+# Builds sempre usam o checkout da release aprovada. O estado que precisa
+# sobreviver (contador de versionCode e artefatos por cliente) fica fora desse
+# checkout temporário e é informado pelo build-agent.
+BUILDS_DIR="${BUILD_STATE_DIR:-$MOBILE_DIR/builds}"
 # Diretório do HOST montado no nginx (vms-web:/usr/share/nginx/html/apk:ro).
 # Publicar aqui sobrevive a rebuilds do container e dispensa `docker cp`.
 APK_PUBLISH_DIR="${APK_PUBLISH_DIR:-$MOBILE_DIR/../../infra/apk}"

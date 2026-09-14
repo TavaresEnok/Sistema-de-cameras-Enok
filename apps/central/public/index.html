@@ -610,6 +610,36 @@
       .license-form { display: grid; gap: 12px; }
       .license-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
       .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+      /* ── Aplicativos ─────────────────────────────────────────────────── */
+      .apps-intro { display:grid; grid-template-columns: minmax(0,1fr) auto; gap:18px; align-items:center; margin:-2px 0 18px; padding:18px 20px; border:1px solid var(--brand-line); border-radius:16px; background:linear-gradient(115deg,var(--brand-soft),transparent 58%),var(--surface); }
+      .apps-intro strong { display:block; font-size:13px; color:var(--ink); }
+      .apps-intro p { margin:5px 0 0; max-width:66ch; color:var(--muted); font-size:12px; line-height:1.55; }
+      .apps-steps { display:flex; gap:8px; align-items:center; color:var(--quiet); font-size:11px; white-space:nowrap; }
+      .apps-step { display:flex; align-items:center; gap:6px; }
+      .apps-step b { width:20px; height:20px; display:grid; place-items:center; border-radius:50%; background:var(--brand-soft); color:var(--brand-strong); border:1px solid var(--brand-line); font-size:10px; }
+      .apps-step-arrow { color:var(--line); }
+      .apps-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px; }
+      .app-card { position:relative; overflow:hidden; min-height:272px; border:1px solid var(--line); border-radius:16px; background:var(--surface); box-shadow:var(--shadow); }
+      .app-card::before { content:""; position:absolute; inset:0 0 auto; height:3px; background:linear-gradient(90deg,var(--brand),color-mix(in srgb,var(--brand) 15%,transparent)); }
+      .app-card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:20px 20px 15px; }
+      .app-ident { display:flex; align-items:center; gap:11px; min-width:0; }
+      .app-avatar { width:39px; height:39px; flex:0 0 auto; display:grid; place-items:center; border-radius:12px; color:var(--brand-strong); background:var(--brand-soft); border:1px solid var(--brand-line); font-weight:700; font-size:13px; }
+      .app-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-weight:600; font-size:14px; }
+      .app-caption { margin-top:3px; color:var(--quiet); font-size:10.5px; }
+      .app-card-body { padding:0 20px 18px; }
+      .app-readiness { display:flex; gap:8px; align-items:flex-start; padding:10px 11px; border-radius:10px; background:var(--surface-soft); color:var(--muted); font-size:11.5px; line-height:1.45; }
+      .app-readiness .dot { width:7px; height:7px; border-radius:99px; margin-top:5px; flex:0 0 auto; background:var(--quiet); }
+      .app-readiness.ready .dot { background:var(--green); box-shadow:0 0 0 3px var(--green-soft); }
+      .app-readiness.building .dot { background:var(--amber); box-shadow:0 0 0 3px var(--amber-soft); animation:appPulse 1.2s infinite; }
+      .app-readiness.problem .dot { background:var(--red); box-shadow:0 0 0 3px var(--red-soft); }
+      @keyframes appPulse { 50% { opacity:.38; } }
+      .app-facts { display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; margin:14px 0; }
+      .app-fact label { display:block; margin-bottom:3px; color:var(--quiet); font-size:10px; text-transform:uppercase; letter-spacing:.055em; }
+      .app-fact span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:11.5px; }
+      .app-card-actions { display:flex; align-items:center; gap:8px; padding:13px 20px; border-top:1px solid var(--line-hair); background:color-mix(in srgb,var(--surface-soft) 58%,transparent); }
+      .app-card-actions button.primary { flex:1; }
+      .app-card-actions .app-more { min-width:36px; padding-left:9px; padding-right:9px; }
+      @media (max-width: 760px) { .apps-intro{grid-template-columns:1fr}.apps-steps{white-space:normal;flex-wrap:wrap}.apps-step-arrow{display:none}.apps-grid{grid-template-columns:1fr} }
       .policy-card { background: var(--surface); border: 1px solid var(--line-hair); border-radius: var(--r-lg);
         padding: 17px 18px; box-shadow: var(--shadow); }
       .policy-card .badge { margin-bottom: 10px; }
@@ -1397,11 +1427,15 @@
           <section id="apps-view" class="view">
             <div class="page-head">
               <div>
-                <h1>Apps dos clientes</h1>
-                <p>Nome, servidor, logo e cores vêm do sistema de cada cliente. Aqui você acompanha o build e baixa APK, AAB e o kit da Play Store.</p>
+                <h1>Aplicativos</h1>
+                <p>Um aplicativo Android próprio para cada cliente, ligado ao servidor certo e pronto para distribuição.</p>
               </div>
             </div>
-            <div id="apps-list" class="cards-grid"></div>
+            <section class="apps-intro">
+              <div><strong>Do cliente para o celular, sem configuração manual</strong><p>Revise a marca uma única vez. A Central prepara o pacote Android, acompanha a geração e libera o download quando estiver pronto.</p></div>
+              <div class="apps-steps" aria-label="Etapas de geração do aplicativo"><span class="apps-step"><b>1</b> Revisar</span><span class="apps-step-arrow">→</span><span class="apps-step"><b>2</b> Gerar</span><span class="apps-step-arrow">→</span><span class="apps-step"><b>3</b> Baixar</span></div>
+            </section>
+            <div id="apps-list" class="apps-grid"></div>
           </section>
 
           <!-- ── ATUALIZAÇÕES E RECUPERAÇÃO ─────────────────────────────── -->
@@ -5488,32 +5522,21 @@
           const status = ac && ac.lastBuild ? ac.lastBuild.status : null;
           const building = status === 'building' || status === 'queued';
           if (building) anyBuilding = true;
-          const pkg = app.packageId ? `<span class="mono">${escapeHtml(app.packageId)}</span>` : '<span class="quiet">definido ao gerar</span>';
-          const link = (url, label) => url ? `<a href="${url}">${label}</a>` : '<span class="quiet">—</span>';
-          return `<section class="panel">
-            <div class="panel-head">
-              <div>
-                <div class="panel-title">${escapeHtml(displayName(it))}</div>
-                <div class="panel-subtitle mono">${escapeHtml(it.id)}</div>
-              </div>
-              ${buildBadge(status)}
-            </div>
-            <div class="detail-body">
-              <div class="kv">
-                <div>Pacote</div><div>${pkg}</div>
-                <div>Servidor</div><div class="mono">${escapeHtml((ac && ac.apiUrl) || '—')}</div>
-                <div>Notificações</div><div>${ac && ac.pushEnabled ? '<span class="badge ok">Ativas</span>' : '<span class="badge neutral">Desativadas</span>'}</div>
-                <div>Relatório de falhas</div><div>${ac && ac.crashReportingEnabled ? '<span class="badge ok">Ativo</span>' : '<span class="badge warn">Não configurado</span>'}</div>
-                <div>APK</div><div>${link(ac && ac.apkUrl ? centralUrl(`/api/admin/apk/clients/${encodeURIComponent(slug)}/download`) : '', 'Baixar APK')}</div>
-                <div>AAB</div><div>${link(ac && ac.aabUrl ? centralUrl(`/api/admin/apk/clients/${encodeURIComponent(slug)}/download-aab`) : '', 'Baixar AAB')}</div>
-                <div>Kit Play Store</div><div>${link(ac && ac.kitUrl ? centralUrl(`/api/admin/apk/clients/${encodeURIComponent(slug)}/download-kit`) : '', 'Baixar kit (.zip)')}</div>
-              </div>
-              <div class="license-actions" style="margin-top:13px">
-                <button data-genapp="${escapeHtml(it.id)}" class="primary" ${building ? 'disabled' : ''}>${building ? 'Gerando…' : (ac ? 'Atualizar' : 'Gerar app')}</button>
-                <button data-editapp="${escapeHtml(it.id)}">Editar</button>
-                <button data-del-slug="${escapeHtml(slug)}" class="danger" ${(!ac || building) ? 'disabled' : ''}>Apagar</button>
-              </div>
-            </div>
+          const hasArtifact = Boolean(ac && ac.apkUrl);
+          const readiness = building
+            ? { cls: 'building', text: 'O aplicativo está sendo preparado. Esta página atualiza sozinha.' }
+            : hasArtifact ? { cls: 'ready', text: 'Aplicativo pronto para instalar ou publicar na Play Store.' }
+              : status === 'failed' ? { cls: 'problem', text: 'A última tentativa não terminou. Revise os dados e gere novamente.' }
+                : { cls: '', text: 'Revise os dados do cliente e gere o primeiro aplicativo.' };
+          const packageId = (ac && ac.packageId) || app.packageId || 'Será criado ao gerar';
+          const apiUrl = (ac && ac.apiUrl) || app.apiUrlOverride || 'Servidor será identificado automaticamente';
+          const initial = String(displayName(it) || '?').trim().charAt(0).toUpperCase();
+          return `<section class="app-card">
+            <div class="app-card-head"><div class="app-ident"><div class="app-avatar">${escapeHtml(initial)}</div><div style="min-width:0"><div class="app-name">${escapeHtml(displayName(it))}</div><div class="app-caption">Aplicativo Android do cliente</div></div></div>${buildBadge(status)}</div>
+            <div class="app-card-body"><div class="app-readiness ${readiness.cls}"><span class="dot"></span><span>${escapeHtml(readiness.text)}</span></div>
+              <div class="app-facts"><div class="app-fact"><label>Pacote Android</label><span class="mono" title="${escapeHtml(packageId)}">${escapeHtml(packageId)}</span></div><div class="app-fact"><label>Notificações</label><span>${ac && ac.pushEnabled ? 'Ativas' : app.pushEnabled ? 'Preparando' : 'Desativadas'}</span></div><div class="app-fact" style="grid-column:1/-1"><label>Servidor do aplicativo</label><span class="mono" title="${escapeHtml(apiUrl)}">${escapeHtml(apiUrl)}</span></div></div>
+              ${hasArtifact ? `<div class="license-actions"><a class="btn" href="${centralUrl(`/api/admin/apk/clients/${encodeURIComponent(slug)}/download`)}">Baixar APK</a><a class="btn" href="${centralUrl(`/api/admin/apk/clients/${encodeURIComponent(slug)}/download-aab`)}">AAB Play Store</a></div>` : ''}</div>
+            <div class="app-card-actions"><button data-genapp="${escapeHtml(it.id)}" class="primary" ${building ? 'disabled' : ''}>${building ? 'Gerando aplicativo…' : (ac ? 'Gerar nova versão' : 'Gerar aplicativo')}</button><button data-editapp="${escapeHtml(it.id)}" class="app-more" title="Revisar nome, marca, servidor e notificações">Editar</button><button data-del-slug="${escapeHtml(slug)}" class="danger app-more" title="Apagar artefatos gerados" ${(!ac || building) ? 'disabled' : ''}>×</button></div>
           </section>`;
         }).join('');
         box.querySelectorAll('[data-genapp]').forEach(b => b.addEventListener('click', () => generateAppForClient(b.dataset.genapp)));

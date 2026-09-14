@@ -39,6 +39,18 @@ const PUBLIC_APK_BASE = (
 ).replace(/\/+$/, '');
 const MIN_FREE_GB = process.env.MIN_FREE_GB || '6';
 
+// O agente pode estar atualizado antes da versão que a Central aprovou para a
+// frota. Antes ele simplesmente recusava o build nesse caso, deixando a tela
+// de Apps sem uma saída útil. Cada build agora usa um worktree descartável do
+// commit APROVADO: a Central continua sendo a única autoridade da release e o
+// agente não precisa fazer checkout (nem parar) o seu próprio código.
+const REPO_ROOT = (() => {
+  const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: MOBILE_DIR, encoding: 'utf8' });
+  return result.status === 0 ? result.stdout.trim() : '';
+})();
+const BUILD_WORKTREES_DIR = process.env.BUILD_AGENT_WORKTREES_DIR
+  || path.join(os.homedir(), '.cache', 's2cam-build-agent', 'worktrees');
+
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}$/;
 const PKG_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
 // apiUrl e appName ficavam SEM validação enquanto slug/packageId eram estritos. Os dois
@@ -61,6 +73,51 @@ const saveState = () => fs.writeFileSync(STATE_FILE, JSON.stringify(state, null,
 let running = false;
 const queue = [];
 
+function git(args, options = {}) {
+  const result = spawnSync('git', args, { encoding: 'utf8', ...options });
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || `git ${args.join(' ')} falhou`).trim());
+  }
+  return result.stdout.trim();
+}
+
+function ensureBuildWorktree(commit, slug) {
+  if (!REPO_ROOT) throw new Error('repositório do aplicativo não foi encontrado no build-agent');
+  if (!/^[0-9a-f]{40}$/i.test(String(commit || ''))) throw new Error('commit de release inválido');
+  if (!SLUG_RE.test(String(slug || ''))) throw new Error('cliente inválido para build');
+
+  // Confirma que o commit chegou a este clone antes de criar arquivos.
+  git(['cat-file', '-e', `${commit}^{commit}`], { cwd: REPO_ROOT });
+  fs.mkdirSync(BUILD_WORKTREES_DIR, { recursive: true, mode: 0o700 });
+  const worktree = path.join(BUILD_WORKTREES_DIR, String(commit).toLowerCase());
+  const mobile = path.join(worktree, 'apps', 'mobile');
+  if (!fs.existsSync(path.join(worktree, '.git'))) {
+    git(['worktree', 'add', '--detach', worktree, commit], { cwd: REPO_ROOT });
+  }
+  const head = git(['rev-parse', 'HEAD'], { cwd: worktree });
+  if (head.toLowerCase() !== String(commit).toLowerCase()) {
+    throw new Error('worktree de build não corresponde à release aprovada');
+  }
+
+  // Dependências não entram no Git. O link evita uma instalação de pacotes a
+  // cada APK e mantém o build isolado do código ativo do agente.
+  const sourceModules = path.join(MOBILE_DIR, 'node_modules');
+  const worktreeModules = path.join(mobile, 'node_modules');
+  if (!fs.existsSync(worktreeModules) && fs.existsSync(sourceModules)) {
+    fs.symlinkSync(sourceModules, worktreeModules, 'dir');
+  }
+
+  // Branding/configuração do cliente é estado do agente, não parte da release.
+  // Copiamos somente o cliente solicitado para que uma geração não altere o
+  // checkout aprovado nem vaze identidade entre clientes.
+  const sourceClient = path.join(CLIENTS_DIR, slug);
+  const targetClient = path.join(mobile, 'clients', slug);
+  if (!fs.existsSync(sourceClient)) throw new Error('configuração do cliente não existe no build-agent');
+  fs.rmSync(targetClient, { recursive: true, force: true });
+  fs.cpSync(sourceClient, targetClient, { recursive: true, force: true });
+  return mobile;
+}
+
 function processQueue() {
   if (running || queue.length === 0) return;
   const job = queue.shift();
@@ -69,9 +126,28 @@ function processQueue() {
   job.startedAt = new Date().toISOString();
   saveState();
 
-  const child = spawn('bash', [path.join(__dirname, 'build-client.sh'), job.slug], {
-    cwd: MOBILE_DIR,
-    env: { ...process.env, MIN_FREE_GB, EXPECTED_SOURCE_COMMIT: job.sourceCommit || '' },
+  let buildMobileDir;
+  try {
+    buildMobileDir = ensureBuildWorktree(job.sourceCommit, job.slug);
+  } catch (error) {
+    job.status = 'failed';
+    job.finishedAt = new Date().toISOString();
+    job.error = error instanceof Error ? error.message : 'não foi possível preparar a release aprovada';
+    job.log = job.error;
+    saveState();
+    running = false;
+    processQueue();
+    return;
+  }
+  const child = spawn('bash', [path.join(buildMobileDir, 'scripts', 'build-client.sh'), job.slug], {
+    cwd: buildMobileDir,
+    env: {
+      ...process.env,
+      MIN_FREE_GB,
+      EXPECTED_SOURCE_COMMIT: job.sourceCommit || '',
+      // Contador de versão e artefatos intermediários sobrevivem ao worktree.
+      BUILD_STATE_DIR: BUILDS_DIR,
+    },
   });
   let log = '';
   const append = (b) => { log = (log + b.toString()).slice(-8000); job.log = log; };
