@@ -28,7 +28,8 @@ function requireSeedPassword(envName: string) {
 }
 
 async function main() {
-  const email = (process.env.ADMIN_EMAIL ?? 'admin@local.dev').trim().toLowerCase();
+  const email = (process.env.ADMIN_EMAIL ?? '').trim().toLowerCase() || null;
+  const username = (process.env.ADMIN_USERNAME ?? email ?? 'admin').trim().toLowerCase();
   const password = (process.env.ADMIN_PASSWORD ?? '').trim();
   const name = process.env.ADMIN_NAME ?? 'Administrador';
   const allowSampleUsers = String(process.env.SEED_SAMPLE_USERS ?? 'false') === 'true';
@@ -38,7 +39,7 @@ async function main() {
   // 1. Criar/Sincronizar Super Admin padrão
   const passwordHash = await bcrypt.hash(password, 10);
   await prisma.user.upsert({
-    where: { email },
+    where: { username },
     update: {
       name,
       passwordHash,
@@ -47,6 +48,7 @@ async function main() {
     },
     create: {
       name,
+      username,
       email,
       passwordHash,
       role: UserRole.SUPER_ADMIN,
@@ -57,9 +59,9 @@ async function main() {
   // 2. Criar usuários de exemplo apenas quando explicitamente habilitado
   if (allowSampleUsers) {
     const users = [
-      { name: 'Admin Local', email: 'admin.local@local.dev', password: requireSeedPassword('SEED_ADMIN_PASSWORD'), role: UserRole.ADMIN },
-      { name: 'Operador Local', email: 'operador.local@local.dev', password: requireSeedPassword('SEED_OPERATOR_PASSWORD'), role: UserRole.OPERATOR },
-      { name: 'Viewer Local', email: 'viewer.local@local.dev', password: requireSeedPassword('SEED_VIEWER_PASSWORD'), role: UserRole.VIEWER },
+      { name: 'Admin Local', username: 'admin.local@local.dev', email: 'admin.local@local.dev', password: requireSeedPassword('SEED_ADMIN_PASSWORD'), role: UserRole.ADMIN },
+      { name: 'Operador Local', username: 'operador.local@local.dev', email: 'operador.local@local.dev', password: requireSeedPassword('SEED_OPERATOR_PASSWORD'), role: UserRole.OPERATOR },
+      { name: 'Viewer Local', username: 'viewer.local@local.dev', email: 'viewer.local@local.dev', password: requireSeedPassword('SEED_VIEWER_PASSWORD'), role: UserRole.VIEWER },
     ];
 
     for (const item of users) {
@@ -68,6 +70,7 @@ async function main() {
         await prisma.user.create({
           data: {
             name: item.name,
+            username: item.username,
             email: item.email,
             passwordHash: await bcrypt.hash(item.password, 10),
             role: item.role,

@@ -184,6 +184,7 @@ DRAC_CAMERA_ALLOWED_CIDRS=192.168.99.0/24
 DRAC_SERVER_IP=127.0.0.1
 DRAC_OPERATING_USER=operador
 DRAC_ADMIN_EMAIL=admin@teste.local
+DRAC_ADMIN_USERNAME=admin_teste
 DRAC_ADMIN_PASSWORD=$SENHA_ADMIN
 DRAC_BUILD_AGENT_EXPECTED=false
 EOF
@@ -208,7 +209,7 @@ fi
 # ── A bateria ───────────────────────────────────────────────────────────────
 titulo "Verificando a instalacao"
 docker cp "$RAIZ/scripts/verificar-instalacao.sh" "$MAQUINA:/root/verificar.sh" >/dev/null
-if docker exec "$MAQUINA" bash -c "DRAC_ADMIN_EMAIL=admin@teste.local DRAC_ADMIN_PASSWORD='$SENHA_ADMIN' bash /root/verificar.sh --dir /opt/drac"; then
+if docker exec "$MAQUINA" bash -c "DRAC_ADMIN_USERNAME=admin_teste DRAC_ADMIN_PASSWORD='$SENHA_ADMIN' bash /root/verificar.sh --dir /opt/drac"; then
   titulo "RESULTADO"
   printf '\033[1;32mInstalacao limpa PASSOU: o instalador entrega um sistema utilizavel sozinho.\033[0m\n\n'
   exit 0

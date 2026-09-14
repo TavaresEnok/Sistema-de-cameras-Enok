@@ -171,29 +171,29 @@ fi
 secao '4. Login funciona'
 
 CRED_FILE="$DIR/infra/.credenciais-iniciais"
-LOGIN_EMAIL="${DRAC_ADMIN_EMAIL:-}"
+LOGIN_USUARIO="${DRAC_ADMIN_USERNAME:-${DRAC_ADMIN_EMAIL:-}}"
 LOGIN_SENHA="${DRAC_ADMIN_PASSWORD:-}"
 LOGIN_EXPLICITO=false
-if [ -n "$LOGIN_EMAIL" ] || [ -n "$LOGIN_SENHA" ]; then
+if [ -n "$LOGIN_USUARIO" ] || [ -n "$LOGIN_SENHA" ]; then
   LOGIN_EXPLICITO=true
 fi
-if [ -z "$LOGIN_EMAIL" ] && [ -r "$CRED_FILE" ]; then
-  LOGIN_EMAIL="$(env_get "$CRED_FILE" usuario)"
+if [ -z "$LOGIN_USUARIO" ] && [ -r "$CRED_FILE" ]; then
+  LOGIN_USUARIO="$(env_get "$CRED_FILE" usuario)"
   LOGIN_SENHA="$(env_get "$CRED_FILE" senha)"
 fi
 
 TOKEN=""
-if [ -z "$LOGIN_EMAIL" ] || [ -z "$LOGIN_SENHA" ]; then
-  aviso "sem credenciais para testar o login" "defina DRAC_ADMIN_EMAIL/DRAC_ADMIN_PASSWORD ou mantenha $CRED_FILE"
+if [ -z "$LOGIN_USUARIO" ] || [ -z "$LOGIN_SENHA" ]; then
+  aviso "sem credenciais para testar o login" "defina DRAC_ADMIN_USERNAME/DRAC_ADMIN_PASSWORD ou mantenha $CRED_FILE"
 else
   resposta="$(curl -fsS --max-time 10 -X POST "$API/auth/login" \
     -H 'Content-Type: application/json' \
-    -d "{\"email\":\"$LOGIN_EMAIL\",\"password\":\"$LOGIN_SENHA\"}" 2>/dev/null || true)"
+    -d "{\"username\":\"$LOGIN_USUARIO\",\"password\":\"$LOGIN_SENHA\"}" 2>/dev/null || true)"
   TOKEN="$(printf '%s' "$resposta" | sed -nE 's/.*"access_?[Tt]oken"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
   if [ -n "$TOKEN" ]; then
-    ok "login do administrador ($LOGIN_EMAIL) devolveu token"
+    ok "login do administrador ($LOGIN_USUARIO) devolveu token"
   elif [ "$LOGIN_EXPLICITO" = true ]; then
-    falha "login do administrador falhou" "usuario=$LOGIN_EMAIL — as credenciais fornecidas explicitamente não foram aceitas; resposta: ${resposta:0:120}"
+    falha "login do administrador falhou" "usuario=$LOGIN_USUARIO — as credenciais fornecidas explicitamente não foram aceitas; resposta: ${resposta:0:120}"
   else
     # O arquivo é entregue somente para o primeiro acesso. Depois da troca
     # obrigatória de senha ele fica, corretamente, desatualizado. Isso não pode
@@ -204,7 +204,7 @@ else
       'SELECT count(*) FROM "User" WHERE "isActive" = true AND role IN ('"'"'ADMIN'"'"', '"'"'SUPER_ADMIN'"'"');' \
       2>/dev/null | tr -d '[:space:]')"
     if [[ "$admins_ativos" =~ ^[1-9][0-9]*$ ]]; then
-      aviso "credencial inicial não é mais válida" "há $admins_ativos administrador(es) ativo(s); a senha inicial provavelmente já foi trocada. Use DRAC_ADMIN_EMAIL/DRAC_ADMIN_PASSWORD para testar o login atual"
+      aviso "credencial inicial não é mais válida" "há $admins_ativos administrador(es) ativo(s); a senha inicial provavelmente já foi trocada. Use DRAC_ADMIN_USERNAME/DRAC_ADMIN_PASSWORD para testar o login atual"
     else
       falha "login do administrador falhou" "a credencial inicial não funciona e nenhum administrador ativo foi confirmado no banco"
     fi

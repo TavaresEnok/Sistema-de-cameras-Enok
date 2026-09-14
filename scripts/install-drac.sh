@@ -14,7 +14,7 @@ for drac_key in \
   DRAC_CAMERA_ALLOWED_CIDRS DRAC_CUSTOMER_NAME DRAC_INSTALLATION_ID \
   DRAC_LICENSE_KEY DRAC_SERVER_IP DRAC_RTMP_SHORT_HOST \
   DRAC_GATEWAY_MODE DRAC_PUBLIC_ORIGIN DRAC_PRIVATE_BIND_IP DRAC_TURN_URL DRAC_TURN_SECRET \
-  DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME; do
+  DRAC_ADMIN_USERNAME DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME; do
   if [[ -v $drac_key ]] && [ -n "${!drac_key}" ]; then
     DRAC_EXPLICIT_ENV_KEYS+="$drac_key "
   fi
@@ -62,6 +62,7 @@ DRAC_CONFIG_FILE="${DRAC_CONFIG_FILE:-}"
 # Primeiro administrador. Sem isto a instalação terminava sem NENHUM usuário e
 # ninguém conseguia entrar — o `docs/clean-install.md` mandava criar à mão.
 DRAC_ADMIN_EMAIL="${DRAC_ADMIN_EMAIL:-}"
+DRAC_ADMIN_USERNAME="${DRAC_ADMIN_USERNAME:-}"
 DRAC_ADMIN_PASSWORD="${DRAC_ADMIN_PASSWORD:-}"
 DRAC_ADMIN_NAME="${DRAC_ADMIN_NAME:-Administrador}"
 # Preenchido em tempo de execução quando a senha é gerada por nós (só então o
@@ -188,7 +189,7 @@ DRAC_WATCHDOG_ENABLED DRAC_WATCHDOG_INTERVAL_MINUTES DRAC_BUILD_AGENT_EXPECTED D
 DRAC_CAMERA_ALLOWED_CIDRS DRAC_CUSTOMER_NAME DRAC_INSTALLATION_ID
 DRAC_LICENSE_KEY DRAC_SERVER_IP DRAC_RTMP_SHORT_HOST
 DRAC_GATEWAY_MODE DRAC_PUBLIC_ORIGIN DRAC_PRIVATE_BIND_IP DRAC_TURN_URL DRAC_TURN_SECRET
-DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME
+DRAC_ADMIN_USERNAME DRAC_ADMIN_EMAIL DRAC_ADMIN_PASSWORD DRAC_ADMIN_NAME
 "
 
 usage() {
@@ -778,7 +779,7 @@ run_migrations() {
 # Idempotente pelo lado seguro: se JÁ existe qualquer usuário, não toca em
 # nada. Reinstalar/atualizar não pode resetar a senha de quem está usando.
 seed_admin() {
-  local files env_file pg_user pg_db total e_q p_q n_q
+  local files env_file pg_user pg_db total u_q e_q p_q n_q
   files="$(compose_files)"
   env_file="$DRAC_INSTALL_DIR/infra/.env"
   pg_user="$(env_get "$env_file" POSTGRES_USER)"
@@ -796,7 +797,12 @@ seed_admin() {
     return 0
   fi
 
-  prompt DRAC_ADMIN_EMAIL "E-mail do administrador" "admin@${DRAC_INSTALLATION_ID}.local"
+  # Usuário é a identidade. E-mail continua opcional, exclusivamente para
+  # recuperação de senha. Arquivos antigos que trazem só e-mail preservam
+  # exatamente o comportamento anterior ao usá-lo como usuário.
+  if [ -z "$DRAC_ADMIN_USERNAME" ]; then
+    DRAC_ADMIN_USERNAME="${DRAC_ADMIN_EMAIL:-admin}"
+  fi
   if [ -z "$DRAC_ADMIN_PASSWORD" ]; then
     # 17 caracteres, com maiúscula, minúscula, dígito e separador — passa
     # folgado no mínimo de 10 exigido pelo seed e é digitável.
@@ -804,12 +810,13 @@ seed_admin() {
     DRAC_ADMIN_PASSWORD_GERADA="$DRAC_ADMIN_PASSWORD"
   fi
 
-  log "Criando o primeiro administrador ($DRAC_ADMIN_EMAIL)"
+  log "Criando o primeiro administrador ($DRAC_ADMIN_USERNAME)"
+  printf -v u_q '%q' "$DRAC_ADMIN_USERNAME"
   printf -v e_q '%q' "$DRAC_ADMIN_EMAIL"
   printf -v p_q '%q' "$DRAC_ADMIN_PASSWORD"
   printf -v n_q '%q' "$DRAC_ADMIN_NAME"
   # shellcheck disable=SC2086
-  if ! run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files exec -T -e ADMIN_EMAIL=$e_q -e ADMIN_PASSWORD=$p_q -e ADMIN_NAME=$n_q -w /app/apps/api api npx tsx prisma/seed.ts"; then
+  if ! run_as_user "$DRAC_OPERATING_USER" bash -lc "cd '$DRAC_INSTALL_DIR' && docker compose --env-file infra/.env $files exec -T -e ADMIN_USERNAME=$u_q -e ADMIN_EMAIL=$e_q -e ADMIN_PASSWORD=$p_q -e ADMIN_NAME=$n_q -w /app/apps/api api npx tsx prisma/seed.ts"; then
     fail "O seed do administrador falhou. A instalacao NAO esta utilizavel: ninguem consegue entrar. Veja 'docker logs vms-api'."
   fi
 
@@ -818,7 +825,7 @@ seed_admin() {
   local cred_file="$DRAC_INSTALL_DIR/infra/.credenciais-iniciais"
   {
     printf 'painel=%s\n' "${DRAC_PUBLIC_ORIGIN:-http://${DRAC_SERVER_IP}:5173}"
-    printf 'usuario=%s\n' "$DRAC_ADMIN_EMAIL"
+    printf 'usuario=%s\n' "$DRAC_ADMIN_USERNAME"
     printf 'senha=%s\n' "$DRAC_ADMIN_PASSWORD"
     printf '# Troque esta senha no primeiro acesso e apague este arquivo.\n'
   } | run_sudo tee "$cred_file" >/dev/null
@@ -1166,9 +1173,9 @@ print_summary() {
   local bloco_acesso
   if [ -n "$DRAC_ADMIN_PASSWORD_GERADA" ]; then
     bloco_acesso="$(printf 'Acesso (TROQUE a senha no primeiro login):\n  usuario: %s\n  senha:   %s\n  copia em: %s/infra/.credenciais-iniciais\n' \
-      "$DRAC_ADMIN_EMAIL" "$DRAC_ADMIN_PASSWORD_GERADA" "$DRAC_INSTALL_DIR")"
-  elif [ -n "$DRAC_ADMIN_EMAIL" ]; then
-    bloco_acesso="$(printf 'Acesso:\n  usuario: %s (senha definida por voce)\n' "$DRAC_ADMIN_EMAIL")"
+      "$DRAC_ADMIN_USERNAME" "$DRAC_ADMIN_PASSWORD_GERADA" "$DRAC_INSTALL_DIR")"
+  elif [ -n "$DRAC_ADMIN_USERNAME" ]; then
+    bloco_acesso="$(printf 'Acesso:\n  usuario: %s (senha definida por voce)\n' "$DRAC_ADMIN_USERNAME")"
   else
     bloco_acesso='Acesso: administrador ja existia; credenciais preservadas.'
   fi
