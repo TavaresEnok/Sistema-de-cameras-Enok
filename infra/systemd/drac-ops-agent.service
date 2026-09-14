@@ -13,5 +13,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/var/log/drac /opt/drac /etc/drac
-
+# Não declarar /var/log/drac em ReadWritePaths: systemd prepara esses mounts
+# antes de o script criar o diretório, e uma instalação limpa falharia com
+# status=226/NAMESPACE. ProtectSystem=full já preserva /var gravável; o agente
+# cria /var/log/drac com modo 700 ao iniciar.
