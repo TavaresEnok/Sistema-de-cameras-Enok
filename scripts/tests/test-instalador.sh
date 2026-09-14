@@ -349,6 +349,13 @@ else
   falha "verificador não distingue credencial explícita de senha inicial já trocada"
 fi
 
+if grep -qF 'git config --global --add safe.directory "$DRAC_OPS_ROOT_DIR"' "$RAIZ/scripts/drac-ops-agent.sh" \
+  && grep -qF 'DRAC_UPDATE_ALLOW_DIRTY=false' "$RAIZ/scripts/drac-ops-agent.sh"; then
+  ok 'agente remoto confia somente no repositório exato da instalação antes de atualizar'
+else
+  falha 'agente remoto não prepara Git para o usuário root' 'a atualização remota volta a falhar por dubious ownership'
+fi
+
 printf '\n'
 if [ "$falhas" -eq 0 ]; then
   printf '\033[1;32mTodos os testes do instalador passaram.\033[0m\n\n'
