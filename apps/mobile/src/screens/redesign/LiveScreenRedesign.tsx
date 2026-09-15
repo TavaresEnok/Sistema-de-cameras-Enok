@@ -7,7 +7,7 @@
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useRef, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DetectionOverlay } from '../../components/DetectionOverlay';
 import { LiveVideo, PlaybackVideo, type LiveStatus } from '../../components/VideoPlayers';
@@ -121,6 +121,7 @@ export function LiveScreenRedesign(props: Props) {
   requestHdRef.current = onRequestHd;
   useEffect(() => {
     setHdMode(true);
+    setStatus('connecting');
     void requestHdRef.current().then((opened) => {
       if (!opened) setHdMode(false);
     });
@@ -153,6 +154,11 @@ export function LiveScreenRedesign(props: Props) {
   // mesmo custo de trocar de câmera — aceitável e simples.
   const video = isPlaying ? (
     <PlaybackVideo uri={activePlayback!.url} posterUri={activePlayback!.recording.thumbnailUrl} onRetry={props.onRetryPlayback} onNaoDecodificou={props.onNaoDecodificou} onProgresso={props.onProgressoPlayback} initialPositionSeconds={activePlayback!.retomarEm ?? null} style={s.videoFill} />
+  ) : hdMode && !hdUrl ? (
+    <View style={s.qualityLoading}>
+      <ActivityIndicator color="#ffffff" />
+      <Text style={s.qualityLoadingText}>Abrindo em máxima resolução…</Text>
+    </View>
   ) : (
     <LiveVideo
       uri={hdActive ? hdUrl : streamUrl}
@@ -294,7 +300,7 @@ export function LiveScreenRedesign(props: Props) {
             <ActionBtn s={s} theme={theme} icon="mic" label={audioAvailable === false ? 'Sem áudio' : 'Áudio'} active={!muted && audioAvailable !== false} disabled={audioAvailable === false} onPress={() => setMuted((m) => !m)} />
             <ActionBtn s={s} theme={theme} icon="camera" label="Capturar" onPress={() => onSnapshot(camera)} />
             <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label="Gravar" active={recordingActive} danger={recordingActive} onPress={() => onToggleRecording(camera)} />
-            <ActionBtn s={s} theme={theme} icon="maximize" label="HD" active={hdActive} onPress={toggleHd} />
+            <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'HD' : 'Economia'} active={hdMode} onPress={toggleHd} />
             <ActionBtn s={s} theme={theme} icon="crosshair" label="PTZ" active={ptzOpen} disabled={!canPtz} onPress={() => setPtzOpen((p) => !p)} />
             <ActionBtn s={s} theme={theme} icon="bell" label={notificationsMuted ? 'Silenciada' : 'Notificar'} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
             <ActionBtn s={s} theme={theme} icon="expand" label="Tela" onPress={() => setFullscreen(true)} />
@@ -640,6 +646,8 @@ function makeStyles(t: any) {
     playerRec: { width: '100%', backgroundColor: '#05080e' },
     videoFill: { flex: 1, backgroundColor: '#000' },
     videoEmpty: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b0f16' },
+    qualityLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#0b0f16' },
+    qualityLoadingText: { color: 'rgba(255,255,255,0.82)', fontFamily: UI, fontSize: 13, fontWeight: '600' },
     videoEmptyTitle: { fontFamily: TITLE, fontSize: 15, fontWeight: '700', color: '#e8ecf3', marginTop: 8 },
     videoEmptyText: { fontFamily: UI, fontSize: 12.5, color: '#8b95a6', marginTop: 4, textAlign: 'center', paddingHorizontal: 20 },
     clockBadge: { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(5,8,14,0.55)', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8 },

@@ -26,14 +26,14 @@ export async function requestCachedStreamUrls<T>(
   cameraId: string,
   token?: string,
   init?: RequestInit,
-  viewMode?: 'selected' | 'grid' | 'original',
+  viewMode?: 'grid' | 'original',
 ): Promise<T> {
   // A chave inclui o modo — 'original' (máxima qualidade/H.265) usa outro caminho
-  // no MediaMTX e não pode compartilhar cache com o modo normal (WebRTC/H.264).
+  // no MediaMTX e não pode compartilhar cache com Economia (grid/H.264).
   // Servidor e credencial fazem parte da chave para que uma troca de conta ou
   // instalação nunca reutilize URLs/tokens emitidos para outra sessão.
   const normalizedApiUrl = apiUrl.replace(/\/+$/, '');
-  const mode = viewMode ?? 'selected';
+  const mode = viewMode ?? 'original';
   const cacheKey = `${normalizedApiUrl}::${token ?? 'anonymous'}::${cameraId}::${mode}`;
   const cached = streamUrlsCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {

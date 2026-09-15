@@ -39,6 +39,8 @@ const DEFAULTS: Record<string, unknown> = {
   apiPublicUrl: '',
   cameraAllowedCidrs: '',
   cameraDeniedCidrs: '',
+  cameraTrustedCgnatCidrs: '',
+  cameraTrustedCgnatIps: '',
   cameraSecretKey: '',
   cameraTestAllowPublicIp: false,
   cookieSecure: undefined,

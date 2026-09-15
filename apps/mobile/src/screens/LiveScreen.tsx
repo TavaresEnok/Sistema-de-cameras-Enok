@@ -135,6 +135,7 @@ export function LiveScreen({
   requestHdRef.current = onRequestHd;
   useEffect(() => {
     setHdMode(true);
+    setLiveStatus('connecting');
     void requestHdRef.current().then((opened) => {
       if (!opened) setHdMode(false);
     });
@@ -205,6 +206,11 @@ export function LiveScreen({
     <>
       {playing ? (
         <PlaybackVideo uri={activePlayback!.url} posterUri={activePlayback!.recording.thumbnailUrl} onRetry={onRetryPlayback} onNaoDecodificou={onNaoDecodificou} onProgresso={onProgressoPlayback} initialPositionSeconds={activePlayback!.retomarEm ?? null} style={StyleSheet.absoluteFill} />
+      ) : hdMode && !hdUrl ? (
+        <View style={[StyleSheet.absoluteFill, styles.qualityLoading]}>
+          <ActivityIndicator color="#ffffff" />
+          <Text style={styles.qualityLoadingText}>Abrindo em máxima resolução…</Text>
+        </View>
       ) : hdActive ? (
         // Máxima qualidade: HLS H.265 puro (whepUri=null força o caminho HLS).
         <LiveVideo
@@ -262,19 +268,19 @@ export function LiveScreen({
     </View>
   );
 
-  // Marca d'água CLICÁVEL de máxima qualidade no canto superior direito do vídeo
-  // (fora da fileira de botões, pra não confundir com "Foto"). Toca = liga/desliga.
+  // Indicador e seletor da fonte atual: HD é o original; Economia usa a fonte
+  // leve da grade. Não exibe codec porque isso é detalhe técnico, não qualidade.
   const hdPill = !playing ? (
     <Pressable
       onPress={toggleHd}
       hitSlop={8}
       accessibilityRole="button"
-      accessibilityLabel={hdMode ? 'Desativar máxima qualidade' : 'Ativar máxima qualidade'}
+      accessibilityLabel={hdMode ? 'Usar economia de dados' : 'Usar máxima resolução'}
       accessibilityState={{ selected: hdMode }}
       style={[styles.hdPill, hdMode ? { backgroundColor: theme.accent, borderColor: theme.accent } : null]}
     >
       <Icon name="aperture" size={11} color="#fff" strokeWidth={2.4} />
-      <Text style={styles.hdPillText}>{hdActive ? 'HD · H.265' : hdMode ? 'HD…' : 'Máx HD'}</Text>
+      <Text style={styles.hdPillText}>{hdMode ? 'HD' : 'Economia'}</Text>
     </Pressable>
   ) : null;
 
@@ -675,6 +681,8 @@ function ControlButton({ label, icon, danger, active, disabled, onPress, c }: {
 const styles = StyleSheet.create({
   videoFill: { flex: 1, backgroundColor: '#000' },
   videoEmpty: { backgroundColor: '#070809' },
+  qualityLoading: { alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#070809' },
+  qualityLoadingText: { color: 'rgba(255,255,255,0.82)', fontSize: 13, fontWeight: '600' },
   videoEmptyTitle: { color: '#fff', fontSize: 14, fontWeight: '800' },
   videoEmptyText: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600', textAlign: 'center', paddingHorizontal: 24 },
 

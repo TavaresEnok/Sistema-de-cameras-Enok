@@ -77,7 +77,9 @@ test('mapa usa pin de câmera com estado e contador em vez de círculo genérico
   assert.match(map, /<Marker/);
   assert.match(map, /camera-map-pin__count/);
   assert.match(map, /posição estimada/);
-  assert.doesNotMatch(map, /CircleMarker/);
+  // A posição do usuário pode usar o tipo Leaflet L.CircleMarker; o que não
+  // pode voltar é o marcador genérico de câmera renderizado pelo React.
+  assert.doesNotMatch(map, /<CircleMarker/);
   assert.match(css, /\.camera-map-pin--online/);
   assert.match(css, /\.camera-map-pin--offline/);
   assert.match(css, /\.camera-map-pin--estimated/);

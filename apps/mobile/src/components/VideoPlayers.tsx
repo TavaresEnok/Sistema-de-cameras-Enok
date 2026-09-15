@@ -28,7 +28,10 @@ export type LiveStatus = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'offl
 // sem deixar uma câmera realmente offline "pendurada" para sempre.
 const FIRST_FRAME_GRACE_MS = 20_000;
 // Tempo SEM o relógio de live avançar (congelamento real) antes de reconectar.
-const STALL_RECONNECT_MS = 9_000;
+// HLS de câmera pode avançar em blocos, especialmente em H.265/GOP longo. Nove
+// segundos gerava falso congelamento em vídeo saudável. Vinte segundos ainda
+// recupera uma interrupção real rapidamente sem reiniciar uma sessão estável.
+const STALL_RECONNECT_MS = 20_000;
 const WATCHDOG_INTERVAL_MS = 3_000;
 const RECONNECT_BASE_MS = 1_500;
 const RECONNECT_MAX_MS = 8_000;
@@ -169,6 +172,7 @@ function HlsLiveVideo({
     let cancelled = false;
     let attempt = 0;
     let startedAt = Date.now();
+    const sourceStartedAt = Date.now();
     let lastProgressAt = Date.now();
     let lastTime = 0;
     let lastLive = 0;
@@ -199,7 +203,12 @@ function HlsLiveVideo({
     const reconnect = () => {
       if (cancelled || !appActive || reconnectTimer) return;
       applyStatus('reconnecting');
-      onNeedRefreshRef.current?.();
+      // Primeiro tenta reabrir a mesma fonte. Renovar URL e token em toda pequena
+      // oscilação substituía o player enquanto ele ainda se recuperava. Token
+      // novo só é necessário perto da validade de 5 min ou após duas falhas.
+      if (Date.now() - sourceStartedAt >= 4 * 60 * 1000 || attempt >= 1) {
+        onNeedRefreshRef.current?.();
+      }
       const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.max(1, 2 ** attempt));
       attempt += 1;
       reconnectTimer = setTimeout(() => {

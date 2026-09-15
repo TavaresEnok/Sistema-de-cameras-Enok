@@ -938,6 +938,60 @@ test('camera-stream: URLs de FLV e poster preservam o prefixo público /api', as
   assert.equal(posterTokens.items[0].posterUrl, 'https://drac.example.com/api/camera-stream/cam-1/poster');
 });
 
+test('camera-stream: H.265 original usa HLS sem anunciar WebRTC incompatível', async () => {
+  const user: AuthUser = { id: 'viewer', email: 'viewer@test.local', name: 'Viewer', role: UserRole.VIEWER };
+  const mediamtx = {
+    isEnabled: () => true,
+    markGridViewed: () => undefined,
+    ensurePathForCamera: async () => ({
+      pathName: 'cam_11111111111111111111111111111111_orig',
+      sourceUrl: 'rtsp://camera.local/main',
+      sourceVideoCodec: 'h265',
+      transcodedForLive: false,
+      liveProfile: { channel: 1, subtype: 0 },
+    }),
+    buildPublicUrls: (_req: unknown, pathName: string | null) => ({
+      enabled: Boolean(pathName),
+      pathName,
+      sourceUrl: pathName ? 'rtsp://camera.local/main' : null,
+      whepUrl: pathName ? `https://media.test/${pathName}/whep` : null,
+      webrtcUrl: pathName ? `https://media.test/${pathName}` : null,
+      hlsUrl: pathName ? `https://media.test/${pathName}/index.m3u8` : null,
+      rtspUrl: pathName ? `rtsp://media.test/${pathName}` : null,
+    }),
+  };
+  const camera = {
+    id: 'cam-1', enabled: true, channel: 1, subtype: 0,
+    liveChannel: 1, liveSubtype: 0, recordingChannel: 1, recordingSubtype: 0,
+    preferredLiveProtocol: 'webrtc', preferredRtspTransport: 'tcp',
+    streamVideoCodec: 'h264', detectedVideoCodec: 'h265', recordingVideoCodec: 'h265',
+    detectedWidth: 1920, detectedHeight: 1080,
+  };
+  const controller = new CameraStreamController(
+    {} as any, {} as any, mediamtx as any,
+    { getCameraOrThrow: async () => camera } as any,
+    { createStreamToken: async () => ({ streamToken: 'token', expiresAt: null }) } as any,
+    { assertCanViewCamera: async () => undefined } as any,
+    {} as any,
+    { assertFeature: async () => undefined } as any,
+    {} as any,
+    config({ apiPublicUrl: 'https://tenant.test/api' }) as any,
+    {} as any,
+  );
+
+  const delivery = await controller.getDeliveryUrls(user, 'cam-1', 'original', {
+    headers: { host: 'tenant.test', 'user-agent': 'S2Cam Android' }, protocol: 'https',
+  } as any);
+
+  assert.equal(delivery.preferredLiveProtocol, 'hls');
+  assert.equal(delivery.protocols.whepUrl, null);
+  assert.equal(delivery.protocols.webrtcUrl, null);
+  assert.match(String(delivery.protocols.hlsUrl), /index\.m3u8$/);
+  assert.deepEqual(delivery.smartLive.protocolOrder, ['llhls', 'hls']);
+  assert.equal(delivery.deliveryTarget.browserCodec, 'h265');
+  assert.match(delivery.smartLive.reason, /sem conversão/i);
+});
+
 test('recordings controller: listagem de operador usa cameras acessiveis', async () => {
   const user: AuthUser = { id: 'operator', email: 'op@test.local', name: 'Operador', role: UserRole.OPERATOR };
   const calls: any[] = [];

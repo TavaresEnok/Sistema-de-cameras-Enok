@@ -537,14 +537,26 @@ export class CameraStreamController {
     const supportsOriginalOnClient = this.supportsHevcWebPlayback(req);
 
     const { sourceUrl: _sourceUrl, ...safeMediaBridge } = mediaBridge;
+    // O WHEP usado pelos aplicativos atuais negocia H.264, não H.265. Quando a
+    // fonte original é HEVC, oferecê-la por WebRTC faz o cliente tentar, falhar,
+    // cair para HLS e tentar WebRTC novamente mais tarde. A câmera permanece
+    // saudável, mas o operador vê "Conectando" periodicamente. Máxima resolução
+    // continua em passthrough: apenas escolhemos HLS, que o player nativo Android
+    // decodifica sem converter o vídeo no servidor.
+    const originalHlsOnly = (viewMode === 'original' || viewMode === 'original-audio')
+      && isHevcCodec(sourceCodec ?? originalCodec);
+    const clientMediaBridge = originalHlsOnly
+      ? { ...safeMediaBridge, whepUrl: null, webrtcUrl: null }
+      : safeMediaBridge;
+    const effectivePreferred = originalHlsOnly ? 'hls' : configuredPreferred;
     const requestOrigin = `${reqProto}://${apiHost}`;
     const liveReadiness = assessLiveReadiness({
       requestOrigin,
       publicAppUrl: process.env.PUBLIC_APP_URL || null,
       mediamtxEnabled: this.mediamtxProxyService.isEnabled(),
-      pathReady: Boolean(safeMediaBridge.enabled && safeMediaBridge.pathName),
-      whepUrl: safeMediaBridge.whepUrl,
-      hlsUrl: safeMediaBridge.hlsUrl,
+      pathReady: Boolean(clientMediaBridge.enabled && clientMediaBridge.pathName),
+      whepUrl: clientMediaBridge.whepUrl,
+      hlsUrl: clientMediaBridge.hlsUrl,
       webrtcAllowOrigin: process.env.MEDIAMTX_WEBRTC_ALLOW_ORIGIN || null,
     });
     const fallbackManualOrder: LiveProtocol[] = (() => {
@@ -565,7 +577,9 @@ export class CameraStreamController {
       }
     })();
 
-    const protocolOrder: LiveProtocol[] = smartOriginalEnabled
+    const protocolOrder: LiveProtocol[] = originalHlsOnly
+      ? ['llhls', 'hls']
+      : smartOriginalEnabled
       ? ['webrtc', 'llhls', 'hls']
       : fallbackManualOrder;
 
@@ -573,7 +587,7 @@ export class CameraStreamController {
       cameraId,
       streamToken: token.streamToken,
       streamTokenExpiresAt: token.expiresAt,
-      preferredLiveProtocol: configuredPreferred,
+      preferredLiveProtocol: effectivePreferred,
       preferredRtspTransport: camera.preferredRtspTransport ?? 'tcp',
       configuredVideoCodec: configuredCodec,
       sourceVideoCodec: sourceCodec,
@@ -593,14 +607,16 @@ export class CameraStreamController {
         : {
             originalResolution: true,
             originalFps: true,
-            browserCodec: 'h264',
+            browserCodec: sourceCodec ?? originalCodec ?? configuredCodec,
           },
       smartLive: {
         enabled: smartOriginalEnabled,
         supportsOriginalOnClient,
         recommendedProtocol: protocolOrder[0],
         protocolOrder,
-        reason: viewMode === 'grid-hevc'
+        reason: originalHlsOnly
+          ? 'Máxima resolução preserva o H.265 original e usa HLS diretamente, sem conversão nem tentativa WebRTC incompatível.'
+          : viewMode === 'grid-hevc'
           ? 'A grade recebe o substream no codec original e prioriza WebRTC; H.264 é apenas contingência do cliente.'
           : viewMode === 'grid-audio'
           ? 'Áudio foi solicitado para este tile; somente esta câmera normaliza AAC em Opus.'
@@ -621,8 +637,8 @@ export class CameraStreamController {
         mediaMtxWebrtcAllowOrigin: process.env.MEDIAMTX_WEBRTC_ALLOW_ORIGIN || null,
         mediaMtxHlsAllowOrigin: process.env.MEDIAMTX_HLS_ALLOW_ORIGIN || null,
         mediamtxEnabled: this.mediamtxProxyService.isEnabled(),
-        pathReady: Boolean(safeMediaBridge.enabled && safeMediaBridge.pathName),
-        pathName: safeMediaBridge.pathName ?? null,
+        pathReady: Boolean(clientMediaBridge.enabled && clientMediaBridge.pathName),
+        pathName: clientMediaBridge.pathName ?? null,
         sourceVideoCodec: sourceCodec,
         originalVideoCodec: originalCodec,
         liveTranscodedForBrowser,
@@ -650,14 +666,14 @@ export class CameraStreamController {
         liveProfile,
         deliveryProfile,
         deliveryMode: viewMode,
-        preferredProtocol: configuredPreferred,
+        preferredProtocol: effectivePreferred,
         protocolOrder,
         readiness: liveReadiness,
       },
       protocols: {
         flvUrl,
         posterUrl,
-        ...safeMediaBridge,
+        ...clientMediaBridge,
       },
     };
   }

@@ -315,6 +315,23 @@ test('cache de stream: erro não JSON continua legível', async () => {
   assert(message === 'gateway indisponível', 'erro textual do servidor deve ser preservado');
 });
 
+test('cache de stream: Economia solicita explicitamente a fonte leve da grade', async () => {
+  const originalFetch = globalThis.fetch;
+  let requested = '';
+  clearStreamUrlsCache();
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    requested = String(url);
+    return new Response(JSON.stringify({ protocols: {} }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    await requestCachedStreamUrls('https://api.local', 'cam-eco', 'token-a', undefined, 'grid');
+    assert(/viewMode=grid/.test(requested), `Economia deve solicitar viewMode=grid (got ${requested})`);
+  } finally {
+    clearStreamUrlsCache();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('computeDetectionRect: mapeia bbox respeitando o letterbox do contain', () => {
   // Frame 1000x1000 num container 200x100 → vídeo renderizado fica 100x100,
   // centralizado, com 50px de letterbox em cada lado horizontal.

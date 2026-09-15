@@ -1,8 +1,9 @@
 import { envNumber } from '../../common/config/env-number.helper';
 
 // 'original' = "máxima qualidade": serve o stream PRINCIPAL da câmera em
-// PASSTHROUGH (sem transcode, inclusive H.265). O cliente prioriza WebRTC e usa
-// HLS como contingência; o dispositivo decodifica HEVC, sem encode no servidor.
+// PASSTHROUGH (sem transcode, inclusive H.265). H.264 pode usar WebRTC; H.265
+// original usa HLS porque o WHEP dos aplicativos não negocia HEVC. Em ambos os
+// casos o dispositivo decodifica o vídeo e o servidor não faz encode.
 // `grid-hevc` usa a mesma fonte leve de `grid`, mas preserva o codec recebido.
 // Ele tem path próprio para poder coexistir com o fallback H.264 sem que dois
 // navegadores reconfigurem o mesmo path um por cima do outro.

@@ -419,7 +419,6 @@ function AppInner() {
   useEffect(() => {
     if (liveCamera) {
       ScreenOrientation.unlockAsync().catch(() => undefined);
-      void loadStream(liveCamera.id, 'selected', true);
       void loadNotificationMute(liveCamera.id);
     } else {
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
@@ -459,7 +458,8 @@ function AppInner() {
     setHdUrl(null);
   }, [liveCamera?.id]);
 
-  // Máxima qualidade: busca o HLS passthrough (H.265) sob demanda.
+  // Máxima qualidade é sempre a primeira fonte da tela individual. Depois que
+  // ela abre, preparamos Economia em segundo plano para a troca ser imediata.
   const loadHdStream = async (cameraId: string): Promise<boolean> => {
     if (!session) return false;
     const token = session.token;
@@ -470,14 +470,14 @@ function AppInner() {
       const hls = authenticatedMediaUrl(data.protocols?.hlsUrl, session.apiUrl, data.streamToken);
       if (!hls) throw new Error('sem HLS');
       setHdUrl(hls);
+      void loadStream(cameraId, 'grid');
       return true;
     } catch {
       if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return false;
       setHdUrl(null);
-      // Falha temporária da fonte original não deve interromper o operador com
-      // um alerta modal. A tela mantém o perfil compatível e uma nova entrada
-      // na câmera tentará a Máxima novamente automaticamente.
-      void loadStream(cameraId, 'selected', true);
+      // Sem alerta modal: se a fonte grande estiver temporariamente indisponível,
+      // abre Economia e uma nova entrada tentará a Máxima novamente.
+      void loadStream(cameraId, 'grid', true);
       return false;
     }
   };
@@ -674,7 +674,7 @@ function AppInner() {
     }
   };
 
-  const loadStream = async (cameraId: string, viewMode: 'selected' | 'grid' = 'selected', force = false) => {
+  const loadStream = async (cameraId: string, viewMode: 'grid' | 'original' = 'original', force = false) => {
     if (!session) return;
     const token = session.token;
     const generation = (streamRequestRef.current.get(cameraId) ?? 0) + 1;
@@ -1622,7 +1622,7 @@ function AppInner() {
             posterUrl={streamPosters[live.id] ?? null}
             hdUrl={hdUrl}
             onRequestHd={() => loadHdStream(live.id)}
-            onExitHd={() => setHdUrl(null)}
+            onExitHd={() => { void loadStream(live.id, 'grid'); }}
             recordings={recordings}
             recordingsLoading={recordingsLoading}
             recordingsLoadingMore={recordingsLoadingMore}
@@ -1659,7 +1659,7 @@ function AppInner() {
             onThumbnailError={refreshExpiredThumbnails}
             onPlayLocal={playLocalClip}
             onDeleteLocal={deleteLocalClip}
-            onRefreshStream={() => { void loadStream(live.id, 'selected', true); }}
+            onRefreshStream={() => { void loadStream(live.id, 'grid', true); }}
             abrindoGravacaoId={abrindoGravacaoId}
           />
         ) : (
@@ -1671,7 +1671,7 @@ function AppInner() {
           posterUrl={streamPosters[live.id] ?? null}
           hdUrl={hdUrl}
           onRequestHd={() => loadHdStream(live.id)}
-          onExitHd={() => setHdUrl(null)}
+          onExitHd={() => { void loadStream(live.id, 'grid'); }}
           detections={liveDetections}
           ptzActive={ptzActive}
           ptzFeedback={ptzFeedback}
@@ -1702,7 +1702,7 @@ function AppInner() {
           onLoadMoreRecordings={loadMoreRecordings}
           onRetryRecordings={() => { if (selectedCamera) void loadRecordings(selectedCamera.id, recordingDateRef.current); }}
           onThumbnailError={refreshExpiredThumbnails}
-          onRefreshStream={() => { void loadStream(live.id, 'selected', true); }}
+          onRefreshStream={() => { void loadStream(live.id, 'grid', true); }}
           canPlayback={capabilities.playback}
           canDownload={capabilities.exportEvidence}
           downloadingIds={downloadingIds}
