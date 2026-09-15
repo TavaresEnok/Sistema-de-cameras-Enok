@@ -64,11 +64,15 @@ const GRID_PRESETS: { size: GridSize; icon: ReactNode }[] = [
   { size: '3x3', icon: <Grid3X3 className="w-3.5 h-3.5" /> },
   { size: '4x4', icon: <Grid3X3 className="w-3.5 h-3.5" /> },
   { size: '5x5', icon: <LayoutGrid className="w-3.5 h-3.5" /> },
+  { size: '6x6', icon: <LayoutGrid className="w-3.5 h-3.5" /> },
 ];
 
 const GRID_MIN = 1;
 const GRID_MAX = 8; // limite por dimensão
 const GRID_CELL_WARN = 16; // acima disso, avisa sobre CPU (transcode H.265)
+// Limite operacional deliberado. "Preencher" jamais abre todas as câmeras de
+// uma instalação grande: abre no máximo 36, mesmo que existam centenas.
+const FILL_GRID_MAX_CAMERAS = 36;
 const LIVE_PANEL_AUTO_COLLAPSE_WIDTH = 1100;
 const LIVE_PANEL_WIDTH_STORAGE_KEY = 'drac.live.camera-panel-width.v1';
 const LIVE_PANEL_MIN_WIDTH = 220;
@@ -179,6 +183,10 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   // A ampliação é um estado visual temporário. A grade persistida nunca é
   // substituída por 1x1, portanto voltar restaura os mesmos quadros e posições.
   const [focusedCameraId, setFocusedCameraId] = useState<string | null>(null);
+  // A ampliação não pode depender do estado que a grade venha a receber depois
+  // (sincronização, cache legado, clique acidental). Guardamos o retrato exato
+  // do operador antes do zoom para o botão Voltar sempre restaurar aquela grade.
+  const focusReturnLayoutRef = useRef<{ gridSize: GridSize; cameraIds: string[] } | null>(null);
   const gridSize = storedGridSize;
   const cameraIds = storedCameraIds;
   const setGridSize = useCallback((size: GridSize) => { setFocusedCameraId(null); storeGridSize(size); }, [storeGridSize]);
@@ -387,12 +395,18 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   );
   const availableLayouts = savedLayouts.length ? savedLayouts : generatedLayouts;
 
-  // Migra uma ampliação antiga que tenha sobrescrito a grade antes desta
-  // versão. O snapshot em sessionStorage recupera a composição original.
+  // Migra somente uma ampliação realmente antiga que tenha deixado a grade
+  // persistida em 1x1. Um snapshot de sessão antigo não pode sobrescrever uma
+  // grade manual que o operador já montou nesta versão.
   useEffect(() => {
     if (!prevLayout) return;
-    storeGridSize(prevLayout.gridSize);
-    storeCameraIds(prevLayout.cameraIds);
+    const current = useGridStore.getState();
+    const dims = gridDims(current.gridSize);
+    const currentIds = current.cameraIds.slice(0, dims.cols * dims.rows).filter(Boolean);
+    if (current.gridSize === '1x1' && currentIds.length <= 1) {
+      storeGridSize(prevLayout.gridSize);
+      storeCameraIds(prevLayout.cameraIds);
+    }
     clearPrevLayout();
   }, [prevLayout, storeGridSize, storeCameraIds, clearPrevLayout]);
 
@@ -457,19 +471,20 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     return slots;
   }, [cameraIds, count, cameraById]);
 
-  // "Preencher": escolhe a MENOR grade que cabe todas as câmeras (até 5x5) e
-  // preenche os quadros — online primeiro. Otimiza o espaço automaticamente.
+  // "Preencher": escolhe a menor grade que cabe as câmeras disponíveis, mas
+  // nunca passa de 6×6. Uma instalação pode ter 1.000 ativos sem abrir 1.000
+  // players, saturar o navegador e derrubar a experiência do operador.
   const fillGrid = useCallback(() => {
     const usedOnOtherDisplays = new Set(Object.values(displayCoordination.displays)
       .filter(item => item.displayId !== displayId && Date.now() - item.updatedAt <= 8_000)
       .flatMap(item => item.cameraIds));
     const available = cameras.filter(camera => !usedOnOtherDisplays.has(camera.id));
     const ordered = [...available].sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
-    const n = ordered.length;
+    const n = Math.min(ordered.length, FILL_GRID_MAX_CAMERAS);
     const size: GridSize = n <= 1 ? '1x1' : n <= 4 ? '2x2' : n <= 9 ? '3x3' : n <= 16 ? '4x4' : n <= 25 ? '5x5' : '6x6';
     const { cols, rows } = gridDims(size);
     setGridSize(size);
-    setCameraIds(ordered.slice(0, cols * rows).map((c) => c.id));
+    setCameraIds(ordered.slice(0, Math.min(cols * rows, FILL_GRID_MAX_CAMERAS)).map((c) => c.id));
   }, [cameras, displayCoordination.displays, displayId, setGridSize, setCameraIds]);
 
   const onlineCount = useMemo(() => cameras.filter((c) => c.isOnline).length, [cameras]);
@@ -487,12 +502,26 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   }, [cameras, search, groupFilter, zoneFilter, statusFilter]);
 
   const zoomToCamera = useCallback((cameraId: string) => {
+    if (!focusedCameraId) {
+      const current = useGridStore.getState();
+      const dims = gridDims(current.gridSize);
+      focusReturnLayoutRef.current = {
+        gridSize: current.gridSize,
+        cameraIds: current.cameraIds.slice(0, dims.cols * dims.rows),
+      };
+    }
     setFocusedCameraId(cameraId);
-  }, []);
+  }, [focusedCameraId]);
 
   const restoreLayout = useCallback(() => {
+    const previous = focusReturnLayoutRef.current;
+    focusReturnLayoutRef.current = null;
     setFocusedCameraId(null);
-  }, []);
+    if (previous) {
+      storeGridSize(previous.gridSize);
+      storeCameraIds(previous.cameraIds);
+    }
+  }, [storeGridSize, storeCameraIds]);
 
   // Esc volta para a grade anterior — exceto digitando num campo ou com diálogo
   // aberto (nesses casos o Esc pertence ao campo/diálogo).
@@ -835,7 +864,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                 <span className="toolbar-label">Preencher</span>
               </button>
             </TooltipTrigger>
-            <TooltipContent className="text-xs">Preenche a grade com todas as câmeras (ajusta o tamanho)</TooltipContent>
+            <TooltipContent className="text-xs">Preenche até 36 câmeras e ajusta a grade automaticamente</TooltipContent>
           </Tooltip>
 
           <Popover>
