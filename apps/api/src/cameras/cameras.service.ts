@@ -243,6 +243,42 @@ export class CamerasService implements OnApplicationBootstrap {
     }
   }
 
+  // O teste da tela é opcional para a experiência do usuário; a validação na
+  // escrita não é. Sem esta barreira, create() persistia qualquer senha e ainda
+  // marcava a câmera ONLINE antes de confirmar o acesso ao vídeo RTSP.
+  private async verifyRtspBeforeSave(input: {
+    ip: string;
+    rtspPort: number;
+    username: string;
+    password: string;
+    rtspPath?: string | null;
+    channel?: number | null;
+    subtype?: number | null;
+  }) {
+    if (!(await this.portChecker.check(input.ip, input.rtspPort))) {
+      throw new BadRequestException(`A porta RTSP ${input.rtspPort} não respondeu. Confira a porta e a conexão da câmera antes de salvar.`);
+    }
+    const explicitPath = input.rtspPath?.trim();
+    const paths = explicitPath
+      ? [explicitPath]
+      : this.buildRtspPathCandidates({ channel: input.channel, subtype: input.subtype });
+    const probe = await this.probeRtspPaths({
+      ip: input.ip,
+      rtspPorts: [input.rtspPort],
+      username: input.username,
+      password: input.password,
+      paths,
+      concurrency: 1,
+      stopOnAuthDenied: true,
+      skipBitrateEstimate: true,
+    });
+    if (probe.ok) return probe;
+    if (probe.authDenied) {
+      throw new BadRequestException('A câmera recusou o usuário ou a senha, ou esse usuário não tem permissão para o vídeo RTSP. Confira as credenciais na câmera antes de salvar.');
+    }
+    throw new BadRequestException('Não foi possível confirmar o vídeo RTSP. Confira o caminho do vídeo, a porta e se a câmera está transmitindo antes de salvar.');
+  }
+
   async create(dto: CreateCameraDto, privacy?: { isPrivate: boolean; ownerUserId: string | null }) {
     // ── CÂMERA QUE PUBLICA NÃO TEM ENDEREÇO NOSSO ────────────────────────────
     //
@@ -263,6 +299,15 @@ export class CamerasService implements OnApplicationBootstrap {
     if (dto.onvifPort != null) this.assertTestTargetAllowed(normalizedIp, dto.onvifPort);
     this.assertTestTargetAllowed(normalizedIp, dto.httpPort);
     await this.validateReferences(dto.siteId, dto.areaId, dto.groupId);
+    const verifiedRtsp = await this.verifyRtspBeforeSave({
+      ip: normalizedIp,
+      rtspPort: dto.rtspPort,
+      username: dto.username,
+      password: dto.password,
+      rtspPath: dto.rtspPath,
+      channel: dto.liveChannel ?? dto.channel ?? 1,
+      subtype: dto.liveSubtype ?? dto.subtype ?? 0,
+    });
     const normalizedProfile = this.normalizeProfileToDetected(dto, null);
     const defaultChannel = dto.channel ?? 1;
     const defaultSubtype = dto.subtype ?? 0;
@@ -278,7 +323,7 @@ export class CamerasService implements OnApplicationBootstrap {
         httpPort: dto.httpPort,
         username: dto.username,
         passwordEncrypted: this.cryptoService.encrypt(dto.password),
-        rtspPath: dto.rtspPath,
+        rtspPath: dto.rtspPath || verifiedRtsp.path,
         onvifPath: dto.onvifPath,
         onvifProfileToken: dto.onvifProfileToken,
         channel: defaultChannel,
@@ -617,6 +662,26 @@ export class CamerasService implements OnApplicationBootstrap {
       this.assertTestTargetAllowed(normalizedIp, targetHttpPort!);
     }
     await this.validateReferences(dto.siteId, dto.areaId, dto.groupId);
+    const rtspSettingsChanged = !pushSourced && (
+      (dto.ip !== undefined && normalizedIp !== existing.ip)
+      || (dto.rtspPort !== undefined && dto.rtspPort !== existing.rtspPort)
+      || (dto.username !== undefined && dto.username !== existing.username)
+      || Boolean(dto.password)
+      || (dto.rtspPath !== undefined && dto.rtspPath.trim() !== (existing.rtspPath ?? '').trim())
+      || (dto.liveChannel !== undefined && dto.liveChannel !== existing.liveChannel)
+      || (dto.liveSubtype !== undefined && dto.liveSubtype !== existing.liveSubtype)
+    );
+    const verifiedRtsp = rtspSettingsChanged
+      ? await this.verifyRtspBeforeSave({
+          ip: normalizedIp,
+          rtspPort: dto.rtspPort ?? existing.rtspPort,
+          username: dto.username ?? existing.username,
+          password: dto.password || this.cryptoService.decrypt(existing.passwordEncrypted),
+          rtspPath: dto.rtspPath ?? existing.rtspPath,
+          channel: dto.liveChannel ?? existing.liveChannel,
+          subtype: dto.liveSubtype ?? existing.liveSubtype,
+        })
+      : null;
     // O DTO valida a lista com uma regra só; a exigência por TIPO (linha tem
     // 2 pontos, área tem 3+) precisa do `kind`, que só é conhecido aqui.
     validarZonasDeDeteccao(dto.detectionZones);
@@ -649,7 +714,7 @@ export class CamerasService implements OnApplicationBootstrap {
         httpPort: dto.httpPort,
         username: dto.username,
         passwordEncrypted: dto.password ? this.cryptoService.encrypt(dto.password) : existing.passwordEncrypted,
-        rtspPath: dto.rtspPath,
+        rtspPath: verifiedRtsp?.path ?? dto.rtspPath,
         onvifPath: dto.onvifPath,
         onvifProfileToken: dto.onvifProfileToken,
         channel: dto.channel,
@@ -2421,8 +2486,12 @@ export class CamerasService implements OnApplicationBootstrap {
     username: string;
     password: string;
     paths: string[];
+    concurrency?: number;
+    stopOnAuthDenied?: boolean;
+    skipBitrateEstimate?: boolean;
   }) {
     let lastError: string | null = null;
+    let authDenied = false;
     const successful: Array<{
       port: number;
       path: string;
@@ -2430,7 +2499,7 @@ export class CamerasService implements OnApplicationBootstrap {
       metadata: ProbedStreamMetadata;
       score: number;
     }> = [];
-    const concurrency = envNumber('CAMERA_RTSP_PROBE_CONCURRENCY', 4, {
+    const concurrency = input.concurrency ?? envNumber('CAMERA_RTSP_PROBE_CONCURRENCY', 4, {
       min: 1,
       max: 6,
       integer: true,
@@ -2509,24 +2578,31 @@ export class CamerasService implements OnApplicationBootstrap {
             });
           } else {
             lastError = item.result.error;
+            if (/\b(?:401|403)\b|unauthorized|forbidden|authorization failed|access denied/i.test(item.result.error ?? '')) {
+              authDenied = true;
+            }
           }
         }
         if (successful.length) break;
+        // Cadastro com senha recusada não deve tentar dezenas de caminhos e
+        // arriscar bloquear a conta da câmera por excesso de logins.
+        if (input.stopOnAuthDenied && authDenied) break;
       }
       if (successful.length) break;
+      if (input.stopOnAuthDenied && authDenied) break;
     }
     const best = successful.sort((a, b) => b.score - a.score)[0] ?? null;
     if (best) {
       const metadata = best.metadata;
-      if (!metadata.bitrateKbps || metadata.bitrateKbps <= 0) {
+      if (!input.skipBitrateEstimate && (!metadata.bitrateKbps || metadata.bitrateKbps <= 0)) {
         const estimatedBitrate = await this.estimateBitrateWithFfmpeg(best.url);
         if (estimatedBitrate && estimatedBitrate > 0) {
           metadata.bitrateKbps = estimatedBitrate;
         }
       }
-      return { ok: true, port: best.port, path: best.path, error: null, metadata };
+      return { ok: true, port: best.port, path: best.path, error: null, metadata, authDenied: false };
     }
-    return { ok: false, port: null as number | null, path: null as string | null, error: lastError, metadata: null };
+    return { ok: false, port: null as number | null, path: null as string | null, error: lastError, metadata: null, authDenied };
   }
 
   private scoreProbedStream(metadata: ProbedStreamMetadata | null) {
