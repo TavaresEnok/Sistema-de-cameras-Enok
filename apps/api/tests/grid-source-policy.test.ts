@@ -28,3 +28,14 @@ test('com o padrão "sub", nada muda para nenhum modo', () => {
     assert.equal(gridFollowsCameraProfile(mode, 'sub'), false, mode);
   }
 });
+
+test('stream 2 fora do formato do principal é detectado (tarja na grade)', async () => {
+  const { streamDiffersInAspect } = await import('../src/camera-stream/helpers/live-delivery-profile.helper');
+  const principal = { width: 1920, height: 1080 };
+  assert.equal(streamDiffersInAspect({ width: 640, height: 480 }, principal), true, '4:3 contra 16:9 (Cam-04/06, TESTE CAM)');
+  assert.equal(streamDiffersInAspect({ width: 704, height: 480 }, principal), true, 'D1 contra 16:9 (Cam-05)');
+  assert.equal(streamDiffersInAspect({ width: 640, height: 360 }, principal), false, 'mesmo formato: segue no stream 2');
+  assert.equal(streamDiffersInAspect({ width: 640, height: 352 }, { width: 640, height: 352 }), false);
+  assert.equal(streamDiffersInAspect({ width: 640, height: 480 }, { width: null, height: 1080 }), false, 'sem medida do principal: não muda nada');
+  assert.equal(streamDiffersInAspect(null, principal), false);
+});

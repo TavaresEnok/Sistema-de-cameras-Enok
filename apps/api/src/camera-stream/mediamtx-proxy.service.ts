@@ -43,6 +43,7 @@ import {
   type LiveViewMode,
   gridFollowsCameraProfile,
   parseGridSourcePolicy,
+  streamDiffersInAspect,
 } from './helpers/live-delivery-profile.helper';
 import { liveViewModeToSourceProfile } from './helpers/source-profile.helper';
 import { decidirCopiaDeVideo } from './helpers/copia-em-vez-de-reencode.helper';
@@ -148,6 +149,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   // quente. Ver o bloco em chooseGridSource.
   // De onde a grade puxa a imagem. Ver GridSourcePolicy (live-delivery-profile.helper).
   private readonly gridSourcePolicy = parseGridSourcePolicy(process.env.GRID_SOURCE_PROFILE);
+  // Câmeras já avisadas no log por stream 2 fora do formato (evita repetir a cada ensure).
+  private readonly gridAspectMismatchLogged = new Set<string>();
   private readonly deepSubSearchEnabled =
     String(process.env.MEDIAMTX_DEEP_SUB_SEARCH ?? 'false').trim().toLowerCase() === 'true';
   private readonly gridAutoHealEnabled =
@@ -2428,7 +2431,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     // Com GRID_SOURCE_PROFILE=camera a grade segue a "Fonte da imagem" do
     // cadastro; o Instantâneo (`grid-audio`) continua no stream 2.
     const gridSegueCadastro = gridFollowsCameraProfile(deliveryMode, this.gridSourcePolicy);
-    const selected = pushSourced
+    let selected = pushSourced
       ? await this.resolvePushLiveSource(camera, rtspTransport)
       : (deliveryMode === 'grid' || deliveryMode === 'grid-audio' || deliveryMode === 'grid-hevc') && !gridSegueCadastro
         ? await this.chooseGridSource(cameraId, camera, password, rtspTransport)
@@ -2439,6 +2442,26 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
             rtspTransport,
             deliveryMode === 'original' || deliveryMode === 'original-audio',
           );
+    // Stream 2 com formato diferente do principal (4:3 contra 16:9) vira tarja
+    // preta no tile. Na GRADE usamos o principal; o Instantâneo segue no stream 2.
+    if (
+      !pushSourced
+      && (deliveryMode === 'grid' || deliveryMode === 'grid-hevc')
+      && 'usedSubStream' in selected && selected.usedSubStream
+      && streamDiffersInAspect(
+        { width: 'width' in selected ? selected.width : null, height: 'height' in selected ? selected.height : null },
+        { width: camera.detectedWidth, height: camera.detectedHeight },
+      )
+    ) {
+      if (!this.gridAspectMismatchLogged.has(cameraId)) {
+        this.gridAspectMismatchLogged.add(cameraId);
+        this.logger.log(
+          `Grade de ${cameraId}: stream 2 ${'width' in selected ? selected.width : '?'}x${'height' in selected ? selected.height : '?'} ` +
+          `tem formato diferente do principal ${camera.detectedWidth}x${camera.detectedHeight} — usando o principal para não mostrar tarja.`,
+        );
+      }
+      selected = await this.chooseLiveSource(cameraId, camera, password, rtspTransport);
+    }
     const liveProfile = selected.profile;
     const sourceUrl = selected.sourceUrl;
     const isHevc = selected.isHevc;

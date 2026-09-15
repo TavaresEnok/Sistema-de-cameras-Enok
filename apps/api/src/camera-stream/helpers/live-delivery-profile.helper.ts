@@ -155,3 +155,24 @@ export function parseGridSourcePolicy(raw: string | null | undefined): GridSourc
 export function gridFollowsCameraProfile(mode: LiveViewMode, policy: GridSourcePolicy): boolean {
   return policy === 'camera' && (mode === 'grid' || mode === 'grid-hevc');
 }
+
+/**
+ * O stream 2 tem FORMATO diferente do principal? (ex.: 640×480 4:3 contra 1920×1080 16:9)
+ *
+ * Na grade isso vira tarja preta: o tile é 16:9 e o vídeo nunca é cortado. O
+ * operador vê a câmera "encolhida" e ninguém é avisado — medido em 15/09/2026
+ * em 3 câmeras da instalação principal e 2 da Vibe. O conserto está na câmera,
+ * mas usuário não vai fazê-lo; então a grade usa o principal nesses casos.
+ *
+ * Medida ausente ou inválida responde FALSO: sem prova, nada muda.
+ */
+export function streamDiffersInAspect(
+  sub: { width?: number | null; height?: number | null } | null | undefined,
+  main: { width?: number | null; height?: number | null } | null | undefined,
+  tolerance = 0.05,
+): boolean {
+  const values = [sub?.width, sub?.height, main?.width, main?.height].map(Number);
+  if (!values.every((n) => Number.isFinite(n) && n > 0)) return false;
+  const [sw, sh, mw, mh] = values;
+  return Math.abs((sw / sh) / (mw / mh) - 1) > tolerance;
+}
