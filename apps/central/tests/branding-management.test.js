@@ -115,12 +115,35 @@ test('a Central recusa SVG e cor inválida antes de criar uma revisão', async (
   assert.equal(db.installations[id].configRevision || 0, 0);
 });
 
+test('ícone do app é guardado só na Central e não altera a marca da instalação', async (t) => {
+  const central = await startCentral();
+  t.after(() => central.stop());
+  const id = 'icone-central';
+  await provision(central, id);
+  const icon = 'data:image/png;base64,iVBORw0KGgo=';
+  const response = await fetch(`${central.base}/api/admin/installations/${id}/app`, {
+    method: 'PATCH', headers: admin(), body: JSON.stringify({ appIconDataUrl: icon }),
+  });
+  const result = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(result));
+  assert.equal(result.appIconDataUrl, icon);
+  assert.equal(result.appIconChanged, true);
+  assert.equal(result.configRevision, 0, 'ícone Android não deve virar configuração do painel');
+
+  const db = JSON.parse(await fsp.readFile(path.join(central.dir, 'installations.json'), 'utf8'));
+  assert.equal(db.installations[id].app.appIconDataUrl, icon);
+  assert.equal(db.installations[id].branding, undefined);
+  assert.ok(db.auditEvents.some((event) => event.type === 'apk.app_icon_changed'));
+});
+
 test('o painel oferece editor curto com logo, destaque, fundo opcional e prévia', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   for (const id of [
     'app-brand-preview', 'app-edit-logo-file', 'app-edit-primary',
     'app-edit-custom-background', 'app-edit-brand-default',
+    'app-icon-preview', 'app-edit-icon-file', 'app-edit-icon-remove',
   ]) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /Identidade visual/);
+  assert.match(html, /Ícone do aplicativo/);
   assert.match(html, /A instalação aplicará automaticamente/);
 });

@@ -2489,6 +2489,18 @@ function validateManagedBranding(raw, fallbackName) {
   };
 }
 
+// O ícone do launcher é diferente da logo do sistema: fica SOMENTE no
+// cadastro de app da Central e nunca desce no heartbeat para a instalação.
+// Aceitamos exatamente os mesmos formatos seguros da logo, mas em campo
+// próprio para o operador trocar o ícone sem mudar a identidade do painel.
+function validateManagedAppIcon(raw) {
+  if (raw === undefined || raw === null || raw === '') return { ok: true, value: '' };
+  if (typeof raw !== 'string' || raw.length > BRAND_LOGO_MAX_CHARS || !BRAND_LOGO_RE.test(raw)) {
+    return { ok: false, message: 'Ícone inválido. Use PNG, JPG ou WebP com até aproximadamente 400 KB.' };
+  }
+  return { ok: true, value: raw };
+}
+
 function managedBrandingFromInstallation(item, remoteBranding = null) {
   if (item.branding) return item.branding;
   const candidate = item.reportedBranding && typeof item.reportedBranding === 'object'
@@ -2591,6 +2603,12 @@ async function pushAppToBuildAgent(item, actor, req, db, installationId) {
   if (firebase?.configBase64) payload.firebaseConfigBase64 = firebase.configBase64;
   if (!branding.brandUseDefaultColors && branding.brandPrimaryColor) payload.primaryColor = branding.brandPrimaryColor;
   if (branding.brandLogoDataUrl) payload.logoBase64 = branding.brandLogoDataUrl;
+  // Prioridade do ícone: ícone específico do aplicativo > logo convertida >
+  // ícone padrão S2Cam. `resetAppIcon` limpa no agente qualquer ícone antigo
+  // quando a Central não possui uma escolha própria para este cliente.
+  const appIcon = String(item.app?.appIconDataUrl || '');
+  if (appIcon) payload.appIconBase64 = appIcon;
+  payload.resetAppIcon = !appIcon;
   const created = await agentFetch('/clients', { method: 'POST', body: JSON.stringify(payload) });
   if (created.status >= 400) return { status: created.status, data: created.data };
   const build = await agentFetch('/builds', { method: 'POST', body: JSON.stringify({ slug, sourceCommit: approvedRelease.commit }) });
@@ -2608,9 +2626,8 @@ async function handleGenerateApp(req, res, db, actor, installationId) {
 }
 
 // Edita nome de exibição, package ID e/ou servidor do app. Se o app já tinha
-// sido gerado antes, dispara rebuild automaticamente — do contrário a edição
-// fica só no banco da Central e o APK instalado continua com o valor antigo
-// (bug relatado: servidor/nome/cor corrigidos na tela mas nunca aplicados).
+// sido gerado e houve mudança que chega ao APK, dispara rebuild automaticamente
+// — um simples "Salvar" sem alteração não desperdiça uma nova compilação.
 async function handlePatchApp(req, res, db, actor, installationId) {
   const item = db.installations[installationId];
   if (!item) return json(req, res, 404, { error: 'installation_not_found' });
@@ -2633,10 +2650,35 @@ async function handlePatchApp(req, res, db, actor, installationId) {
   }
   item.app = item.app || { slug: deriveAppSlug(item), apiUrl: deriveClientApiUrl(item) };
   const hadBuild = !!item.app.lastBuildAt;
+  const appBefore = JSON.stringify({
+    appName: item.app.appName || '',
+    packageId: item.app.packageId || '',
+    apiUrlOverride: item.app.apiUrlOverride || '',
+    pushEnabled: item.app.pushEnabled === true,
+  });
   if (appName) item.app.appName = appName;
   if (packageId) item.app.packageId = packageId;
   if (apiUrl) item.app.apiUrlOverride = addrToApiUrl(apiUrl); // override manual do servidor
   if (hasPushSetting) item.app.pushEnabled = body.pushEnabled;
+
+  let appIconChanged = false;
+  if (Object.prototype.hasOwnProperty.call(body, 'appIconDataUrl')) {
+    const checkedIcon = validateManagedAppIcon(body.appIconDataUrl);
+    if (!checkedIcon.ok) return json(req, res, 400, { error: 'invalid_app_icon', message: checkedIcon.message });
+    const previousIcon = String(item.app.appIconDataUrl || '');
+    appIconChanged = previousIcon !== checkedIcon.value;
+    if (checkedIcon.value) item.app.appIconDataUrl = checkedIcon.value;
+    else delete item.app.appIconDataUrl;
+    if (appIconChanged) {
+      addAuditEvent(db, req, {
+        type: 'apk.app_icon_changed',
+        actor: actor.email,
+        result: 'accepted',
+        installationId,
+        configured: Boolean(checkedIcon.value),
+      });
+    }
+  }
   addAuditEvent(db, req, { type: 'apk.app_edited', actor: actor.email, result: 'accepted', installationId });
 
   let brandingChanged = false;
@@ -2661,7 +2703,15 @@ async function handlePatchApp(req, res, db, actor, installationId) {
   }
 
   let rebuild = null;
-  if (hadBuild) rebuild = await pushAppToBuildAgent(item, actor, req, db, installationId);
+  const appSettingsChanged = appBefore !== JSON.stringify({
+    appName: item.app.appName || '',
+    packageId: item.app.packageId || '',
+    apiUrlOverride: item.app.apiUrlOverride || '',
+    pushEnabled: item.app.pushEnabled === true,
+  });
+  if (hadBuild && (appSettingsChanged || brandingChanged || appIconChanged)) {
+    rebuild = await pushAppToBuildAgent(item, actor, req, db, installationId);
+  }
   await saveDb(db);
   if (rebuild && rebuild.status >= 400) {
     return json(req, res, rebuild.status, { ...rebuild.data, appName: effectiveAppName(item), packageId: effectiveAppPackageId(item), apiUrl: deriveClientApiUrl(item) });
@@ -2673,6 +2723,8 @@ async function handlePatchApp(req, res, db, actor, installationId) {
     apiUrl: deriveClientApiUrl(item),
     pushEnabled: item.app?.pushEnabled === true,
     branding: managedBrandingFromInstallation(item),
+    appIconDataUrl: item.app?.appIconDataUrl || '',
+    appIconChanged,
     brandingChanged,
     configRevision: Number(item.configRevision || 0) || 0,
     rebuildTriggered: !!rebuild,
@@ -3381,6 +3433,7 @@ async function handleInstallationApp(req, res, db, installationId) {
     appName: effectiveAppName(item),
     packageId: effectiveAppPackageId(item),
     pushEnabled: item.app?.pushEnabled === true,
+    appIconDataUrl: item.app?.appIconDataUrl || '',
     branding: managedBrandingFromInstallation(item, remoteBranding),
     brandingDelivery: {
       desiredRevision: Number(item.configRevision || 0) || 0,

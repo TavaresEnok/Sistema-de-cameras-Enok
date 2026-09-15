@@ -116,6 +116,14 @@ test('release do app exige checkout aprovado e código commitado', () => {
   assert(agent.includes("sourceCommit completo é obrigatório"), 'agente não pode aceitar build sem release aprovada');
 });
 
+test('white-label: ícone próprio vem da Central sem substituir a logo do cliente', () => {
+  const agent = readFileSync('scripts/build-agent.mjs', 'utf8');
+  assert(agent.includes('appIconBase64'), 'agente deve aceitar um ícone específico do aplicativo');
+  assert(agent.includes('resetAppIcon'), 'remoção do ícone precisa voltar ao padrão sem sobrar asset antigo');
+  assert(agent.includes('stageClientAppIcon'), 'ícone deve ser convertido separadamente da identidade visual');
+  assert(agent.includes("['icon.png', 'adaptive-icon.png']"), 'Android precisa receber as duas variantes do launcher');
+});
+
 test('release mobile: iOS tem identidade e builds de loja incrementam versão', () => {
   const base = JSON.parse(readFileSync('app.base.json', 'utf8')).expo;
   const eas = JSON.parse(readFileSync('eas.json', 'utf8'));

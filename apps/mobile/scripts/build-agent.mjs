@@ -5,7 +5,7 @@
 // Endpoints (header x-build-token obrigatório, exceto /health):
 //   GET  /health
 //   GET  /clients                 → lista clientes + status do último build
-//   POST /clients {slug,appName,apiUrl,packageId?,primaryColor?,logoBase64?,firebaseConfigBase64?}
+//   POST /clients {slug,appName,apiUrl,packageId?,primaryColor?,logoBase64?,appIconBase64?,resetAppIcon?,firebaseConfigBase64?}
 //   DELETE /clients/:slug         → apaga config + APK (local e nginx) + jobs
 //   POST /builds  {slug}          → enfileira build (serializado) → {jobId}
 //   GET  /builds                  → histórico (sem log completo)
@@ -62,6 +62,8 @@ const OPTIONAL_URL_RE = /^(?:https?:\/\/[A-Za-z0-9._-]+(?::\d{1,5})?(?:\/[A-Za-z
 // Nome de exibição: letras/números/espaço e pontuação simples. Sem aspas, sem barra
 // (vira nome de arquivo no kit: `${APP_NAME}.aab`), sem '..'.
 const APP_NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._()-]{0,59}$/u;
+const IMAGE_DATA_URL_MAX_CHARS = 550_000;
+const IMAGE_DATA_URL_RE = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/i;
 
 fs.mkdirSync(BUILDS_DIR, { recursive: true });
 
@@ -267,6 +269,33 @@ function stageClientBranding(logoBase64) {
   return stage; // contém logo.png, icon.png, adaptive-icon.png
 }
 
+// O ícone do launcher pode ser escolhido na Central sem alterar a logo da
+// instalação. Gera somente os dois assets consumidos pelo Android; logo e
+// splash continuam pertencendo à identidade visual do cliente.
+function stageClientAppIcon(iconBase64) {
+  const data = String(iconBase64).replace(/^data:image\/[\w.+-]+;base64,/, '');
+  const raw = Buffer.from(data, 'base64');
+  if (raw.length < 16) throw new Error('ícone do aplicativo vazio ou inválido');
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 's2cam-app-icon-'));
+  const srcPath = path.join(stage, 'src');
+  fs.writeFileSync(srcPath, raw);
+  try {
+    const icon = ffmpegConvert(['-y', '-loglevel', 'error', '-i', srcPath,
+      '-vf', 'scale=1024:1024:force_original_aspect_ratio=decrease,pad=1024:1024:(ow-iw)/2:(oh-ih)/2:color=0x071013',
+      '-pix_fmt', 'rgba', path.join(stage, 'icon.png')]);
+    if (!icon.ok) throw new Error(`ícone do aplicativo não pôde ser decodificado: ${icon.stderr.trim().slice(0, 300)}`);
+    const adaptive = ffmpegConvert(['-y', '-loglevel', 'error', '-i', srcPath,
+      '-vf', 'scale=620:620:force_original_aspect_ratio=decrease,pad=1024:1024:(ow-iw)/2:(oh-ih)/2:color=0x00000000',
+      '-pix_fmt', 'rgba', path.join(stage, 'adaptive-icon.png')]);
+    if (!adaptive.ok) throw new Error(`falha ao gerar ícone adaptativo do aplicativo: ${adaptive.stderr.trim().slice(0, 300)}`);
+  } catch (e) {
+    fs.rmSync(stage, { recursive: true, force: true });
+    throw e;
+  }
+  fs.rmSync(srcPath, { force: true });
+  return stage;
+}
+
 function writeClient(body) {
   const { slug, appName, apiUrl } = body;
   if (!SLUG_RE.test(slug || '')) throw new Error('slug inválido (a-z 0-9 -)');
@@ -285,9 +314,24 @@ function writeClient(body) {
     if (!matches) throw new Error('configuração Firebase não corresponde ao pacote Android');
   }
   if (body.pushEnabled === true && !firebaseConfig) throw new Error('push exige configuração Firebase válida');
+  if (body.appIconBase64 !== undefined && (
+    typeof body.appIconBase64 !== 'string'
+    || body.appIconBase64.length > IMAGE_DATA_URL_MAX_CHARS
+    || !IMAGE_DATA_URL_RE.test(body.appIconBase64)
+  )) throw new Error('ícone do aplicativo inválido');
+  if (body.resetAppIcon !== undefined && typeof body.resetAppIcon !== 'boolean') throw new Error('resetAppIcon inválido');
   // Converte o branding ANTES de tocar no diretório do cliente: se o logo for
   // inválido, aborta aqui sem criar/alterar nada (evita cliente meia-boca).
-  const stage = body.logoBase64 ? stageClientBranding(body.logoBase64) : null;
+  let brandingStage = null;
+  let appIconStage = null;
+  try {
+    brandingStage = body.logoBase64 ? stageClientBranding(body.logoBase64) : null;
+    appIconStage = body.appIconBase64 ? stageClientAppIcon(body.appIconBase64) : null;
+  } catch (error) {
+    if (brandingStage) fs.rmSync(brandingStage, { recursive: true, force: true });
+    if (appIconStage) fs.rmSync(appIconStage, { recursive: true, force: true });
+    throw error;
+  }
   try {
     const dir = path.join(CLIENTS_DIR, slug);
     fs.mkdirSync(dir, { recursive: true });
@@ -322,14 +366,25 @@ function writeClient(body) {
     const firebasePath = path.join(dir, 'google-services.json');
     if (firebaseConfig) fs.writeFileSync(firebasePath, JSON.stringify(firebaseConfig, null, 2) + '\n', { mode: 0o600 });
     else fs.rmSync(firebasePath, { force: true });
-    if (stage) {
+    if (brandingStage) {
       for (const name of ['logo.png', 'splash.png', 'icon.png', 'adaptive-icon.png']) {
-        fs.copyFileSync(path.join(stage, name), path.join(dir, name));
+        fs.copyFileSync(path.join(brandingStage, name), path.join(dir, name));
       }
+    }
+    // A escolha da Central tem prioridade sobre o ícone derivado da logo.
+    if (appIconStage) {
+      for (const name of ['icon.png', 'adaptive-icon.png']) {
+        fs.copyFileSync(path.join(appIconStage, name), path.join(dir, name));
+      }
+    } else if (body.resetAppIcon === true && !brandingStage) {
+      // Sem ícone próprio e sem logo: volta ao ícone padrão em app.config.js,
+      // removendo um arquivo que poderia ter sobrado de um build antigo.
+      for (const name of ['icon.png', 'adaptive-icon.png']) fs.rmSync(path.join(dir, name), { force: true });
     }
     return cfg;
   } finally {
-    if (stage) fs.rmSync(stage, { recursive: true, force: true });
+    if (brandingStage) fs.rmSync(brandingStage, { recursive: true, force: true });
+    if (appIconStage) fs.rmSync(appIconStage, { recursive: true, force: true });
   }
 }
 
