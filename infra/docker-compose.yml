@@ -558,6 +558,8 @@ services:
       # 64 cobre qualquer instalação pequena inteira; numa frota de 2.000 só as
       # 64 câmeras realmente olhadas ficam conectadas — o resto liga sob
       # demanda (~5s no primeiro acesso e entra no conjunto quente na hora).
+      # De onde a grade puxa a imagem: sub (padrão) | camera. Ver live-delivery-profile.helper.
+      - GRID_SOURCE_PROFILE=${GRID_SOURCE_PROFILE:-sub}
       - MEDIAMTX_HOT_GRID_SOURCES_MAX=${MEDIAMTX_HOT_GRID_SOURCES_MAX:-64}
       - MEDIAMTX_HOT_GRID_WINDOW_HOURS=${MEDIAMTX_HOT_GRID_WINDOW_HOURS:-168}
       - FFMPEG_RTSP_FALLBACK_TRANSPORTS=tcp,udp

@@ -41,6 +41,8 @@ import {
   INSTANT_LIVE_MAX_BITRATE_KBPS,
   resolveInstantBitrateKbps,
   type LiveViewMode,
+  gridFollowsCameraProfile,
+  parseGridSourcePolicy,
 } from './helpers/live-delivery-profile.helper';
 import { liveViewModeToSourceProfile } from './helpers/source-profile.helper';
 import { decidirCopiaDeVideo } from './helpers/copia-em-vez-de-reencode.helper';
@@ -144,6 +146,8 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
   // Busca profunda de sub (degraus /media/videoN, subtype=2, N03) na ABERTURA do
   // tile. Desligada: o resultado é estável e pertence ao cadastro, não ao caminho
   // quente. Ver o bloco em chooseGridSource.
+  // De onde a grade puxa a imagem. Ver GridSourcePolicy (live-delivery-profile.helper).
+  private readonly gridSourcePolicy = parseGridSourcePolicy(process.env.GRID_SOURCE_PROFILE);
   private readonly deepSubSearchEnabled =
     String(process.env.MEDIAMTX_DEEP_SUB_SEARCH ?? 'false').trim().toLowerCase() === 'true';
   private readonly gridAutoHealEnabled =
@@ -2421,9 +2425,12 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
 
     // Live (tela cheia) respeita o perfil principal configurado. A GRADE usa o
     // sub-stream quando existe (mais leve e rápido); ver chooseGridSource.
+    // Com GRID_SOURCE_PROFILE=camera a grade segue a "Fonte da imagem" do
+    // cadastro; o Instantâneo (`grid-audio`) continua no stream 2.
+    const gridSegueCadastro = gridFollowsCameraProfile(deliveryMode, this.gridSourcePolicy);
     const selected = pushSourced
       ? await this.resolvePushLiveSource(camera, rtspTransport)
-      : deliveryMode === 'grid' || deliveryMode === 'grid-audio' || deliveryMode === 'grid-hevc'
+      : (deliveryMode === 'grid' || deliveryMode === 'grid-audio' || deliveryMode === 'grid-hevc') && !gridSegueCadastro
         ? await this.chooseGridSource(cameraId, camera, password, rtspTransport)
         : await this.chooseLiveSource(
             cameraId,

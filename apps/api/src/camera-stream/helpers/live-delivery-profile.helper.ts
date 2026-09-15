@@ -132,3 +132,26 @@ export function resolveGridLiveProfile(input?: {
     fps: GRID_LIVE_TARGET_FPS,
   };
 }
+
+// DE ONDE A GRADE PUXA A IMAGEM — escolha por instalação (GRID_SOURCE_PROFILE).
+//
+//  · `sub` (padrão): sempre o stream 2 da câmera. Leve, e sem conversão quando
+//    já vem em H.264. É o que segura 30 câmeras H.265 num servidor de 8 núcleos.
+//  · `camera`: a grade segue a "Fonte da imagem" do cadastro — Original usa o
+//    stream 1; Econômico, o stream 2. Pedido do dono (15/09/2026, Vibe): o
+//    stream 2 fica para o Instantâneo. Antes o seletor do cadastro dizia
+//    "Original usa o perfil principal" e a grade ignorava.
+//
+// CUSTO: stream 1 em H.265 obriga converter para o navegador — medido na Vibe,
+// ~1,2 núcleo por câmera 2304×1296. Ligue só onde a conta fecha.
+// O Instantâneo (`grid-audio`) usa o stream 2 nos dois casos.
+export type GridSourcePolicy = 'sub' | 'camera';
+
+export function parseGridSourcePolicy(raw: string | null | undefined): GridSourcePolicy {
+  return String(raw ?? '').trim().toLowerCase() === 'camera' ? 'camera' : 'sub';
+}
+
+/** A grade deve usar o perfil de live do cadastro em vez de procurar o stream 2? */
+export function gridFollowsCameraProfile(mode: LiveViewMode, policy: GridSourcePolicy): boolean {
+  return policy === 'camera' && (mode === 'grid' || mode === 'grid-hevc');
+}
