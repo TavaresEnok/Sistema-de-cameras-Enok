@@ -3916,7 +3916,19 @@ async function route(req, res) {
       const apkBuildMatch = url.pathname.match(/^\/api\/admin\/apk\/clients\/([^/]+)\/build$/);
       if (req.method === 'POST' && apkBuildMatch) {
         const slug = decodeURIComponent(apkBuildMatch[1]);
-        const r = await agentFetch('/builds', { method: 'POST', body: JSON.stringify({ slug }) });
+        const approvedRelease = releaseAtual(db);
+        if (!approvedRelease?.commit) {
+          return json(req, res, 409, {
+            error: 'release_not_approved',
+            message: 'Promova uma release testada antes de gerar o aplicativo.',
+          });
+        }
+        // Regerar precisa ter a mesma garantia do primeiro build: o agente só
+        // aceita um commit imutável que já foi aprovado pela Central.
+        const r = await agentFetch('/builds', {
+          method: 'POST',
+          body: JSON.stringify({ slug, sourceCommit: approvedRelease.commit }),
+        });
         addAuditEvent(db, req, { type: 'apk.build_started', actor: actor.email, result: r.status < 400 ? 'accepted' : 'denied', installationId: slug });
         await saveDb(db);
         return json(req, res, r.status, r.data);

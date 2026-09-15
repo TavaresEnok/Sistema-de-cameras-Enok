@@ -75,3 +75,38 @@ test('resposta excessiva do build-agent é interrompida com erro seguro', async 
   assert.equal(body.error, 'internal_error');
   assert.doesNotMatch(body.message || '', /128|body|token/i);
 });
+
+test('regerar APK envia ao agente exatamente a release aprovada', async (t) => {
+  let received = null;
+  const agent = await startServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    received = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+    res.writeHead(202, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jobId: 'build-test', status: 'queued' }));
+  });
+  const central = await startCentral({ APP_BUILDER_AGENT_URL: agent.url });
+  t.after(async () => {
+    await central.stop();
+    await agent.stop();
+  });
+
+  const commit = 'b'.repeat(40);
+  const promoted = await fetch(`${central.base}/api/admin/releases`, {
+    method: 'POST',
+    headers: central.adminHeaders(),
+    body: JSON.stringify({
+      commit,
+      installerSha256: 'a'.repeat(64),
+      gate: { instalacaoLimpa: true, verificadaNaMatriz: true, em: new Date().toISOString() },
+    }),
+  });
+  assert.equal(promoted.status, 200);
+
+  const build = await fetch(`${central.base}/api/admin/apk/clients/vibe/build`, {
+    method: 'POST',
+    headers: central.adminHeaders(),
+  });
+  assert.equal(build.status, 202);
+  assert.deepEqual(received, { slug: 'vibe', sourceCommit: commit });
+});
