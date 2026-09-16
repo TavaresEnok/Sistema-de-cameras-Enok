@@ -5743,13 +5743,14 @@
           const slug = app.slug || '';
           const ac = slug ? agentBySlug[slug] : null;
           const status = ac && ac.lastBuild ? ac.lastBuild.status : null;
+          const buildError = status === 'failed' ? String(ac.lastBuild.error || 'A geração não terminou.') : '';
           const building = status === 'building' || status === 'queued';
           if (building) anyBuilding = true;
           const hasArtifact = Boolean(ac && ac.apkUrl);
           const readiness = building
             ? { cls: 'building', text: 'O aplicativo está sendo preparado. Esta página atualiza sozinha.' }
             : hasArtifact ? { cls: 'ready', text: 'Aplicativo pronto para instalar ou publicar na Play Store.' }
-              : status === 'failed' ? { cls: 'problem', text: 'A última tentativa não terminou. Revise os dados e gere novamente.' }
+              : status === 'failed' ? { cls: 'problem', text: `Falha ao gerar: ${buildError}` }
                 : { cls: '', text: 'Revise os dados do cliente e gere o primeiro aplicativo.' };
           const packageId = (ac && ac.packageId) || app.packageId || 'Será criado ao gerar';
           const apiUrl = (ac && ac.apiUrl) || app.apiUrlOverride || 'Servidor será identificado automaticamente';

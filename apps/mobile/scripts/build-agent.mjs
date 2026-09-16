@@ -120,6 +120,24 @@ function ensureBuildWorktree(commit, slug) {
     }
   }
 
+  // CMake grava fingerprints binários dentro de node_modules/**/android/.cxx.
+  // Como os worktrees reutilizam dependências por hardlink, esse cache pode ter
+  // sido produzido por outra geração e o Gradle falha com CXX1420. É conteúdo
+  // temporário: limpá-lo preserva as dependências e isola cada build.
+  const nodeModules = path.join(mobile, 'node_modules');
+  if (fs.existsSync(nodeModules)) {
+    const cleanup = spawnSync('find', [
+      nodeModules,
+      '-type', 'd',
+      '-path', '*/android/.cxx',
+      '-prune',
+      '-exec', 'rm', '-rf', '--', '{}', '+',
+    ], { encoding: 'utf8' });
+    if (cleanup.status !== 0) {
+      throw new Error(`não foi possível limpar o cache nativo do Android: ${(cleanup.stderr || '').trim()}`);
+    }
+  }
+
   // Branding/configuração do cliente é estado do agente, não parte da release.
   // Copiamos somente o cliente solicitado para que uma geração não altere o
   // checkout aprovado nem vaze identidade entre clientes.
@@ -129,6 +147,21 @@ function ensureBuildWorktree(commit, slug) {
   fs.rmSync(targetClient, { recursive: true, force: true });
   fs.cpSync(sourceClient, targetClient, { recursive: true, force: true });
   return mobile;
+}
+
+function summarizeBuildFailure(log, code) {
+  const text = String(log || '');
+  if (/CXX1420|structured log file|configure_fingerprint\.bin/i.test(text)) {
+    return 'Cache nativo do Android inconsistente (CMake). Gere novamente; o agente limpará esse cache automaticamente.';
+  }
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const marker = lines.findIndex((line) => line === '* What went wrong:');
+  if (marker >= 0) {
+    const detail = lines.slice(marker + 1).find((line) => !line.startsWith('*') && !line.startsWith('> Run with'));
+    if (detail) return detail.slice(0, 900);
+  }
+  const explicit = [...lines].reverse().find((line) => /error|erro|failed|falhou|inválid|ausente/i.test(line));
+  return (explicit || `A geração terminou com código ${code ?? 'desconhecido'}.`).slice(0, 900);
 }
 
 function processQueue() {
@@ -178,7 +211,7 @@ function processQueue() {
       job.aabUrl = aab ? PUBLIC_APK_BASE + aab[1].trim() : null;
     } else {
       job.status = 'failed';
-      job.error = `build saiu com código ${code}`;
+      job.error = summarizeBuildFailure(log, code);
     }
     saveState();
     running = false;
@@ -213,7 +246,13 @@ function listClients() {
       aabUrl: fs.existsSync(aab) ? `${PUBLIC_APK_BASE}/apk/drac-${slug}.aab` : null,
       kitExists: fs.existsSync(kit),
       kitUrl: fs.existsSync(kit) ? `${PUBLIC_APK_BASE}/apk/drac-${slug}-playstore-kit.zip` : null,
-      lastBuild: lastJob ? { status: lastJob.status, version: lastJob.version ?? null, finishedAt: lastJob.finishedAt ?? null } : null,
+      lastBuild: lastJob ? {
+        id: lastJob.id,
+        status: lastJob.status,
+        version: lastJob.version ?? null,
+        finishedAt: lastJob.finishedAt ?? null,
+        error: lastJob.status === 'failed' ? (lastJob.error || summarizeBuildFailure(lastJob.log, null)) : null,
+      } : null,
     };
   });
 }

@@ -119,6 +119,13 @@ test('release do app exige checkout aprovado e código commitado', () => {
   assert(agent.includes("sourceCommit completo é obrigatório"), 'agente não pode aceitar build sem release aprovada');
 });
 
+test('build-agent limpa cache CMake compartilhado e expõe a causa da falha', () => {
+  const agent = readFileSync('scripts/build-agent.mjs', 'utf8');
+  assert(agent.includes("'-path', '*/android/.cxx'"), 'agente deve remover o cache .cxx contaminado entre worktrees');
+  assert(agent.includes('summarizeBuildFailure'), 'agente deve guardar um motivo útil para falhas de build');
+  assert(agent.includes("error: lastJob.status === 'failed'"), 'lista de clientes deve entregar a causa da última falha à Central');
+});
+
 test('white-label: ícone próprio vem da Central sem substituir a logo do cliente', () => {
   const agent = readFileSync('scripts/build-agent.mjs', 'utf8');
   assert(agent.includes('appIconBase64'), 'agente deve aceitar um ícone específico do aplicativo');
