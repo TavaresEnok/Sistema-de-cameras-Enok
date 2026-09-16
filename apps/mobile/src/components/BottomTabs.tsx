@@ -19,6 +19,7 @@ interface BottomTabsProps {
 const TABS: Array<{ id: Tab; label: string; icon: IconName }> = [
   { id: 'central', label: 'Central', icon: 'home' },
   { id: 'mosaico', label: 'Mosaico', icon: 'grid' },
+  { id: 'ronda', label: 'Ronda', icon: 'clock' },
   { id: 'reproducao', label: 'Reprodução', icon: 'play' },
   { id: 'revisao', label: 'Revisão', icon: 'eye' },
   { id: 'alarmes', label: 'Alarmes', icon: 'bell' },

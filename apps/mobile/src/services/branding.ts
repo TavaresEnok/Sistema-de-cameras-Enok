@@ -44,10 +44,14 @@ export interface RuntimeBranding {
   dark: BrandingPalette;
   /** Chaves brandLight*: tema claro. */
   light: BrandingPalette;
+  /** Menor versionCode do app aceito por esta instalação; 0 = sem exigência. */
+  minMobileVersionCode: number;
 }
 
 type BrandingResponse = {
   facilityName?: string;
+  /** Menor versionCode aceito por esta instalação (ausente/0 = sem exigência). */
+  minMobileVersionCode?: number | string;
   brandLogoDataUrl?: string;
   brandUseDefaultColors?: boolean;
   brandPrimaryColor?: string;
@@ -103,6 +107,7 @@ export const EMPTY_BRANDING: RuntimeBranding = {
   useDefaultColors: true,
   dark: EMPTY_PALETTE,
   light: EMPTY_PALETTE,
+  minMobileVersionCode: 0,
 };
 
 export async function fetchBranding(apiUrl: string): Promise<RuntimeBranding> {
@@ -133,6 +138,9 @@ export async function fetchBranding(apiUrl: string): Promise<RuntimeBranding> {
     useDefaultColors: data.brandUseDefaultColors === true,
     dark: palette(''),
     light: palette('Light'),
+    // Versão mínima exigida pela instalação (0 = sem exigência). Servidor antigo
+    // não devolve o campo, e aí nada muda: o app segue como sempre seguiu.
+    minMobileVersionCode: Number(data.minMobileVersionCode ?? 0) || 0,
   };
 }
 

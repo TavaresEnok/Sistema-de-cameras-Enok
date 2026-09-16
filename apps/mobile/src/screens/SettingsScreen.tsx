@@ -24,6 +24,11 @@ interface SettingsScreenProps {
   onLogout: () => void;
   /** Recarrega a biblioteca de câmeras após cadastrar uma nova. */
   onCamerasChanged?: () => void;
+  /** Alertas de movimento neste aparelho (push). */
+  pushEnabled?: boolean;
+  /** Falso quando o aparelho não suporta push (emulador, permissão negada). */
+  pushSupported?: boolean;
+  onPushChange?: (enabled: boolean) => void;
 }
 
 const ROLE_LABEL: Record<string, string> = {
@@ -41,12 +46,35 @@ function initialsOf(name?: string): string {
 
 export function SettingsScreen({
   user, apiUrl, token, connected, biometricAvailable, biometricEnabled, biometricLabel, onBiometricChange, onLogout, onCamerasChanged,
+  pushEnabled = true, pushSupported = true, onPushChange,
 }: SettingsScreenProps) {
   const { theme, themeMode, setThemeMode } = useTheme();
   const [addCameraOpen, setAddCameraOpen] = useState(false);
   // Consulta silenciosa: falha (offline, manifesto ausente) não vira erro na
   // tela — aviso de atualização que aparece por engano é pior que nenhum.
   const [atualizacao, setAtualizacao] = useState<AtualizacaoDisponivel | null>(null);
+  // VERSÃO MÍNIMA EXIGIDA PELA INSTALAÇÃO. Sem isto, um APK antigo conversa com
+  // um servidor novo e quebra em silêncio: a tela mostra erro genérico e ninguém
+  // liga o defeito à versão. Endpoint público, mesma rota que o app já usa para
+  // a marca. Falha (servidor antigo, offline) = nenhuma exigência.
+  const [precisaAtualizar, setPrecisaAtualizar] = useState(false);
+  useEffect(() => {
+    if (!apiUrl) return;
+    let cancelado = false;
+    void (async () => {
+      try {
+        const resposta = await fetch(`${apiUrl.replace(/\/+$/, '')}/settings/branding`);
+        if (!resposta.ok) return;
+        const dados = await resposta.json();
+        const minima = Number(dados?.minMobileVersionCode ?? 0) || 0;
+        const atual = Number(Constants.expoConfig?.android?.versionCode ?? NaN);
+        if (!cancelado && minima > 0 && Number.isFinite(atual)) setPrecisaAtualizar(atual < minima);
+      } catch {
+        // silencioso de propósito
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [apiUrl]);
   useEffect(() => {
     const slug = String(Constants.expoConfig?.extra?.client ?? 'default');
     const base = BRANDING.apkBaseUrl || baseDoApk(apiUrl);
@@ -168,9 +196,33 @@ export function SettingsScreen({
         />
       </View>
 
-      {/* Preferências: "Notificações push" removido até o recurso funcionar de
-          verdade (evita mostrar um botão que não faz nada — e pergunta do
-          revisor da Play Store). Voltará quando o push (FCM) estiver ativo. */}
+      {/* NOTIFICAÇÕES — o push (FCM) já funciona e é registrado ao entrar. O
+          controle tinha ficado escondido por um comentário que envelheceu, e
+          sem ele não havia como PARAR de receber sem desinstalar o app. */}
+      <Text style={[styles.groupLabel, { color: theme.textMuted }]}>NOTIFICAÇÕES</Text>
+      <View style={[styles.group, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Row
+          icon="bell"
+          iconBg={theme.accentBg}
+          iconColor={theme.accent}
+          title="Alertas neste aparelho"
+          subtitle={pushSupported
+            ? (pushEnabled ? 'Você recebe alarmes de movimento' : 'Desligado: nenhum alarme chega aqui')
+            : 'Indisponível neste aparelho'}
+          subtitleColor={pushSupported && !pushEnabled ? theme.warning : undefined}
+          theme={theme}
+          right={(
+            <Switch
+              value={pushEnabled && pushSupported}
+              disabled={!pushSupported || !onPushChange}
+              onValueChange={(next) => onPushChange?.(next)}
+              trackColor={{ false: theme.border, true: theme.accent }}
+              thumbColor={theme.surface}
+            />
+          )}
+        />
+      </View>
+
 
       {/* Logout */}
       <Pressable
@@ -188,6 +240,18 @@ export function SettingsScreen({
           não há atualização automática nem aviso, e a frota fica com versões
           misturadas sem ninguém saber. O `build-client.sh` já publica o
           manifesto ao lado do APK — aqui só se compara e se oferece o link. */}
+      {precisaAtualizar ? (
+        <View style={[styles.atualizacao, { borderColor: theme.danger, backgroundColor: theme.surface }]}>
+          <Icon name="alert" size={18} color={theme.danger} strokeWidth={2} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.atualizacaoTitulo, { color: theme.text }]}>Atualize o aplicativo</Text>
+            <Text style={[styles.atualizacaoSub, { color: theme.textSub }]}>
+              Esta instalação exige uma versão mais nova. Enquanto isso, algumas telas podem falhar.
+            </Text>
+          </View>
+        </View>
+      ) : null}
+
       {atualizacao ? (
         <Pressable
           accessibilityRole="button"

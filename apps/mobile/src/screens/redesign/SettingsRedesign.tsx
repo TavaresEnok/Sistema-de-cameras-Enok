@@ -29,6 +29,11 @@ interface Props {
   onLogout: () => void;
   onCamerasChanged?: () => void;
   facilityName?: string;
+  /** Alertas de movimento neste aparelho (push). */
+  pushEnabled?: boolean;
+  /** Falso quando o aparelho não suporta push (emulador, permissão negada). */
+  pushSupported?: boolean;
+  onPushChange?: (enabled: boolean) => void;
 }
 
 function initials(name?: string | null): string {
@@ -38,6 +43,7 @@ function initials(name?: string | null): string {
 
 export function SettingsRedesign(props: Props) {
   const { user, apiUrl, token, connected, biometricAvailable, biometricEnabled, biometricLabel, onBiometricChange, onLogout, onCamerasChanged, facilityName } = props;
+  const { pushEnabled = true, pushSupported = true, onPushChange } = props;
   const { theme, themeMode, setThemeMode } = useTheme();
   const [addCameraOpen, setAddCameraOpen] = useState(false);
   const [atualizacao, setAtualizacao] = useState<AtualizacaoDisponivel | null>(null);
@@ -124,6 +130,21 @@ export function SettingsRedesign(props: Props) {
             <>
               <View style={s.divider} />
               <Prefs theme={theme} s={s} icon="lock" label={`Entrar com ${biometricLabel}`} value={biometricEnabled} onChange={onBiometricChange} />
+            </>
+          ) : null}
+          {/* O push já era registrado ao entrar, mas não havia como DESLIGAR:
+              quem não queria ser acordado precisava desinstalar o app. */}
+          {onPushChange ? (
+            <>
+              <View style={s.divider} />
+              <Prefs
+                theme={theme}
+                s={s}
+                icon="bell"
+                label={pushSupported ? 'Alertas neste aparelho' : 'Alertas indisponíveis aqui'}
+                value={pushEnabled && pushSupported}
+                onChange={(v) => { if (pushSupported) onPushChange(v); }}
+              />
             </>
           ) : null}
         </View>

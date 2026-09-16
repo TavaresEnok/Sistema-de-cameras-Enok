@@ -50,6 +50,13 @@ interface Props {
   myRecordings: SavedClip[];
   notificationsMuted: boolean;
   onToggleNotifications: (c: Camera) => void;
+  /** Áudio ao vivo: quem pede o perfil com som ao servidor é o App. */
+  audioLigado?: boolean;
+  onAudioLigadoChange?: (ligado: boolean) => void;
+  /** Gravação da câmera NO SISTEMA (acervo), diferente do clipe no aparelho. */
+  gravacaoSistemaAtiva?: boolean;
+  gravacaoSistemaOcupada?: boolean;
+  onToggleGravacaoSistema?: (c: Camera) => void;
   onBack: () => void;
   onSendPtz: (d: Direction) => void;
   onToggleRecording: (c: Camera) => void;
@@ -88,6 +95,7 @@ export function LiveScreenRedesign(props: Props) {
   const { camera, topInset, streamUrl, whepUrl, posterUrl, hdUrl, onRequestHd, onExitHd, detections,
     recordings, recordingsLoading, recordingDate, activePlayback, recordingActive, ptzActive, ptzFeedback,
     canPlayback, canDownload, myRecordings, notificationsMuted, onToggleNotifications, onBack, onSendPtz, onToggleRecording,
+    audioLigado = false, onAudioLigadoChange, gravacaoSistemaAtiva = false, gravacaoSistemaOcupada = false, onToggleGravacaoSistema,
     onSnapshot, onOpenPlayback, onClosePlayback, onSelectDate, onDownloadRecording, onPlayLocal, onDeleteLocal } = props;
   const { theme } = useTheme();
   const s = makeStyles(theme);
@@ -97,7 +105,8 @@ export function LiveScreenRedesign(props: Props) {
 
   const [mode, setMode] = useState<'live' | 'rec'>('live');
   const [ptzOpen, setPtzOpen] = useState(false);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(!audioLigado);
+  useEffect(() => { setMuted(!audioLigado); }, [audioLigado]);
   // null = ainda não sabemos (conectando/HLS); false = stream sem faixa de áudio.
   const [audioAvailable, setAudioAvailable] = useState<boolean | null>(null);
   const [status, setStatus] = useState<LiveStatus>('connecting');
@@ -219,7 +228,7 @@ export function LiveScreenRedesign(props: Props) {
         ) : null}
         {!isPlaying ? (
           <View style={[s.fsBottom, { bottom: 40 + insets.bottom, left: insets.left, right: insets.right }]}>
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Áudio" style={[s.fsBtn, !muted && audioAvailable !== false && s.fsBtnOn]} disabled={audioAvailable === false} onPress={() => setMuted((m) => !m)} activeOpacity={0.8}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Áudio" style={[s.fsBtn, !muted && audioAvailable !== false && s.fsBtnOn]} disabled={audioAvailable === false} onPress={() => { const querSom = muted; setMuted(!querSom); onAudioLigadoChange?.(querSom); }} activeOpacity={0.8}>
               <Icon name="mic" size={20} color={audioAvailable === false ? 'rgba(255,255,255,0.4)' : '#fff'} />
             </TouchableOpacity>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="Tirar foto" style={s.fsBtn} onPress={() => onSnapshot(camera)} activeOpacity={0.8}>
@@ -297,12 +306,15 @@ export function LiveScreenRedesign(props: Props) {
         <View style={{ flex: 1, paddingBottom: 10 + insets.bottom }}>
           {/* Barra de ações */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.actionsRow} contentContainerStyle={s.actions}>
-            <ActionBtn s={s} theme={theme} icon="mic" label={audioAvailable === false ? 'Sem áudio' : 'Áudio'} active={!muted && audioAvailable !== false} disabled={audioAvailable === false} onPress={() => setMuted((m) => !m)} />
+            <ActionBtn s={s} theme={theme} icon="mic" label={audioAvailable === false ? 'Sem áudio' : 'Áudio'} active={!muted && audioAvailable !== false} disabled={audioAvailable === false} onPress={() => { const querSom = muted; setMuted(!querSom); onAudioLigadoChange?.(querSom); }} />
             <ActionBtn s={s} theme={theme} icon="camera" label="Capturar" onPress={() => onSnapshot(camera)} />
             <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label="Gravar" active={recordingActive} danger={recordingActive} onPress={() => onToggleRecording(camera)} />
             <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'HD' : 'Economia'} active={hdMode} onPress={toggleHd} />
             <ActionBtn s={s} theme={theme} icon="crosshair" label="PTZ" active={ptzOpen} disabled={!canPtz} onPress={() => setPtzOpen((p) => !p)} />
             <ActionBtn s={s} theme={theme} icon="bell" label={notificationsMuted ? 'Silenciada' : 'Notificar'} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
+            {onToggleGravacaoSistema ? (
+              <ActionBtn s={s} theme={theme} icon="radio" label={gravacaoSistemaAtiva ? 'Gravando' : 'Gravar 24h'} active={gravacaoSistemaAtiva} disabled={gravacaoSistemaOcupada} onPress={() => onToggleGravacaoSistema(camera)} />
+            ) : null}
             <ActionBtn s={s} theme={theme} icon="expand" label="Tela" onPress={() => setFullscreen(true)} />
           </ScrollView>
 

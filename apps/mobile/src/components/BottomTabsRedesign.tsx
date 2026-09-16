@@ -1,5 +1,5 @@
 /**
- * Tab bar do redesign — flutuante, 4 abas (Início/Câmeras/Eventos/Ajustes), como o mockup.
+ * Tab bar do redesign — flutuante, como o mockup (Início/Câmeras/Ronda/Revisão/Eventos/Ajustes).
  * Mapeia para as abas existentes do app (central/mosaico/alarmes/ajustes) para não mudar
  * a lógica de navegação. Reprodução continua acessível de dentro das telas.
  */
@@ -19,6 +19,7 @@ interface Props {
 const TABS: Array<{ id: Tab; label: string; icon: IconName }> = [
   { id: 'central', label: 'Início', icon: 'home' },
   { id: 'mosaico', label: 'Câmeras', icon: 'camera' },
+  { id: 'ronda', label: 'Ronda', icon: 'clock' },
   { id: 'revisao', label: 'Revisão', icon: 'eye' },
   { id: 'alarmes', label: 'Eventos', icon: 'bell' },
   { id: 'ajustes', label: 'Ajustes', icon: 'settings' },

@@ -21,12 +21,20 @@ export function clearStreamUrlsCache(cameraId?: string) {
   }
 }
 
+/**
+ * Modos de entrega aceitos pelo servidor. Os terminados em `-audio` são os
+ * ÚNICOS que trazem faixa de áudio tocável no celular: no caminho WebRTC o
+ * servidor só converte o áudio para Opus quando ele é pedido. Sem isso o botão
+ * de microfone liga e desliga um som que nunca chega.
+ */
+export type ModoDeEntrega = 'grid' | 'original' | 'grid-audio' | 'original-audio';
+
 export async function requestCachedStreamUrls<T>(
   apiUrl: string,
   cameraId: string,
   token?: string,
   init?: RequestInit,
-  viewMode?: 'grid' | 'original',
+  viewMode?: ModoDeEntrega,
 ): Promise<T> {
   // A chave inclui o modo — 'original' (máxima qualidade/H.265) usa outro caminho
   // no MediaMTX e não pode compartilhar cache com Economia (grid/H.264).

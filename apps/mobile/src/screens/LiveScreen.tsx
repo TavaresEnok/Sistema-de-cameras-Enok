@@ -74,6 +74,14 @@ interface LiveScreenProps {
   downloadingIds: string[];
   notificationsMuted: boolean;
   onToggleNotifications: (camera: Camera) => void;
+  /** Áudio ao vivo ligado? Quem decide é o App: o som só existe se ele pedir
+   *  ao servidor o perfil COM áudio (no WebRTC o áudio só vem quando pedido). */
+  audioLigado?: boolean;
+  onAudioLigadoChange?: (ligado: boolean) => void;
+  /** Gravação da câmera NO SISTEMA (vai para o acervo), diferente do clipe local. */
+  gravacaoSistemaAtiva?: boolean;
+  gravacaoSistemaOcupada?: boolean;
+  onToggleGravacaoSistema?: (camera: Camera) => void;
 }
 
 const VIDEO_TEXT = '#fff';
@@ -121,11 +129,14 @@ export function LiveScreen({
   onOpenPlayback, onClosePlayback, onRetryPlayback, onNaoDecodificou, onProgressoPlayback, onDownloadRecording, onPreviousDate, onNextDate,
   onLoadMoreRecordings, onRetryRecordings, onThumbnailError, onRefreshStream,
   canPlayback, canDownload, downloadingIds,
-  notificationsMuted, onToggleNotifications, abrindoGravacaoId }: LiveScreenProps) {
+  notificationsMuted, onToggleNotifications, abrindoGravacaoId,
+  audioLigado = false, onAudioLigadoChange, gravacaoSistemaAtiva = false,
+  gravacaoSistemaOcupada = false, onToggleGravacaoSistema }: LiveScreenProps) {
   const { theme } = useTheme();
   const [liveStatus, setLiveStatus] = useState<LiveStatus>('idle');
   const [videoSize, setVideoSize] = useState({ width: 0, height: 0 });
-  const [muted, setMuted] = useState(true); // CCTV abre mudo por padrão
+  const [muted, setMuted] = useState(!audioLigado); // CCTV abre mudo por padrão
+  useEffect(() => { setMuted(!audioLigado); }, [audioLigado]);
   // null = ainda não sabemos (conectando/HLS); false = stream sem faixa de áudio.
   const [audioAvailable, setAudioAvailable] = useState<boolean | null>(null);
   // Máxima qualidade (HLS H.265 passthrough). hdUrl chega do App sob demanda.
@@ -199,7 +210,12 @@ export function LiveScreen({
       Alert.alert('Áudio', 'Atenção: esta câmera não possui áudio.');
       return;
     }
-    setMuted((m) => !m);
+    const querSom = muted;
+    setMuted(!querSom);
+    // Sem este aviso ao App, o botão só mexia no volume de um stream que vinha
+    // SEM faixa de áudio: no caminho WebRTC o servidor só converte o som quando
+    // o perfil com áudio é pedido. O botão ligava algo que nunca chegava.
+    onAudioLigadoChange?.(querSom);
   };
 
   const videoEl = (
@@ -384,6 +400,16 @@ export function LiveScreen({
                 <ControlButton label="Foto" icon="camera" c={c} onPress={() => onSnapshot(camera)} />
                 <ControlButton label="Áudio" icon="mic" c={c} active={!muted && audioAvailable !== false} disabled={playing} onPress={toggleAudio} />
                 <ControlButton label="Alertas" icon="bell" c={c} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
+                {onToggleGravacaoSistema ? (
+                  <ControlButton
+                    label={gravacaoSistemaAtiva ? 'Gravando' : 'Gravar 24h'}
+                    icon="radio"
+                    c={c}
+                    active={gravacaoSistemaAtiva}
+                    disabled={gravacaoSistemaOcupada}
+                    onPress={() => onToggleGravacaoSistema(camera)}
+                  />
+                ) : null}
                 <ControlButton label="Tela" icon="expand" c={c} active onPress={() => setFullscreen(false)} />
               </View>
               <PtzControls c={c} />
@@ -426,6 +452,16 @@ export function LiveScreen({
         <ControlButton label="Foto" icon="camera" c={c} onPress={() => onSnapshot(camera)} />
         <ControlButton label="Áudio" icon="mic" c={c} active={!muted && audioAvailable !== false} disabled={playing} onPress={toggleAudio} />
         <ControlButton label="Alertas" icon="bell" c={c} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
+                {onToggleGravacaoSistema ? (
+                  <ControlButton
+                    label={gravacaoSistemaAtiva ? 'Gravando' : 'Gravar 24h'}
+                    icon="radio"
+                    c={c}
+                    active={gravacaoSistemaAtiva}
+                    disabled={gravacaoSistemaOcupada}
+                    onPress={() => onToggleGravacaoSistema(camera)}
+                  />
+                ) : null}
         <ControlButton label="PTZ" icon="crosshair" c={c} active={lowerMode === 'ptz'} disabled={playing} onPress={() => setLowerMode((m) => (m === 'ptz' ? 'timeline' : 'ptz'))} />
         <ControlButton label="Tela" icon="expand" c={c} onPress={() => setFullscreen(true)} />
       </View>

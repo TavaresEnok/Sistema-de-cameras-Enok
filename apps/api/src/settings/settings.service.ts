@@ -86,6 +86,12 @@ const SETTING_SPECS: Record<string, SettingSpec> = {
   maxLoginAttempts: { type: 'number', default: 5, min: 3, max: 20 },
   requireStrongPassword: { type: 'boolean', default: true },
   alarmAudioEnabled: { type: 'boolean', default: true },
+  // VERSÃO MÍNIMA DO APP (Android versionCode). 0 = sem exigência.
+  //
+  // Sem isto, um APK antigo conversa com um servidor novo e quebra em silêncio:
+  // a tela mostra erro genérico e ninguém liga o defeito à versão. O app lê este
+  // número no arranque e avisa o usuário para atualizar, em vez de falhar mudo.
+  minMobileVersionCode: { type: 'number', default: 0, min: 0, max: 1000000 },
   // Aceleração por GPU do transcode de vídeo (ffmpeg NVENC). Default OFF: só é
   // ligado pelo módulo de GPU em Configurações depois que o auto-teste passa.
   gpuAccelerationEnabled: { type: 'boolean', default: false },
@@ -218,6 +224,9 @@ export class SettingsService {
     // Também aqui, pelo mesmo motivo: o menu é montado logo após o login e o web
     // já busca /settings/branding no arranque. Cada instalação tem a sua lista.
     branding.hiddenNavPaths = all.hiddenNavPaths;
+    // Mesma carona: o app já lê /settings/branding no arranque, então a versão
+    // mínima exigida chega sem uma requisição a mais.
+    branding.minMobileVersionCode = all.minMobileVersionCode;
     return branding;
   }
 

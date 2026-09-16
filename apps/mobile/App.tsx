@@ -29,7 +29,10 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { request, normalizeServerUrl, setTokenRefreshHandler, setUnauthorizedHandler } from './src/services/api';
 import { authenticatedMediaUrl, isSecureMediaUrl } from './src/services/media-urls';
 import { fetchBranding, isLightColor } from './src/services/branding';
-import { clearStreamUrlsCache, requestCachedStreamUrls } from './src/services/stream-urls-cache';
+import { clearStreamUrlsCache, requestCachedStreamUrls, type ModoDeEntrega } from './src/services/stream-urls-cache';
+import { RondaScreen } from './src/screens/RondaScreen';
+import { lerPreferenciaDePush, salvarPreferenciaDePush } from './src/services/pushPreference';
+import type { MosaicoDoApp, RondaDoApp } from './src/utils/ronda';
 import {
   saveToGallery, addClip, listClips, removeClip, createClipThumbnail,
   listPendingClips, savePendingClip, removePendingClip,
@@ -103,6 +106,33 @@ function AppInner() {
   // Câmera pedida por um push tocado antes da lista de câmeras carregar (cold start).
   const [pendingPushCameraId, setPendingPushCameraId] = useState<string | null>(null);
   const [notificationsMuted, setNotificationsMuted] = useState(false);
+  // ÁUDIO AO VIVO: o som só existe se PEDIRMOS o perfil com áudio ao servidor
+  // (no WebRTC o áudio só é convertido sob demanda). Antes o botão da tela
+  // mexia no volume de um stream que vinha sem faixa de áudio nenhuma.
+  const [audioAoVivo, setAudioAoVivo] = useState(false);
+  const audioAoVivoRef = useRef(false);
+  useEffect(() => { audioAoVivoRef.current = audioAoVivo; }, [audioAoVivo]);
+  // GRAVAÇÃO NO SISTEMA (acervo) — diferente do clipe local do botão "Gravar".
+  const [gravacaoSistemaAtiva, setGravacaoSistemaAtiva] = useState(false);
+  const [gravacaoSistemaOcupada, setGravacaoSistemaOcupada] = useState(false);
+  // Alertas neste aparelho: o push já funcionava, mas não havia como desligar.
+  const [pushHabilitado, setPushHabilitado] = useState(true);
+  const [pushSuportado, setPushSuportado] = useState(true);
+  const pushHabilitadoRef = useRef(true);
+  useEffect(() => { pushHabilitadoRef.current = pushHabilitado; }, [pushHabilitado]);
+  useEffect(() => { void lerPreferenciaDePush().then(setPushHabilitado); }, []);
+  useEffect(() => {
+    if (!liveCamera) {
+      setGravacaoSistemaAtiva(false);
+      setAudioAoVivo(false);
+      audioAoVivoRef.current = false;
+      return;
+    }
+    void carregarEstadoGravacao(liveCamera.id);
+  }, [liveCamera?.id]);
+  // RONDA: o servidor já marcava quais aparecem no celular e o app ignorava.
+  const [rondas, setRondas] = useState<RondaDoApp[]>([]);
+  const [mosaicos, setMosaicos] = useState<MosaicoDoApp[]>([]);
   const [canManageAlarms, setCanManageAlarms] = useState(false);
   const [streamUrls, setStreamUrls] = useState<Record<string, string | null>>({});
   const [streamWhep, setStreamWhep] = useState<Record<string, string | null>>({});
@@ -394,9 +424,14 @@ function AppInner() {
     setUnauthorizedHandler((requestToken) => {
       if (requestToken === sessionTokenRef.current) void logout(false);
     });
-    void registerForPush(session.apiUrl, session.token, controller.signal).then((expoToken) => {
-      if (disposed && expoToken) void unregisterFromPush(session.apiUrl, session.token, expoToken);
-    });
+    if (pushHabilitadoRef.current) {
+      void registerForPush(session.apiUrl, session.token, controller.signal).then((expoToken) => {
+        if (disposed && expoToken) void unregisterFromPush(session.apiUrl, session.token, expoToken);
+        // Token nulo = aparelho sem push (emulador, permissão negada). A tela
+        // diz isso, em vez de mostrar um botão que não faria nada.
+        if (!disposed) setPushSuportado(Boolean(expoToken));
+      });
+    }
     const unsubscribe = subscribeToNotificationTaps((data) => {
       setHighlightedAlarmId(data.alarmId ?? null);
       setTab('alarmes');
@@ -465,7 +500,7 @@ function AppInner() {
     const token = session.token;
     const generation = ++hdRequestRef.current;
     try {
-      const data = await requestCachedStreamUrls<StreamUrls>(session.apiUrl, cameraId, session.token, undefined, 'original');
+      const data = await requestCachedStreamUrls<StreamUrls>(session.apiUrl, cameraId, session.token, undefined, modoMaxima());
       if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return false;
       const hls = authenticatedMediaUrl(data.protocols?.hlsUrl, session.apiUrl, data.streamToken);
       if (!hls) throw new Error('sem HLS');
@@ -654,6 +689,7 @@ function AppInner() {
       setSelectedCameraId((current) => (current && data.some((camera) => camera.id === current) ? current : data[0]?.id ?? null));
       void reloadAlarms();
       void loadReviewUnseen();
+      void carregarRondas();
       // Status sonda a cada 30s; posters têm renovação própria (3,5 min) para
       // não forçar dezenas de frames a cada ciclo silencioso.
       if (!quiet) void loadAllPosters(data);
@@ -674,7 +710,29 @@ function AppInner() {
     }
   };
 
-  const loadStream = async (cameraId: string, viewMode: 'grid' | 'original' = 'original', force = false) => {
+  /** Perfil da grade, com ou sem áudio conforme o operador pediu. */
+  const modoDaGrade = (): ModoDeEntrega => (audioAoVivoRef.current ? 'grid-audio' : 'grid');
+  /** Perfil de máxima qualidade, idem. */
+  const modoMaxima = (): ModoDeEntrega => (audioAoVivoRef.current ? 'original-audio' : 'original');
+
+  /**
+   * Rondas e mosaicos do usuário. Best-effort: instalação antiga (sem estas
+   * rotas) apenas fica sem a aba, em vez de quebrar o carregamento.
+   */
+  const carregarRondas = async () => {
+    if (!session) return;
+    const token = session.token;
+    const vazio = { items: [] as never[] };
+    const [listaRondas, listaMosaicos] = await Promise.all([
+      request<{ items: RondaDoApp[] }>(session.apiUrl, '/rondas', session.token).catch(() => vazio),
+      request<{ items: MosaicoDoApp[] }>(session.apiUrl, '/live-layouts', session.token).catch(() => vazio),
+    ]);
+    if (sessionTokenRef.current !== token) return;
+    setRondas(listaRondas?.items ?? []);
+    setMosaicos(listaMosaicos?.items ?? []);
+  };
+
+  const loadStream = async (cameraId: string, viewMode: ModoDeEntrega = 'original', force = false) => {
     if (!session) return;
     const token = session.token;
     const generation = (streamRequestRef.current.get(cameraId) ?? 0) + 1;
@@ -697,11 +755,18 @@ function AppInner() {
       if (session.apiUrl.startsWith('https://') && ((hlsUrl && !isSecureMediaUrl(hlsUrl)) || (whepUrl && !isSecureMediaUrl(whepUrl)))) {
         setLastSyncError('A mídia ao vivo precisa ser publicada por HTTPS nesta instalação.');
       }
-    } catch {
+    } catch (error) {
       if (sessionTokenRef.current !== token || streamRequestRef.current.get(cameraId) !== generation) return;
       setStreamUrls((current) => ({ ...current, [cameraId]: null }));
       setStreamWhep((current) => ({ ...current, [cameraId]: null }));
       setStreamPosters((current) => ({ ...current, [cameraId]: null }));
+      // O servidor explica o motivo (ex.: "Câmera desativada. Reative-a nas
+      // configurações"). Engolir isso deixava o operador diante de um quadro
+      // preto sem saber que a câmera havia sido desligada de propósito.
+      const motivo = error instanceof Error ? error.message : '';
+      if (motivo && liveCameraIdRef.current === cameraId && !/\b(401|403)\b/.test(motivo)) {
+        setLastSyncError(motivo);
+      }
     }
   };
 
@@ -1175,6 +1240,66 @@ function AppInner() {
   // Botão Gravar (SÓ celular): grava no servidor o trecho EXATO start→stop e,
   // ao parar, baixa o arquivo pro aparelho. Transições são bloqueadas para evitar
   // starts/stops concorrentes e clipes sem referência.
+  /** Liga/desliga o som da câmera aberta pedindo ao servidor o perfil certo. */
+  const definirAudioAoVivo = (ligado: boolean) => {
+    setAudioAoVivo(ligado);
+    audioAoVivoRef.current = ligado;
+    const cameraId = liveCameraIdRef.current;
+    if (!cameraId) return;
+    void loadStream(cameraId, ligado ? 'grid-audio' : 'grid', true);
+    if (hdUrl) void loadHdStream(cameraId);
+  };
+
+  /** Estado da gravação da câmera NO SISTEMA (a que vai para o acervo). */
+  const carregarEstadoGravacao = async (cameraId: string) => {
+    if (!session) return;
+    const token = session.token;
+    try {
+      const r = await request<{ isRecording?: boolean; intendedRecording?: boolean }>(
+        session.apiUrl, `/recordings/cameras/${encodeURIComponent(cameraId)}/recording/status`, session.token,
+      );
+      if (sessionTokenRef.current !== token || liveCameraIdRef.current !== cameraId) return;
+      setGravacaoSistemaAtiva(Boolean(r?.isRecording || r?.intendedRecording));
+    } catch {
+      if (sessionTokenRef.current !== token || liveCameraIdRef.current !== cameraId) return;
+      setGravacaoSistemaAtiva(false);
+    }
+  };
+
+  /**
+   * Arma ou para a gravação da câmera no sistema. Até aqui o app só sabia
+   * capturar um clipe para o aparelho: quem estava em campo via a cena e não
+   * conseguia mandar gravar no acervo.
+   */
+  const toggleGravacaoSistema = async (camera: Camera) => {
+    if (!session || gravacaoSistemaOcupada) return;
+    const alvo = !gravacaoSistemaAtiva;
+    setGravacaoSistemaOcupada(true);
+    try {
+      await request(
+        session.apiUrl,
+        `/recordings/cameras/${encodeURIComponent(camera.id)}/recording/${alvo ? 'start' : 'stop'}`,
+        session.token,
+        { method: 'POST', body: JSON.stringify({}) },
+      );
+      setGravacaoSistemaAtiva(alvo);
+    } catch (error) {
+      const motivo = error instanceof Error ? error.message : 'Não foi possível mudar a gravação.';
+      Alert.alert(alvo ? 'Não foi possível gravar' : 'Não foi possível parar', motivo);
+    } finally {
+      setGravacaoSistemaOcupada(false);
+    }
+  };
+
+  const mudarPreferenciaDePush = (habilitado: boolean) => {
+    setPushHabilitado(habilitado);
+    pushHabilitadoRef.current = habilitado;
+    void salvarPreferenciaDePush(habilitado);
+    if (!session) return;
+    if (habilitado) void registerForPush(session.apiUrl, session.token).then((t) => setPushSuportado(Boolean(t)));
+    else void unregisterFromPush(session.apiUrl, session.token);
+  };
+
   const toggleRecording = async (camera: Camera) => {
     if (!session || recordingBusy) return;
     if (clipPhaseRef.current === 'recording') await finalizeClip(camera, clipIdRef.current!, false);
@@ -1644,6 +1769,11 @@ function AppInner() {
             onBack={() => leaveLive()}
             onSendPtz={sendPtz}
             onToggleRecording={toggleRecording}
+            audioLigado={audioAoVivo}
+            onAudioLigadoChange={definirAudioAoVivo}
+            gravacaoSistemaAtiva={gravacaoSistemaAtiva}
+            gravacaoSistemaOcupada={gravacaoSistemaOcupada}
+            onToggleGravacaoSistema={(c) => { void toggleGravacaoSistema(c); }}
             onSnapshot={takeSnapshot}
             onOpenPlayback={openPlayback}
             onClosePlayback={closePlayback}
@@ -1690,6 +1820,11 @@ function AppInner() {
           onBack={() => leaveLive()}
           onSendPtz={sendPtz}
           onToggleRecording={toggleRecording}
+          audioLigado={audioAoVivo}
+          onAudioLigadoChange={definirAudioAoVivo}
+          gravacaoSistemaAtiva={gravacaoSistemaAtiva}
+          gravacaoSistemaOcupada={gravacaoSistemaOcupada}
+          onToggleGravacaoSistema={(c) => { void toggleGravacaoSistema(c); }}
           onSnapshot={takeSnapshot}
           onOpenPlayback={openPlayback}
           onClosePlayback={closePlayback}
@@ -1871,6 +2006,21 @@ function AppInner() {
           />
         )}
 
+        {tab === 'ronda' && (
+          <RondaScreen
+            rondas={rondas}
+            mosaicos={mosaicos}
+            cameras={cameras}
+            streamUrls={streamUrls}
+            streamWhep={streamWhep}
+            streamPosters={streamPosters}
+            refreshing={refreshing}
+            onRefresh={() => { void loadAll(); }}
+            onRequestStreams={(ids) => { void Promise.all(ids.map((id) => loadStream(id, modoDaGrade()))); }}
+            onOpenCamera={openLive}
+          />
+        )}
+
         {tab === 'alarmes' && (
           isRedesign ? (
             <EventsRedesign
@@ -1918,6 +2068,9 @@ function AppInner() {
               onLogout={() => { void logout(); }}
               onCamerasChanged={() => { void loadAll(true); }}
               facilityName={branding.facilityName}
+              pushEnabled={pushHabilitado}
+              pushSupported={pushSuportado}
+              onPushChange={mudarPreferenciaDePush}
             />
           ) : (
           <SettingsScreen
@@ -1931,6 +2084,9 @@ function AppInner() {
             onBiometricChange={(enabled) => { void changeBiometricPreference(enabled); }}
             onLogout={() => { void logout(); }}
             onCamerasChanged={() => { void loadAll(true); }}
+            pushEnabled={pushHabilitado}
+            pushSupported={pushSuportado}
+            onPushChange={mudarPreferenciaDePush}
           />
           )
         )}
