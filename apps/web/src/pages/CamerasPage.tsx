@@ -1333,10 +1333,6 @@ export default function CamerasPage() {
 
   const diagnosePtzCamera = async (camera: Camera) => {
     if (!accessToken) return;
-    if (!camera.ptzCapable) {
-      toast({ title: 'PTZ indisponível', description: 'Esta câmera não possui PTZ habilitado.' });
-      return;
-    }
     if (diagnosingPtzCameraId) return;
     setDiagnosingPtzCameraId(camera.id);
     try {
@@ -1822,21 +1818,17 @@ export default function CamerasPage() {
                 <Link href="/playback" className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors">
                   <PlaySquare className="w-4 h-4" /> Abrir Reprodução
                 </Link>
-                {selectedCam.ptzCapable && (
-                  <Link href={`/ptz?cameraId=${encodeURIComponent(selectedCam.id)}`} className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors">
-                    <Crosshair className="w-4 h-4" /> Controle PTZ
-                  </Link>
-                )}
-                {selectedCam.ptzCapable && (
-                  <button
-                    onClick={() => void diagnosePtzCamera(selectedCam)}
-                    className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors"
-                    disabled={diagnosingPtzCameraId === selectedCam.id}
-                  >
-                    <Wifi className={`w-4 h-4 ${diagnosingPtzCameraId === selectedCam.id ? 'animate-pulse' : ''}`} />
-                    {diagnosingPtzCameraId === selectedCam.id ? 'Diagnosticando PTZ...' : 'Diagnosticar PTZ'}
-                  </button>
-                )}
+                <Link href={`/ptz?cameraId=${encodeURIComponent(selectedCam.id)}`} className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors">
+                  <Crosshair className="w-4 h-4" /> Controle PTZ
+                </Link>
+                <button
+                  onClick={() => void diagnosePtzCamera(selectedCam)}
+                  className="w-full h-9 rounded border border-border text-xs flex items-center justify-center gap-2 hover:bg-[hsl(var(--accent))] transition-colors"
+                  disabled={diagnosingPtzCameraId === selectedCam.id}
+                >
+                  <Wifi className={`w-4 h-4 ${diagnosingPtzCameraId === selectedCam.id ? 'animate-pulse' : ''}`} />
+                  {diagnosingPtzCameraId === selectedCam.id ? 'Diagnosticando PTZ...' : 'Diagnosticar PTZ'}
+                </button>
               </div>
             </div>
           </motion.div>

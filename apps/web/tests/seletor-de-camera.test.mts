@@ -75,7 +75,7 @@ test('o seletor é operável por teclado e anunciado a leitor de tela', () => {
   assert.match(fonte, /aria-label=/);
 });
 
-test('a tela de PTZ não trata "ainda não sondada" como "sem PTZ"', () => {
+test('a tela de PTZ não filtra câmeras pela descoberta automática', () => {
   // A distinção que fez a diferença no caso real: as câmeras NOC têm PTZ, mas
   // estavam offline quando a varredura passou. Dizer só "nenhuma câmera
   // compatível" faria o dono concluir que o sistema não as reconhece.
@@ -89,7 +89,8 @@ test('a tela de PTZ não trata "ainda não sondada" como "sem PTZ"', () => {
   assert.match(helper, /nunca-sondada-online/, 'não separa o estado pendente');
   assert.match(helper, /nunca-sondada-offline/, 'não distingue pendente de inalcançável');
   const fonte = read('src/pages/PTZPage.tsx');
-  assert.match(fonte, /situacaoDeDeteccao\(/, 'a página não usa a explicação por câmera');
+  assert.match(fonte, /filter\(\(camera\) => camera\.enabled\)/);
+  assert.doesNotMatch(fonte, /camera\.enabled && camera\.ptzCapable/);
 });
 
 test('a capacidade PTZ vem da API, não é deduzida no cliente', () => {

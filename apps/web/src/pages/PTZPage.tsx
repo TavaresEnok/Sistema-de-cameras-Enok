@@ -19,17 +19,11 @@ import { SeletorDeCamera } from '../components/SeletorDeCamera';
 import { Slider } from '@/components/ui/slider';
 import { toast } from '../hooks/use-toast';
 import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
-import axios from 'axios';
 import { getApiBaseUrl } from '../lib/api-base';
 import { sendPtzCommand, type PTZDirection } from '../lib/ptz';
 import { useAuthStore } from '../store/authStore';
 import { PosicoesDaCamera } from '../components/PosicoesDaCamera';
 import { useVmsDataStore } from '../store/vmsDataStore';
-import {
-  situacaoDeDeteccao,
-  candidatasParaTeste,
-  explicarResultadoDoTeste,
-} from '../lib/deteccao-de-ptz';
 
 type CommandState = 'idle' | 'sending' | 'ok' | 'error';
 const API_URL = getApiBaseUrl();
@@ -119,58 +113,12 @@ export default function PTZPage() {
   const accessToken = useAuthStore((state) => state.accessToken);
   const userRole = useAuthStore((state) => state.user?.role ?? 'viewer');
   const cameras = useVmsDataStore((state) => state.cameras);
-  const recarregarCameras = useVmsDataStore((state) => state.load);
   const ptzCameras = useMemo(
     () => cameras
-      .filter((camera) => camera.enabled && camera.ptzCapable)
+      .filter((camera) => camera.enabled)
       .sort((a, b) => Number(b.isOnline) - Number(a.isOnline) || a.name.localeCompare(b.name, 'pt-BR')),
     [cameras],
   );
-  // Câmeras que o sistema AINDA NÃO conseguiu perguntar — quase sempre porque
-  // estavam offline quando a varredura passou. Elas NÃO são "sem PTZ": a sonda
-  // se recusa a carimbar isso por falta de resposta, e volta a tentar quando a
-  // câmera reaparecer. Sem dizer isto na tela, quem tem uma PTZ fora do ar vê
-  // "nenhuma câmera compatível" e conclui que o sistema não a reconhece.
-  // ── TESTAR UMA CÂMERA À MÃO ───────────────────────────────────────────────
-  // A rota `POST /ptz/:id/probe` e a marcação manual existiam sem botão. Sem
-  // elas na tela, quem sabia que tinha PTZ não tinha o que fazer além de
-  // desconfiar do sistema — que foi exatamente o relato.
-  const [cameraParaTestar, setCameraParaTestar] = useState('');
-  const [testando, setTestando] = useState(false);
-  const [resultadoDoTeste, setResultadoDoTeste] = useState<
-    { titulo: string; detalhe: string; sucesso: boolean } | null
-  >(null);
-
-  const candidatas = useMemo(
-    () => candidatasParaTeste(cameras.filter((c) => c.enabled !== false)),
-    [cameras],
-  );
-
-  const testarCamera = useCallback(async () => {
-    if (!cameraParaTestar || !accessToken) return;
-    setTestando(true);
-    setResultadoDoTeste(null);
-    try {
-      const { data } = await axios.post(
-        `${API_URL}/ptz/${cameraParaTestar}/probe`,
-        {},
-        { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 45_000 },
-      );
-      setResultadoDoTeste(explicarResultadoDoTeste(data ?? {}));
-      // O resultado muda a lista da página inteira: só recarregar a frota
-      // reflete a câmera que acabou de ganhar PTZ.
-      await recarregarCameras().catch(() => undefined);
-    } catch {
-      setResultadoDoTeste({
-        titulo: 'Não foi possível testar',
-        detalhe: 'A verificação não respondeu. Isto não diz nada sobre a câmera ter PTZ ou não.',
-        sucesso: false,
-      });
-    } finally {
-      setTestando(false);
-    }
-  }, [cameraParaTestar, accessToken, recarregarCameras]);
-
   const [selectedCamId, setSelectedCamId] = useState('');
   const [speed, setSpeed] = useState(5);
   const [activeDirection, setActiveDirection] = useState<PTZDirection | null>(null);
@@ -426,14 +374,14 @@ export default function PTZPage() {
       <div className="flex h-full min-h-0 flex-col">
       <div className="toolbar flex-wrap">
         <div className="w-[min(100%,340px)]">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Câmera compatível</div>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Câmera</div>
           <SeletorDeCamera
             cameras={ptzCameras}
             value={selectedCamId}
             onChange={setSelectedCamId}
-            placeholder="Selecione uma câmera PTZ"
+            placeholder="Selecione uma câmera"
             className="h-10 w-full"
-            vazio="Nenhuma câmera com PTZ detectado."
+            vazio="Nenhuma câmera disponível."
           />
         </div>
 
@@ -468,7 +416,7 @@ export default function PTZPage() {
 
       {requestedCameraUnavailable && (
         <div className="mx-4 mt-4 rounded-lg border border-[hsl(var(--status-warning)_/_0.35)] bg-[hsl(var(--status-warning)_/_0.10)] px-4 py-3 text-xs text-[hsl(var(--status-warning))] md:mx-5">
-          A câmera aberta anteriormente não está configurada para PTZ. Selecionamos uma câmera compatível disponível.
+          A câmera aberta anteriormente não está disponível. Selecionamos outra câmera.
         </div>
       )}
 

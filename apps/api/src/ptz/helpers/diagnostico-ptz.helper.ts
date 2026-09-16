@@ -88,7 +88,7 @@ export function diagnosticarFalhaPtz(tentativas: string[]): DiagnosticoPtz {
       causa: 'sem-suporte',
       mensagem:
         'Esta câmera respondeu, mas recusou todos os comandos de movimento — o modelo provavelmente é fixo, '
-        + 'sem PTZ. Se você tem certeza de que ela se move, marque o PTZ manualmente no editor avançado da câmera.',
+        + 'sem PTZ. Se ela se move, confira a porta ONVIF/HTTP e as credenciais configuradas.',
       detalhesTecnicos,
     };
   }
@@ -107,8 +107,8 @@ export function diagnosticarFalhaPtz(tentativas: string[]): DiagnosticoPtz {
   return {
     causa: 'indeterminada',
     mensagem:
-      'A câmera não aceitou o comando de movimento. Rode a detecção de PTZ no editor avançado para o '
-      + 'sistema tentar redescobrir como falar com este equipamento.',
+      'A câmera não aceitou o comando de movimento. Ela pode não ter PTZ; se tiver, confira a porta '
+      + 'ONVIF/HTTP e as credenciais configuradas.',
     detalhesTecnicos,
   };
 }

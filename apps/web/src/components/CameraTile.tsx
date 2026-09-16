@@ -176,17 +176,15 @@ export function CameraTile({
             className="absolute bottom-1 left-1/2 -translate-x-1/2 z-30 flex items-center gap-0.5 rounded-md py-1.5 px-2 bg-black/75 backdrop-blur-[2px]"
             onClick={e => e.stopPropagation()}
           >
-            {camera.ptzCapable && (
-              <button
-                type="button"
-                aria-label={`Abrir controle PTZ de ${camera.name}`}
-                className="w-6 h-6 flex items-center justify-center rounded text-white/50 hover:text-[hsl(var(--primary))] hover:bg-white/8 transition-colors"
-                onClick={() => onAction?.('ptz', camera)}
-                title="Controle PTZ"
-              >
-                <Crosshair className="w-3 h-3" />
-              </button>
-            )}
+            <button
+              type="button"
+              aria-label={`Abrir controle PTZ de ${camera.name}`}
+              className="w-6 h-6 flex items-center justify-center rounded text-white/50 hover:text-[hsl(var(--primary))] hover:bg-white/8 transition-colors"
+              onClick={() => onAction?.('ptz', camera)}
+              title="Controle PTZ"
+            >
+              <Crosshair className="w-3 h-3" />
+            </button>
             <button
               type="button"
               aria-label={`${isManualRecordingActive ? 'Parar' : 'Iniciar'} gravação manual de ${camera.name}`}
