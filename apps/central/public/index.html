@@ -5316,6 +5316,7 @@
           // Mostra os clientes assim que eles chegam; resumo, releases e
           // auditoria continuam em paralelo e atualizam sem apagar a tela.
           render();
+          if (state.view === 'apps') void loadApps();
           void refreshFleetSeries();
 
           const readOptionalJson = async (responsePromise) => {
@@ -5697,6 +5698,13 @@
       // A aba Apps é dirigida pela lista de INSTALAÇÕES (todos os clientes),
       // juntando o status de build vindo do agente. Assim Apps e Clientes batem.
       async function loadApps() {
+        // A lista da frota e o agente de APK são consultas separadas. Antes da
+        // primeira resposta da frota, um array vazio ainda não quer dizer que
+        // não há clientes; o `load()` nos chama de novo quando ela chegar.
+        if (!state.user || !state.loaded) {
+          renderApps(state.installations, {});
+          return;
+        }
         const agentBySlug = {};
         try {
           const res = await fetch(centralUrl('/api/admin/apk/clients'), { credentials: 'include' });
@@ -5711,6 +5719,11 @@
       }
       function renderApps(installs, agentBySlug) {
         const box = document.querySelector('#apps-list');
+        if (!box) return;
+        if (!state.loaded || state.loading) {
+          box.innerHTML = `<section class="panel"><div style="padding:8px 0">${skeleton(3, 15)}</div></section>`;
+          return;
+        }
         if (!installs || !installs.length) {
           box.innerHTML = '<section class="panel"><div class="empty"><div><strong>Nenhum cliente ainda</strong><div class="subtext">Cadastre um em <b>Instalação</b> — o app aparece aqui.</div></div></div></section>';
           return;
