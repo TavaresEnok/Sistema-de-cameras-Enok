@@ -52,6 +52,14 @@ type BrandingState = {
   load: () => Promise<void>;
 };
 
+// A identidade visual não pode depender de a API estar disponível exatamente
+// no instante em que a aba abre. Durante um deploy curto a primeira chamada
+// pode falhar; antes disso deixava a instalação com logo vazia e cores padrão
+// até o operador recarregar a página manualmente.
+let brandingRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let brandingRetryDelayMs = 2_000;
+const BRANDING_RETRY_MAX_MS = 60_000;
+
 // Injeta/remove um <style> que sobrescreve o accent (primary/ring) do tema com a
 // cor do cliente. Só age quando há cor válida e o cliente não usa a paleta padrão;
 // caso contrário remove o override (DRAC padrão intocado).
@@ -104,7 +112,7 @@ function applyBrandColors(data: PublicBranding) {
   el.textContent = css;
 }
 
-export const useBrandingStore = create<BrandingState>((set) => ({
+export const useBrandingStore = create<BrandingState>((set, get) => ({
   facilityName: PRODUCT_NAME,
   logoDataUrl: '',
   // Default FALSE: enquanto o servidor não responde, a página de IA fica
@@ -126,8 +134,21 @@ export const useBrandingStore = create<BrandingState>((set) => ({
         loaded: true,
       });
       applyBrandColors(data);
+      if (brandingRetryTimer) {
+        clearTimeout(brandingRetryTimer);
+        brandingRetryTimer = null;
+      }
+      brandingRetryDelayMs = 2_000;
     } catch {
       set((state) => ({ ...state, loaded: true }));
+      if (!brandingRetryTimer && typeof window !== 'undefined') {
+        const delay = brandingRetryDelayMs;
+        brandingRetryDelayMs = Math.min(BRANDING_RETRY_MAX_MS, brandingRetryDelayMs * 2);
+        brandingRetryTimer = window.setTimeout(() => {
+          brandingRetryTimer = null;
+          void get().load();
+        }, delay);
+      }
     }
   },
 }));
