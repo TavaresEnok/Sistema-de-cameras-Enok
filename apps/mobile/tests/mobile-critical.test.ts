@@ -122,6 +122,21 @@ test('white-label: ícone próprio vem da Central sem substituir a logo do clien
   assert(agent.includes('resetAppIcon'), 'remoção do ícone precisa voltar ao padrão sem sobrar asset antigo');
   assert(agent.includes('stageClientAppIcon'), 'ícone deve ser convertido separadamente da identidade visual');
   assert(agent.includes("['icon.png', 'adaptive-icon.png']"), 'Android precisa receber as duas variantes do launcher');
+  assert(agent.includes('iconContentCrop') && agent.includes('colorkey=0x${edge}'), 'ícone com moldura deve aproveitar a área útil da arte');
+});
+
+test('barra ao vivo deixa PTZ fechado e mantém as cinco ações na ordem operacional', () => {
+  const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
+  assert(redesign.includes("const [ptzOpen, setPtzOpen] = useState(false)"), 'PTZ não pode iniciar pressionado');
+  const row = redesign.slice(redesign.indexOf('/* Barra de ações */'), redesign.indexOf('/* Feedback do PTZ */'));
+  const labels = ['Áudio', 'Capturar', 'Gravar', 'Notificar', 'HD'];
+  let previous = -1;
+  for (const label of labels) {
+    const current = row.indexOf(label);
+    assert(current > previous, `${label} deve respeitar a ordem da barra`);
+    previous = current;
+  }
+  assert(!row.includes('label="PTZ"'), 'PTZ não deve ficar marcado como ação principal da barra');
 });
 
 test('release mobile: iOS tem identidade e builds de loja incrementam versão', () => {

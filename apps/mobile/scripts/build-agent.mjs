@@ -225,6 +225,40 @@ function ffmpegConvert(args) {
   return { ok: r.status === 0, stderr: r.stderr ? r.stderr.toString() : '' };
 }
 
+// Muitos clientes enviam para o launcher uma arte de marca em um quadrado
+// grande: logo pequeno no centro e um fundo sólido. O Android reduz ainda mais
+// a área segura do ícone adaptativo, deixando esse logo ilegível. Detectamos a
+// cor dos cantos, a removemos temporariamente e usamos a área restante como
+// conteúdo útil. Se não houver um recorte confiável, preservamos a imagem toda.
+function iconContentCrop(srcPath) {
+  const pixel = spawnSync('ffmpeg', [
+    '-v', 'error', '-i', srcPath, '-frames:v', '1',
+    '-vf', 'crop=1:1:0:0,format=rgb24', '-f', 'rawvideo', 'pipe:1',
+  ], { encoding: null, maxBuffer: 1024 });
+  if (pixel.status !== 0 || !pixel.stdout || pixel.stdout.length < 3) return null;
+  const edge = Buffer.from(pixel.stdout.subarray(0, 3)).toString('hex');
+  const detected = spawnSync('ffmpeg', [
+    '-v', 'info', '-i', srcPath, '-frames:v', '1',
+    '-vf', `format=rgba,colorkey=0x${edge}:0.08:0.0,alphaextract,cropdetect=0.02:2:0:0`,
+    '-f', 'null', '-',
+  ], { encoding: 'utf8', maxBuffer: 1024 * 1024 });
+  const matches = String(detected.stderr || '').match(/crop=(\d+:\d+:\d+:\d+)/g);
+  if (!matches?.length) return null;
+  const crop = matches.at(-1)?.replace('crop=', '');
+  if (!crop || !/^\d+:\d+:\d+:\d+$/.test(crop)) return null;
+  const [width, height] = crop.split(':').map(Number);
+  // Recortes minúsculos quase sempre são ruído/antialiasing. Não arriscamos
+  // transformar um ícone legítimo em um ponto invisível.
+  if (width < 48 || height < 48) return null;
+  return crop;
+}
+
+function iconFilter(srcPath, targetSize) {
+  const crop = iconContentCrop(srcPath);
+  const prefix = crop ? `crop=${crop},` : '';
+  return `${prefix}scale=${targetSize}:${targetSize}:force_original_aspect_ratio=decrease,pad=1024:1024:(ow-iw)/2:(oh-ih)/2:color=0x071013`;
+}
+
 // Converte o logo do cliente em logo.png (tela de login) + splash.png (abertura
 // limpa, sem cards) + icon.png/adaptive-icon.png (ícone do launcher Android — app.config.js já
 // sabe usar esses arquivos se existirem, mas antes disso nada os gerava, então
@@ -281,11 +315,11 @@ function stageClientAppIcon(iconBase64) {
   fs.writeFileSync(srcPath, raw);
   try {
     const icon = ffmpegConvert(['-y', '-loglevel', 'error', '-i', srcPath,
-      '-vf', 'scale=1024:1024:force_original_aspect_ratio=decrease,pad=1024:1024:(ow-iw)/2:(oh-ih)/2:color=0x071013',
+      '-vf', iconFilter(srcPath, 820),
       '-pix_fmt', 'rgba', path.join(stage, 'icon.png')]);
     if (!icon.ok) throw new Error(`ícone do aplicativo não pôde ser decodificado: ${icon.stderr.trim().slice(0, 300)}`);
     const adaptive = ffmpegConvert(['-y', '-loglevel', 'error', '-i', srcPath,
-      '-vf', 'scale=620:620:force_original_aspect_ratio=decrease,pad=1024:1024:(ow-iw)/2:(oh-ih)/2:color=0x00000000',
+      '-vf', iconFilter(srcPath, 620).replace('color=0x071013', 'color=0x00000000'),
       '-pix_fmt', 'rgba', path.join(stage, 'adaptive-icon.png')]);
     if (!adaptive.ok) throw new Error(`falha ao gerar ícone adaptativo do aplicativo: ${adaptive.stderr.trim().slice(0, 300)}`);
   } catch (e) {

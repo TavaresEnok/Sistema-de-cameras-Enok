@@ -309,9 +309,8 @@ export function LiveScreenRedesign(props: Props) {
             <ActionBtn s={s} theme={theme} icon="mic" label={audioAvailable === false ? 'Sem áudio' : 'Áudio'} active={!muted && audioAvailable !== false} disabled={audioAvailable === false} onPress={() => { const querSom = muted; setMuted(!querSom); onAudioLigadoChange?.(querSom); }} />
             <ActionBtn s={s} theme={theme} icon="camera" label="Capturar" onPress={() => onSnapshot(camera)} />
             <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label="Gravar" active={recordingActive} danger={recordingActive} onPress={() => onToggleRecording(camera)} />
-            <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'HD' : 'Economia'} active={hdMode} onPress={toggleHd} />
-            <ActionBtn s={s} theme={theme} icon="crosshair" label="PTZ" active={ptzOpen} disabled={!canPtz} onPress={() => setPtzOpen((p) => !p)} />
             <ActionBtn s={s} theme={theme} icon="bell" label={notificationsMuted ? 'Silenciada' : 'Notificar'} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
+            <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'HD' : 'Economia'} active={hdMode} onPress={toggleHd} />
             {onToggleGravacaoSistema ? (
               <ActionBtn s={s} theme={theme} icon="radio" label={gravacaoSistemaAtiva ? 'Gravando' : 'Gravar 24h'} active={gravacaoSistemaAtiva} disabled={gravacaoSistemaOcupada} onPress={() => onToggleGravacaoSistema(camera)} />
             ) : null}
