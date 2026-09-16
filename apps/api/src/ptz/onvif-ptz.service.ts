@@ -1049,19 +1049,15 @@ export class OnvifPtzService {
     const auth = this.resolveOnvifCredentials(camera);
     const ports = this.proprietaryPorts(camera);
     const channels = this.proprietaryChannels(camera);
-    const reachablePorts: number[] = [];
-    for (const port of ports) {
-      if (await this.portChecker.check(camera.ip, port)) {
-        reachablePorts.push(port);
-      }
-    }
-    if (reachablePorts.length === 0) {
-      return { ok: false, message: 'Portas PTZ proprietárias indisponíveis.' };
-    }
+
+    // Não faça uma varredura TCP de TODAS as portas antes de enviar o comando.
+    // Em câmera remota/CGNAT cada porta fechada pode consumir segundos; no caso
+    // real da Vibe o movimento só começava depois de ~15 s. A própria chamada
+    // CGI já prova se a porta serve, e as portas cadastradas vêm primeiro.
 
     if (action === 'stop') {
       const stopDirections = direction ? [direction] : ['Up', 'Down', 'Left', 'Right'] as Array<NonNullable<PtzCommandDto['direction']>>;
-      for (const port of reachablePorts) {
+      for (const port of ports) {
         for (const channel of channels) {
           for (const item of stopDirections) {
             for (const code of this.proprietaryDirectionCode(item)) {
@@ -1075,7 +1071,7 @@ export class OnvifPtzService {
                 timeout: 3500,
                 contentType: 'text/plain',
               });
-              if (result.ok) {
+              if (result.ok && !this.isCgiErrorResponse(result.responseBody)) {
                 return { ok: true, message: 'ok', protocol: 'cgi', channel, port, code };
               }
             }
@@ -1088,7 +1084,7 @@ export class OnvifPtzService {
     if (!direction) {
       return { ok: false, message: 'Direção ausente para PTZ proprietário.' };
     }
-    for (const port of reachablePorts) {
+    for (const port of ports) {
       for (const channel of channels) {
         for (const code of this.proprietaryDirectionCode(direction)) {
           const result = await this.digestSoapRequest({
@@ -1101,7 +1097,7 @@ export class OnvifPtzService {
             timeout: 3500,
             contentType: 'text/plain',
           });
-          if (result.ok) {
+          if (result.ok && !this.isCgiErrorResponse(result.responseBody)) {
             return { ok: true, message: 'ok', protocol: 'cgi', channel, port, code };
           }
         }
@@ -1140,11 +1136,14 @@ export class OnvifPtzService {
   }
 
   async step(camera: Camera, direction: NonNullable<PtzCommandDto['direction']>, speed?: number, durationMs?: number) {
-    // Primeiro usa RelativeMove: é atômico, não depende de um stop chegar a
-    // tempo e impede que um toque curto vire uma rotação de dezenas de graus.
-    const relative = await this.sendPtzWithFallbacks(camera, 'relative', direction, speed);
-    if (relative.ok) {
-      return { ...relative, mode: 'relative_move' };
+    // Intelbras/Dahua e vários OEMs respondem HTTP 200 ao RelativeMove, mas
+    // simplesmente não se mexem. Neles usamos o CGI nativo em pulso curto.
+    // Para ONVIF comum, RelativeMove continua sendo a opção mais precisa.
+    if (!this.shouldPreferProprietaryPtz(camera)) {
+      const relative = await this.sendPtzWithFallbacks(camera, 'relative', direction, speed);
+      if (relative.ok) {
+        return { ...relative, mode: 'relative_move' };
+      }
     }
 
     // Equipamentos antigos sem RelativeMove ainda recebem um pulso mínimo.

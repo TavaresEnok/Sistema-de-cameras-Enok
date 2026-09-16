@@ -36,3 +36,59 @@ test('step encerra no RelativeMove aceito, sem start/stop contínuo', async () =
   assert.equal(result.mode, 'relative_move');
   assert.deepEqual(called, ['relative']);
 });
+
+test('Intelbras/Dahua não confia em RelativeMove falso-positivo e usa pulso curto', async () => {
+  const ptz = service() as any;
+  const called: string[] = [];
+  ptz.sendPtzWithFallbacks = async () => {
+    throw new Error('RelativeMove não deve ser usado nesse perfil');
+  };
+  ptz.move = async () => {
+    called.push('start');
+    return { ok: true, message: 'ok' };
+  };
+  ptz.stop = async () => {
+    called.push('stop');
+    return { ok: true, message: 'ok' };
+  };
+
+  const result = await ptz.step({
+    id: 'camera-dahua',
+    rtspPath: '/cam/realmonitor?channel=1&subtype=0',
+  } as never, 'Left', 1, 160);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.mode, 'step');
+  assert.equal(result.durationMs, 160);
+  assert.deepEqual(called, ['start', 'stop']);
+});
+
+test('CGI PTZ tenta primeiro a porta cadastrada sem varrer portas TCP', async () => {
+  let portChecks = 0;
+  const ptz = new OnvifPtzService(
+    { decrypt: () => 'secret' } as never,
+    { check: async () => { portChecks += 1; return true; } } as never,
+    { getCamera: () => ({}) } as never,
+  ) as any;
+  const calls: Array<{ port: number; path: string }> = [];
+  ptz.digestSoapRequest = async (input: { port: number; path: string }) => {
+    calls.push({ port: input.port, path: input.path });
+    return { ok: true, message: 'ok', responseBody: 'OK' };
+  };
+
+  const result = await ptz.sendProprietaryPtz({
+    id: 'camera-dahua',
+    ip: '100.64.0.10',
+    username: 'admin',
+    passwordEncrypted: 'encrypted',
+    onvifPort: 8003,
+    httpPort: 8002,
+    channel: 1,
+  } as never, 'start', 'Left');
+
+  assert.equal(result.ok, true);
+  assert.equal(portChecks, 0, 'comando não deve esperar uma varredura TCP completa');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].port, 8003);
+  assert.match(calls[0].path, /action=start/);
+});
