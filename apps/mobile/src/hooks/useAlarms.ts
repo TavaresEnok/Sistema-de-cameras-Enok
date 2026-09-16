@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert } from 'react-native';
 import { AppState } from 'react-native';
 import { request } from '../services/api';
+import { showAppNotice } from '../services/app-notice';
 import type { Alarm, Session } from '../types';
 
 const POLL_INTERVAL_MS = 30_000;
+
+function isCustomerCameraEvent(alarm: Alarm): boolean {
+  if (!alarm.cameraId) return false;
+  const type = String(alarm.type ?? '').toLowerCase();
+  return !['offline', 'online', 'system', 'disk', 'storage', 'recording', 'health'].some((term) => type.includes(term));
+}
 
 export type UseAlarms = {
   alarms: Alarm[];
@@ -38,7 +44,9 @@ export function useAlarms(session: Session | null): UseAlarms {
     setCarregando(true);
     try {
       const data = await request<{ items: Alarm[] }>(session.apiUrl, '/cameras/alarms?limit=100', session.token);
-      setAlarms(Array.isArray(data.items) ? data.items : []);
+      // O aplicativo é do cliente final. Diagnósticos de servidor, disco,
+      // gravação e conectividade continuam na operação web, não no celular.
+      setAlarms(Array.isArray(data.items) ? data.items.filter(isCustomerCameraEvent) : []);
       setErro(null);
     } catch (erro) {
       // ERRO ≠ "TUDO TRANQUILO". Mantém a lista atual (falha transitória não
@@ -64,7 +72,7 @@ export function useAlarms(session: Session | null): UseAlarms {
         void reload();
       } catch (error) {
         void reload();
-        Alert.alert('Alarme', error instanceof Error ? error.message : failMessage);
+        showAppNotice('Não foi possível atualizar o evento', error instanceof Error ? error.message : failMessage, 'error');
       }
     },
     [session?.token, session?.apiUrl, reload],

@@ -10,7 +10,7 @@
  */
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useRef, useState } from 'react';
-import { FlatList, ActivityIndicator, Alert, Image, type LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { FlatList, ActivityIndicator, Image, type LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DetectionOverlay } from '../components/DetectionOverlay';
 import { Icon, type IconName } from '../components/Icon';
@@ -18,6 +18,7 @@ import { LiveVideo, PlaybackVideo, type LiveStatus } from '../components/VideoPl
 import { useTheme } from '../theme/ThemeProvider';
 import type { Theme } from '../theme/theme';
 import { withAlpha } from '../services/branding';
+import { showAppNotice } from '../services/app-notice';
 import type { SavedClip } from '../services/clips';
 import type { ActivePlayback, Camera, Direction, LiveDetection, Recording } from '../types';
 import { ptzLabel, areaLabel } from '../utils/camera-view';
@@ -185,16 +186,11 @@ export function LiveScreen({
   // Gravar (clipe no celular) = captura LOCAL do que está sendo visto, igual à
   // Foto. Não exige a permissão de gravação do NVR (canRecord) — senão ficaria
   // cinza/morto para clientes VIEWER, que são justamente quem mais usa.
-  // PTZ: `ptzCapable === false` = a câmera não tem PTZ (mostra aviso). Permissão
-  // (canControl) é separado. Só controla de fato quando tem PTZ E permissão.
-  const ptzSupported = camera.ptzCapable !== false;
-  const canPtz = canControl && ptzSupported;
-  const ptzHint = !ptzSupported
-    ? 'Atenção: esta câmera não suporta PTZ'
-    : !canControl
-      ? 'Sem permissão para PTZ'
-      : 'Controle PTZ ativo';
-  const ptzWarn = !ptzSupported || !canControl;
+  // Não bloqueia por uma sonda PTZ antiga/falsa; o endpoint fará a tentativa e
+  // devolverá uma mensagem clara se a câmera realmente não responder.
+  const canPtz = canControl;
+  const ptzHint = !canControl ? 'Sem permissão para PTZ' : 'Controle PTZ ativo';
+  const ptzWarn = !canControl;
   const isToday = recordingDate >= localDateKey();
 
   const onVideoLayout = (event: LayoutChangeEvent) => {
@@ -207,7 +203,7 @@ export function LiveScreen({
   // fingir que ligou o som (câmeras sem microfone são comuns em CCTV).
   const toggleAudio = () => {
     if (audioAvailable === false) {
-      Alert.alert('Áudio', 'Atenção: esta câmera não possui áudio.');
+      showAppNotice('Áudio indisponível', 'Esta câmera não possui áudio.', 'warning');
       return;
     }
     const querSom = muted;

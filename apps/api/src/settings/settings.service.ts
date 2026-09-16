@@ -23,6 +23,7 @@ type SettingSpec = {
 const BRANDING_KEYS = [
   'facilityName',
   'brandLogoDataUrl',
+  'brandMobileLogoScale',
   'brandUseDefaultColors',
   // ── APARÊNCIA DO SISTEMA (painel web), separada da do APLICATIVO ─────────
   // Pedido em 24/08/2026: "a logo do app tem que ser diferente! isso deve ser
@@ -110,6 +111,9 @@ const SETTING_SPECS: Record<string, SettingSpec> = {
   // ── Marca (branding) do app web — aplicado em runtime na interface ──────────
   // Logo em data URL (base64). Vazio = usa o logo padrão DRAC.
   brandLogoDataUrl: { type: 'image', default: '' },
+  // Tamanho da logo somente no login do aplicativo. É runtime: mudar pela
+  // Central não exige publicar outro APK.
+  brandMobileLogoScale: { type: 'number', default: 1, min: 0.65, max: 2 },
   // ── Aparência do SISTEMA (painel web) — ver nota na lista pública acima ──
   systemLogoDataUrl: { type: 'image', default: '' },
   systemUseDefaultColors: { type: 'boolean', default: true },

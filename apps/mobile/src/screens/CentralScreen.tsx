@@ -108,7 +108,7 @@ export function CentralScreen({
           ) : null}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Adicionar dispositivo"
+            accessibilityLabel="Adicionar câmera"
             style={[styles.iconBtn, { backgroundColor: theme.accent, borderColor: theme.accent }]}
             onPress={() => setAddCameraOpen(true)}
           >

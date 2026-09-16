@@ -42,7 +42,7 @@ export function LoginScreen({
 
   // A logo configurada em Aparência pertence exclusivamente ao aplicativo.
   const logoSource = branding.logoDataUrl ? { uri: branding.logoDataUrl } : BRAND_LOGO;
-  const appName = branding.facilityName || BRANDING.appName;
+  const logoSize = Math.round(104 * branding.logoScale);
 
   return (
     <ScrollView
@@ -61,9 +61,8 @@ export function LoginScreen({
 
       <View style={styles.shell}>
       <View style={styles.hero}>
-        <Image source={logoSource} style={styles.logo} resizeMode="contain" />
-        <Text style={[styles.brand, { color: theme.bgText }]}>{appName}</Text>
-        <Text style={[styles.tagline, { color: withAlpha(theme.bgText, 0.72) ?? theme.bgText }]}>Monitoramento inteligente</Text>
+        <Image source={logoSource} style={[styles.logo, { width: logoSize, height: logoSize }]} resizeMode="contain" />
+        <Text style={[styles.brand, { color: theme.bgText }]}>Monitoramento inteligente</Text>
       </View>
 
       <View style={styles.form}>
@@ -77,7 +76,7 @@ export function LoginScreen({
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="default"
-              placeholder="beira_mar ou voce@empresa.com"
+              placeholder="Seu usuário"
               placeholderTextColor={theme.textMuted}
               accessibilityLabel="Usuário"
               textContentType="username"
@@ -202,6 +201,7 @@ export function LoginScreen({
           </View>
         ) : null}
       </View>
+      <Text style={[styles.site, { color: withAlpha(theme.bgText, 0.58) ?? theme.bgText }]}>s2cam.com.br</Text>
       </View>
     </ScrollView>
   );
@@ -212,9 +212,9 @@ const styles = StyleSheet.create({
   shell: { width: '100%', maxWidth: 520, alignSelf: 'center' },
   glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 360 },
   hero: { alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 40 },
-  logo: { width: 84, height: 84, borderRadius: 23 },
-  brand: { fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginTop: 2 },
-  tagline: { fontSize: 14, fontWeight: '500', marginTop: -8 },
+  logo: { width: 104, height: 104, borderRadius: 25 },
+  brand: { fontSize: 23, fontWeight: '800', letterSpacing: -0.4, marginTop: 2 },
+  site: { textAlign: 'center', fontSize: 12.5, fontWeight: '700', letterSpacing: 0.4, marginTop: 28 },
   form: { gap: 13 },
   field: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 15, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 16, paddingVertical: 11 },
   fieldLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },

@@ -43,6 +43,7 @@ test('a Central salva a marca simples e a entrega no heartbeat autenticado', asy
   const branding = {
     facilityName: 'VIBE',
     brandLogoDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+    brandMobileLogoScale: 1.4,
     brandUseDefaultColors: false,
     brandPrimaryColor: '#B604A7',
     brandBackgroundColor: '#121016',
@@ -83,6 +84,7 @@ test('instalação atrás de NAT reporta a marca uma vez e recebe confirmação 
   const brandingState = {
     facilityName: 'D-GUARDIAN',
     brandLogoDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+    brandMobileLogoScale: 0.9,
     brandUseDefaultColors: false,
     brandPrimaryColor: '#ffb407',
     brandBackgroundColor: '#0e0c08',

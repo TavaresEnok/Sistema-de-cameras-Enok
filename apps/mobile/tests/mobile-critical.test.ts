@@ -73,11 +73,14 @@ test('câmera privada: app oferece edição, endereço RTMP e exclusão confirma
   assert(list.includes('Editar ou excluir'), 'a ação precisa ser visível e acessível na lista e no mural');
 });
 
-test('poster inicial usa última gravação e é promovido para snapshot ao vivo', () => {
+test('posters usam snapshot persistente e renovação espaçada em lote', () => {
   const source = readFileSync('App.tsx', 'utf8');
-  assert(source.includes('&fresh=1'), 'a segunda leitura deve solicitar o frame atual ao servidor');
-  assert(source.includes('setStreamPosters((current) => ({ ...current, [item.cameraId]: liveUrl }))'), 'o frame atual deve substituir o fallback no mesmo tile');
-  assert(source.includes('void Promise.all'), 'a atualização ao vivo não pode bloquear a abertura do aplicativo');
+  const cache = readFileSync('src/services/poster-cache.ts', 'utf8');
+  assert(source.includes('&fresh=1'), 'a renovação deve solicitar um frame atual ao servidor');
+  assert(source.includes('savePoster(scope, item.cameraId, url)'), 'o frame atual deve ser salvo no aparelho');
+  assert(source.includes('POSTER_REFRESH_BATCH = 30'), 'uma frota grande deve renovar imagens em lotes pequenos');
+  assert(cache.includes('3 * 24 * 60 * 60 * 1000'), 'o snapshot deve permanecer válido por três dias');
+  assert(cache.includes('FileSystem.documentDirectory ?? FileSystem.cacheDirectory'), 'o snapshot deve preferir armazenamento persistente');
 });
 
 test('stream WHEP: Location externo nunca recebe token de reprodução', () => {

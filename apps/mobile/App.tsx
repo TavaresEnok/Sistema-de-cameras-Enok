@@ -7,7 +7,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, BackHandler, Image, SafeAreaView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, BackHandler, SafeAreaView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { isRedesign } from './src/theme/redesign';
 import { ALLOW_CLEARTEXT_TRAFFIC, DEFAULT_API_URL, TOP_SAFE } from './src/config';
@@ -24,7 +24,6 @@ import { LiveScreenRedesign } from './src/screens/redesign/LiveScreenRedesign';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { MosaicScreen } from './src/screens/MosaicScreen';
 import { PlaybackScreen } from './src/screens/PlaybackScreen';
-import { ReviewScreen, type ReviewPlayback } from './src/screens/ReviewScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { request, normalizeServerUrl, setTokenRefreshHandler, setUnauthorizedHandler } from './src/services/api';
 import { authenticatedMediaUrl, isSecureMediaUrl } from './src/services/media-urls';
@@ -46,6 +45,9 @@ import { authenticateWithBiometrics, getBiometricSupport } from './src/services/
 import { registerForPush, subscribeToNotificationTaps, unregisterFromPush } from './src/services/push';
 import Constants from 'expo-constants';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import { AppNoticeHost } from './src/components/AppNoticeHost';
+import { showAppNotice } from './src/services/app-notice';
+import { loadCachedPosters, savePoster } from './src/services/poster-cache';
 import { iniciarRelatorioDeTravamento, marcarInstalacao } from './src/services/crash-reporting';
 import { useAlarms } from './src/hooks/useAlarms';
 import { useLiveDetections } from './src/hooks/useLiveDetections';
@@ -54,7 +56,6 @@ import { LibraryProvider, useLibrary } from './src/state/LibraryProvider';
 import { localDateKey, localDayIsoRange, shiftDateKey } from './src/utils/format';
 import { buildOperationalMessages } from './src/utils/operational';
 import { cameraPosterUrl, clipDownloadUrl, recordingThumbnailUrl } from './src/utils/media-endpoints';
-import { reviewFeedPath, reviewPlayUrl, reviewPlaybackTarget, type ReviewFilters, type ReviewFeedResponse, type ReviewItem } from './src/utils/review';
 import type { ActivePlayback, Camera, Direction, MobileCapabilities, Recording, Session, StreamUrls, Tab, User } from './src/types';
 import { montarUrlDeReproducao } from './src/utils/playback-source';
 
@@ -63,6 +64,7 @@ import { montarUrlDeReproducao } from './src/utils/playback-source';
 const PLAY_TOKEN_RENEW_MS = 4 * 60 * 1000;
 
 const RECORDINGS_PAGE_SIZE = 50;
+const POSTER_REFRESH_BATCH = 30;
 
 // Antes de qualquer render: um travamento na inicialização é justamente o que
 // não se descobre por telefonema.
@@ -75,7 +77,10 @@ export default function App() {
       <SafeAreaProvider>
         <ThemeProvider>
           <LibraryProvider>
-            <AppInner />
+            <View style={{ flex: 1 }}>
+              <AppInner />
+              <AppNoticeHost />
+            </View>
           </LibraryProvider>
         </ThemeProvider>
       </SafeAreaProvider>
@@ -128,7 +133,9 @@ function AppInner() {
       audioAoVivoRef.current = false;
       return;
     }
-    void carregarEstadoGravacao(liveCamera.id);
+    // O app redesenhado grava clipes locais. Não consulta nem exibe a gravação
+    // administrativa do servidor, evitando uma requisição sem utilidade.
+    if (!isRedesign) void carregarEstadoGravacao(liveCamera.id);
   }, [liveCamera?.id]);
   // RONDA: o servidor já marcava quais aparecem no celular e o app ignorava.
   const [rondas, setRondas] = useState<RondaDoApp[]>([]);
@@ -164,16 +171,6 @@ function AppInner() {
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<MobileCapabilities>({ liveView: true, playback: true, exportEvidence: false, alarmAck: false });
   const [downloadingIds, setDownloadingIds] = useState<string[]>([]);
-  // Revisão (item 2.7): fila de eventos + reprodução no instante em modal próprio.
-  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
-  const [reviewTotal, setReviewTotal] = useState(0);
-  const [reviewLoadingMore, setReviewLoadingMore] = useState(false);
-  const [reviewUnseenCount, setReviewUnseenCount] = useState(0);
-  const [reviewLoading, setReviewLoading] = useState(false);
-  const [reviewRefreshing, setReviewRefreshing] = useState(false);
-  const [reviewError, setReviewError] = useState<string | null>(null);
-  const [reviewFilters, setReviewFilters] = useState<ReviewFilters>({ onlyConfirmed: true });
-  const [reviewPlayback, setReviewPlayback] = useState<ReviewPlayback | null>(null);
   const selectedCamera = cameras.find((camera) => camera.id === selectedCameraId) ?? cameras[0] ?? null;
   const sessionScope = session ? `${session.apiUrl}|${session.user.id}` : 'anonymous';
   const sessionTokenRef = useRef<string | null>(null);
@@ -190,11 +187,10 @@ function AppInner() {
   const clipFinalizeSilentRef = useRef(false);
   const recordingRequestRef = useRef(0);
   const playbackRequestRef = useRef(0);
-  const reviewRequestRef = useRef(0);
-  const reviewPlaybackRequestRef = useRef(0);
   const hdRequestRef = useRef(0);
   const brandingRequestRef = useRef(0);
   const posterRequestRef = useRef(0);
+  const posterBatchCursorRef = useRef(0);
   const lastThumbnailRefreshRef = useRef(0);
   const camerasRequestRef = useRef(0);
   const streamRequestRef = useRef(new Map<string, number>());
@@ -289,7 +285,7 @@ function AppInner() {
       if (!(await authenticateWithBiometrics('Confirme sua identidade para entrar'))) return;
       const renewed = await renewStoredSession(stored);
       if (renewed) activateSession(renewed);
-      else Alert.alert('Sessão expirada', 'Sua conta ficou mais de sete dias sem acesso. Entre novamente com sua senha.');
+      else showAppNotice('Sessão expirada', 'Entre novamente com sua senha.', 'warning');
     } finally {
       setLoading(false);
     }
@@ -480,14 +476,6 @@ function AppInner() {
     }
   }, [selectedCamera?.id, session?.token, recordingDate, capabilities.playback]);
 
-  // Revisão: ao entrar na aba (ou trocar de sessão), carrega a fila com os
-  // filtros atuais. As trocas de filtro recarregam via changeReviewFilters.
-  useEffect(() => {
-    if (tab !== 'revisao' || !session || !capabilities.playback) return;
-    void loadReview(reviewFilters);
-    void loadReviewUnseen();
-  }, [tab, session?.token, capabilities.playback]);
-
   // A URL de máxima qualidade é por câmera; não vaza entre telas.
   useEffect(() => {
     setHdUrl(null);
@@ -568,7 +556,7 @@ function AppInner() {
         );
       }
     } catch (error) {
-      Alert.alert('Falha no login', error instanceof Error ? error.message : 'Não foi possível entrar.');
+      showAppNotice('Não foi possível entrar', error instanceof Error ? error.message : 'Confira seus dados e tente novamente.', 'error');
     } finally {
       setLoading(false);
     }
@@ -577,21 +565,21 @@ function AppInner() {
   const forgotPassword = async () => {
     const targetEmail = email.trim();
     if (!targetEmail) {
-      Alert.alert('Esqueci minha senha', 'Informe o e-mail da sua conta no campo acima e toque novamente.');
+      showAppNotice('Informe seu e-mail', 'Digite o e-mail cadastrado no campo de usuário e tente novamente.', 'warning');
       return;
     }
     let nextApiUrl = '';
     try { nextApiUrl = cleanApiUrl(apiUrl); }
     catch (error) {
-      Alert.alert('Esqueci minha senha', error instanceof Error ? error.message : 'Endereço do servidor inválido.');
+      showAppNotice('Não foi possível recuperar a senha', error instanceof Error ? error.message : 'Endereço de acesso inválido.', 'error');
       return;
     }
     if (!nextApiUrl) {
-      Alert.alert('Esqueci minha senha', 'Informe a URL do servidor antes de continuar.');
+      showAppNotice('Não foi possível recuperar a senha', 'O endereço de acesso não está configurado.', 'error');
       return;
     }
     if (/^http:\/\//i.test(nextApiUrl) && !ALLOW_CLEARTEXT_TRAFFIC) {
-      Alert.alert('Esqueci minha senha', 'Esta versão exige o endereço HTTPS do servidor.');
+      showAppNotice('Conexão segura necessária', 'Atualize o endereço de acesso para HTTPS.', 'warning');
       return;
     }
     try {
@@ -602,10 +590,7 @@ function AppInner() {
     } catch {
       // O backend responde igual existindo ou não a conta (evita enumeração de e-mails).
     }
-    Alert.alert(
-      'Verifique seu e-mail',
-      `Se houver uma conta para ${targetEmail}, enviamos um link para redefinir a senha. Abra o link no navegador para concluir.`,
-    );
+    showAppNotice('Verifique seu e-mail', 'Se houver uma conta cadastrada, enviaremos as instruções para redefinir a senha.', 'success', 6500);
   };
 
   const logout = async (revokeServer = true) => {
@@ -665,7 +650,7 @@ function AppInner() {
     setBiometricAvailable(support.available);
     setBiometricLabel(support.label);
     if (!support.available) {
-      Alert.alert('Biometria indisponível', 'Cadastre uma impressão digital ou reconhecimento facial nos ajustes do aparelho.');
+      showAppNotice('Biometria indisponível', 'Cadastre uma impressão digital ou reconhecimento facial nos ajustes do aparelho.', 'warning');
       return;
     }
     if (!(await authenticateWithBiometrics('Confirme a biometria para ativar'))) return;
@@ -688,7 +673,6 @@ function AppInner() {
       setLastSyncError(null);
       setSelectedCameraId((current) => (current && data.some((camera) => camera.id === current) ? current : data[0]?.id ?? null));
       void reloadAlarms();
-      void loadReviewUnseen();
       void carregarRondas();
       // Status sonda a cada 30s; posters têm renovação própria (3,5 min) para
       // não forçar dezenas de frames a cada ciclo silencioso.
@@ -701,9 +685,9 @@ function AppInner() {
       setLastSyncError(isAuthError ? 'Sessão expirada. Entre novamente.' : `Servidor indisponível: ${message}`);
       if (isAuthError) {
         await logout(false);
-        Alert.alert('Sessão expirada', 'Sua sessão expirou. Entre novamente para continuar.');
+        showAppNotice('Sessão expirada', 'Entre novamente para continuar.', 'warning');
       } else if (!quiet) {
-        Alert.alert('Falha ao carregar', message);
+        showAppNotice('Não foi possível atualizar as câmeras', message, 'error');
       }
     } finally {
       if (!quiet && sessionTokenRef.current === token && camerasRequestRef.current === generation) setRefreshing(false);
@@ -751,7 +735,11 @@ function AppInner() {
       const posterUrl = data.streamToken ? cameraPosterUrl(session.apiUrl, cameraId, data.streamToken) : null;
       setStreamUrls((current) => ({ ...current, [cameraId]: hlsUrl }));
       setStreamWhep((current) => ({ ...current, [cameraId]: whepUrl }));
-      setStreamPosters((current) => ({ ...current, [cameraId]: posterUrl }));
+      // O token do poster expira rapidamente. Preserve o arquivo persistente
+      // já salvo no aparelho para a lista não voltar a depender da rede.
+      setStreamPosters((current) => current[cameraId]
+        ? current
+        : ({ ...current, [cameraId]: posterUrl }));
       if (session.apiUrl.startsWith('https://') && ((hlsUrl && !isSecureMediaUrl(hlsUrl)) || (whepUrl && !isSecureMediaUrl(whepUrl)))) {
         setLastSyncError('A mídia ao vivo precisa ser publicada por HTTPS nesta instalação.');
       }
@@ -759,7 +747,8 @@ function AppInner() {
       if (sessionTokenRef.current !== token || streamRequestRef.current.get(cameraId) !== generation) return;
       setStreamUrls((current) => ({ ...current, [cameraId]: null }));
       setStreamWhep((current) => ({ ...current, [cameraId]: null }));
-      setStreamPosters((current) => ({ ...current, [cameraId]: null }));
+      // Falhar ao abrir o vídeo não apaga o último snapshot válido. Assim a
+      // câmera não vira um quadro quebrado durante uma oscilação passageira.
       // O servidor explica o motivo (ex.: "Câmera desativada. Reative-a nas
       // configurações"). Engolir isso deixava o operador diante de um quadro
       // preto sem saber que a câmera havia sido desligada de propósito.
@@ -770,22 +759,24 @@ function AppInner() {
     }
   };
 
-  // Snapshot (poster) em TODOS os tiles, não só nos que abrem o stream. Usa o
-  // endpoint em lote /camera-stream/poster-tokens (só emite token, NÃO inicia
-  // restream). A primeira imagem é a última gravação disponível, instantânea;
-  // logo depois fazemos uma segunda leitura com `fresh=1`, que aguarda o frame
-  // live já iniciado pelo servidor e substitui o fallback sem piscar a tela.
+  // Posters ficam em cache local por 3 dias. Somente um lote pequeno é renovado
+  // por ciclo; centenas de câmeras nunca disputam rede/CPU ao abrir o app.
   const loadAllPosters = async (cams: Camera[]) => {
     if (!session || cams.length === 0) return;
-    const onlineCameras = cams.filter((camera) => camera.status?.toUpperCase() === 'ONLINE');
-    const onlineIds = new Set(onlineCameras.map((camera) => camera.id));
-    setStreamPosters((current) => {
-      const next = { ...current };
-      for (const camera of cams) {
-        if (!onlineIds.has(camera.id)) next[camera.id] = null;
-      }
-      return next;
-    });
+    const scope = `${session.apiUrl}|${session.user.id}`;
+    const cached = await loadCachedPosters(scope, cams.map((camera) => camera.id));
+    setStreamPosters((current) => ({ ...current, ...cached.posters }));
+    const stale = new Set(cached.staleIds);
+    const candidates = cams
+      .filter((camera) => camera.status?.toUpperCase() === 'ONLINE' && stale.has(camera.id));
+    const start = candidates.length ? posterBatchCursorRef.current % candidates.length : 0;
+    const rotated = [...candidates.slice(start), ...candidates.slice(0, start)];
+    const onlineCameras = rotated.slice(0, POSTER_REFRESH_BATCH);
+    // Garante progresso mesmo se uma câmera ONLINE não conseguir gerar frame:
+    // a próxima rodada começa depois dela, sem bloquear o restante da frota.
+    posterBatchCursorRef.current = candidates.length
+      ? (start + onlineCameras.length) % candidates.length
+      : 0;
     if (!onlineCameras.length) return;
     const token = session.token;
     const generation = ++posterRequestRef.current;
@@ -796,41 +787,23 @@ function AppInner() {
         session.token,
         { method: 'POST', body: JSON.stringify({ cameraIds: onlineCameras.map((c) => c.id) }) },
       );
-      // Monta a URL do poster a partir do session.apiUrl (SEMPRE alcançável pelo
-      // celular). NÃO usa o host que a API devolve — atrás do nginx/Docker ele
-      // pode vir interno (ex.: vms-api:3000), que o celular não acessa → tile preto.
       let cursor = 0;
       const worker = async () => {
         while (cursor < items.length) {
           const item = items[cursor++];
           if (sessionTokenRef.current !== token || posterRequestRef.current !== generation) return;
-          const url = cameraPosterUrl(session.apiUrl, item.cameraId, item.streamToken);
-          try { await Image.prefetch(url); } catch { /* CameraTile oferece retry/token novo. */ }
-          if (sessionTokenRef.current !== token || posterRequestRef.current !== generation) return;
-          setStreamPosters((current) => ({ ...current, [item.cameraId]: url }));
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(3, items.length) }, () => worker()));
-
-      // Não bloqueia a abertura do app: os thumbnails de gravação já estão na
-      // tela. Cada worker abaixo troca seu tile assim que o snapshot online
-      // chega; se a câmera falhar, o último frame conhecido permanece visível.
-      let liveCursor = 0;
-      const liveWorker = async () => {
-        while (liveCursor < items.length) {
-          const item = items[liveCursor++];
-          if (sessionTokenRef.current !== token || posterRequestRef.current !== generation) return;
-          const liveUrl = `${cameraPosterUrl(session.apiUrl, item.cameraId, item.streamToken)}&fresh=1`;
+          const url = `${cameraPosterUrl(session.apiUrl, item.cameraId, item.streamToken)}&fresh=1`;
           try {
-            await Image.prefetch(liveUrl);
+            const localUri = await savePoster(scope, item.cameraId, url);
             if (sessionTokenRef.current !== token || posterRequestRef.current !== generation) return;
-            setStreamPosters((current) => ({ ...current, [item.cameraId]: liveUrl }));
+            setStreamPosters((current) => ({ ...current, [item.cameraId]: localUri }));
           } catch {
-            // Mantém a miniatura da última gravação e tenta novamente na renovação.
+            // Mantém o último frame conhecido, mesmo offline.
           }
         }
       };
-      void Promise.all(Array.from({ length: Math.min(3, items.length) }, () => liveWorker()));
+      // Um por vez também evita corrida no índice persistido do cache.
+      await worker();
     } catch {
       // sem posters: os tiles caem no gradiente placeholder.
     }
@@ -849,11 +822,12 @@ function AppInner() {
       if (sessionTokenRef.current !== token) return null;
       const item = items[0];
       if (!item) return null;
-      const url = cameraPosterUrl(session.apiUrl, cameraId, item.streamToken);
-      try { await Image.prefetch(url); } catch { /* o componente ainda fará retry */ }
+      const url = `${cameraPosterUrl(session.apiUrl, cameraId, item.streamToken)}&fresh=1`;
+      const scope = `${session.apiUrl}|${session.user.id}`;
+      const localUri = await savePoster(scope, cameraId, url);
       if (sessionTokenRef.current === token) {
-        setStreamPosters((current) => ({ ...current, [cameraId]: url }));
-        return url;
+        setStreamPosters((current) => ({ ...current, [cameraId]: localUri }));
+        return localUri;
       }
       return null;
     } catch { return null; }
@@ -1014,7 +988,11 @@ function AppInner() {
 
   const sendPtz = async (direction: Direction) => {
     const target = liveCamera;
-    if (!session || !target?.canControl) return;
+    if (!session || !target) return;
+    if (target.canControl === false) {
+      showAppNotice('Controle PTZ indisponível', 'Seu usuário não tem permissão para controlar esta câmera.', 'warning');
+      return;
+    }
     setPtzActive(direction);
     setPtzFeedback(direction);
     // Mensagem SEMPRE limpa (nunca o erro técnico cru): o PTZ falha tanto com
@@ -1022,7 +1000,7 @@ function AppInner() {
     // (ONVIF indisponível). Nos dois casos o usuário só precisa saber isto:
     const ptzFail = () => {
       setPtzFeedback(null);
-      Alert.alert('PTZ', 'Não foi possível movimentar. Esta câmera pode não ter suporte a PTZ.');
+      showAppNotice('Não foi possível movimentar', 'Confira a porta ONVIF/HTTP e as credenciais da câmera.', 'error');
     };
     try {
       const data = await request<{ status?: string; message?: string }>(
@@ -1083,18 +1061,15 @@ function AppInner() {
       await removePendingClip(scope, pending.id);
       if (sessionTokenRef.current === currentSession.token) setSavedClips(next);
       if (!silent && sessionTokenRef.current === currentSession.token) {
-        Alert.alert('Gravação salva', savedToGallery
+        showAppNotice('Gravação salva', savedToGallery
           ? 'Clipe salvo na galeria e em "Minhas gravações".'
-          : 'Clipe salvo em "Minhas gravações". A galeria não concedeu permissão.');
+          : 'Clipe salvo em "Minhas gravações". A galeria não concedeu permissão.', 'success');
       }
       return true;
     } catch (error) {
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
       if (!silent && sessionTokenRef.current === currentSession.token) {
-        Alert.alert(
-          'Gravação pendente',
-          `${error instanceof Error ? error.message : 'Não foi possível baixar o clipe.'}\nO app tentará novamente quando voltar ao primeiro plano.`,
-        );
+        showAppNotice('Gravação pendente', `${error instanceof Error ? error.message : 'Não foi possível salvar o clipe.'} Tentaremos novamente em breve.`, 'warning', 6500);
       }
       return false;
     } finally {
@@ -1139,6 +1114,7 @@ function AppInner() {
     clipPhaseRef.current = 'stopping';
     setRecordingBusy(true);
     setRecordingActive(false);
+    if (!silent) showAppNotice('Salvando gravação…', 'O clipe está sendo finalizado. Você pode continuar usando o app.', 'info', 6000);
 
     const run = (async () => {
       try {
@@ -1160,7 +1136,7 @@ function AppInner() {
           await downloadPendingClip(currentSession, pending, silent);
         }
       } catch (error) {
-        if (!silent) Alert.alert('Gravação', error instanceof Error ? error.message : 'Não foi possível salvar o clipe.');
+        if (!silent) showAppNotice('Não foi possível salvar a gravação', error instanceof Error ? error.message : 'Tente novamente.', 'error');
       } finally {
         clipStopPromiseRef.current = null;
         resetClipState();
@@ -1215,7 +1191,7 @@ function AppInner() {
         const shouldNotify = sessionTokenRef.current === currentSession.token && !clipFinalizeSilentRef.current;
         resetClipState();
         if (shouldNotify) {
-          Alert.alert('Gravação', error instanceof Error ? error.message : 'Não foi possível iniciar a gravação.');
+          showAppNotice('Não foi possível iniciar a gravação', error instanceof Error ? error.message : 'Tente novamente.', 'error');
         }
       } finally {
         clipStartPromiseRef.current = null;
@@ -1285,7 +1261,7 @@ function AppInner() {
       setGravacaoSistemaAtiva(alvo);
     } catch (error) {
       const motivo = error instanceof Error ? error.message : 'Não foi possível mudar a gravação.';
-      Alert.alert(alvo ? 'Não foi possível gravar' : 'Não foi possível parar', motivo);
+      showAppNotice(alvo ? 'Não foi possível gravar' : 'Não foi possível parar', motivo, 'error');
     } finally {
       setGravacaoSistemaOcupada(false);
     }
@@ -1375,7 +1351,7 @@ function AppInner() {
       if (sessionTokenRef.current !== token || playbackRequestRef.current !== generation) return;
       // Renovação silenciosa não pode virar alerta: o vídeo está tocando.
       if (opcoes.silencioso) return;
-      Alert.alert('Reprodução', error instanceof Error ? error.message : 'Não foi possível abrir a gravação.');
+      showAppNotice('Não foi possível abrir a gravação', error instanceof Error ? error.message : 'Tente novamente.', 'error');
     } finally {
       if (playbackRequestRef.current === generation) setAbrindoGravacaoId(null);
     }
@@ -1434,127 +1410,6 @@ function AppInner() {
     void openPlayback(current.recording, { fonte: current.fonte, retomarEm: posicaoDoPlaybackRef.current });
   };
 
-  // ─── Revisão (item 2.7) ────────────────────────────────────────────────────
-  // Carrega a fila de eventos com os filtros atuais. O backend já exclui câmera
-  // privada (getAccessibleCameraIds), então nada além do feed chega aqui.
-  const loadReview = async (filters: ReviewFilters, mode: 'initial' | 'refresh' = 'initial') => {
-    if (!session || !capabilities.playback) return;
-    const token = session.token;
-    const generation = ++reviewRequestRef.current;
-    if (mode === 'refresh') setReviewRefreshing(true); else setReviewLoading(true);
-    setReviewError(null);
-    try {
-      const data = await request<ReviewFeedResponse>(session.apiUrl, reviewFeedPath(filters), token);
-      if (sessionTokenRef.current !== token || reviewRequestRef.current !== generation) return;
-      setReviewItems(Array.isArray(data.items) ? data.items : []);
-      setReviewTotal(Number.isFinite(data.total) ? Number(data.total) : 0);
-    } catch (error) {
-      if (sessionTokenRef.current !== token || reviewRequestRef.current !== generation) return;
-      const status = (error as { status?: number })?.status;
-      setReviewItems([]);
-      setReviewError(status === 403
-        ? 'Você não possui permissão para revisar eventos.'
-        : error instanceof Error ? error.message : 'Não foi possível carregar os eventos.');
-    } finally {
-      if (reviewRequestRef.current === generation) { setReviewLoading(false); setReviewRefreshing(false); }
-    }
-  };
-
-  /** Próxima página da Revisão: ANEXA ao que já está na tela (offset = itens
-   *  atuais). Sem isto só os primeiros `limit` eventos eram alcançáveis. */
-  const loadMoreReview = async () => {
-    if (!session || !capabilities.playback) return;
-    if (reviewLoading || reviewRefreshing || reviewLoadingMore) return;
-    if (reviewItems.length >= reviewTotal) return;
-    const token = session.token;
-    const generation = reviewRequestRef.current; // não invalida a página em curso
-    setReviewLoadingMore(true);
-    try {
-      const data = await request<ReviewFeedResponse>(
-        session.apiUrl,
-        reviewFeedPath({ ...reviewFilters, offset: reviewItems.length }),
-        token,
-      );
-      // Descarta se a sessão mudou ou se um refresh/filtro reiniciou a lista.
-      if (sessionTokenRef.current !== token || reviewRequestRef.current !== generation) return;
-      const next = Array.isArray(data.items) ? data.items : [];
-      setReviewItems((current) => {
-        const known = new Set(current.map((it) => it.id));
-        return [...current, ...next.filter((it) => !known.has(it.id))];
-      });
-      if (Number.isFinite(data.total)) setReviewTotal(Number(data.total));
-    } catch {
-      // Falha ao paginar não derruba o que já está na tela — o usuário pode rolar
-      // de novo para tentar. Erro de página inteira segue sendo o do loadReview.
-    } finally {
-      setReviewLoadingMore(false);
-    }
-  };
-
-  const loadReviewUnseen = async () => {
-    if (!session || !capabilities.playback) { setReviewUnseenCount(0); return; }
-    const token = session.token;
-    try {
-      const data = await request<{ count: number }>(session.apiUrl, '/review/unseen-count', token);
-      if (sessionTokenRef.current !== token) return;
-      setReviewUnseenCount(Number.isFinite(data?.count) ? Number(data.count) : 0);
-    } catch {
-      // Badge é secundário: falha transitória mantém o valor atual.
-    }
-  };
-
-  const changeReviewFilters = (next: ReviewFilters) => {
-    setReviewFilters(next);
-    void loadReview(next);
-  };
-
-  // Marca visto/não-visto por USUÁRIO (POST /review/:id/seen). Update otimista
-  // com reconciliação do badge; reverte a lista em falha.
-  const markReviewSeen = async (item: ReviewItem, seen: boolean) => {
-    if (!session) return;
-    const token = session.token;
-    setReviewItems((current) => current.map((it) => (it.id === item.id ? { ...it, reviewed: seen } : it)));
-    setReviewUnseenCount((c) => Math.max(0, c + (seen ? -1 : 1)));
-    try {
-      await request(session.apiUrl, `/review/${item.id}/seen`, token, { method: 'POST', body: JSON.stringify({ seen }) });
-    } catch {
-      if (sessionTokenRef.current !== token) return;
-      setReviewItems((current) => current.map((it) => (it.id === item.id ? { ...it, reviewed: !seen } : it)));
-      setReviewUnseenCount((c) => Math.max(0, c + (seen ? 1 : -1)));
-    }
-  };
-
-  // Abre a reprodução NO INSTANTE do evento: busca o play-token da gravação e
-  // reproduz num modal próprio já posicionado em offsetSeconds (reusa 1.3),
-  // sem passar pela máquina de estado da aba Reprodução (evita corrida).
-  const openReviewItem = async (item: ReviewItem) => {
-    if (!session || !capabilities.playback) return;
-    const target = reviewPlaybackTarget(item);
-    if (!target) {
-      Alert.alert('Revisão', 'Este evento não tem gravação disponível para reprodução.');
-      return;
-    }
-    if (!item.reviewed) void markReviewSeen(item, true);
-    const token = session.token;
-    const generation = ++reviewPlaybackRequestRef.current;
-    try {
-      const data = await request<{ playToken: string }>(session.apiUrl, `/recordings/${target.recordingId}/play-token`, token, { method: 'POST' });
-      const url = normalizeServerUrl(reviewPlayUrl(session.apiUrl, target.recordingId, data.playToken), session.apiUrl);
-      if (!url) throw new Error('URL de reprodução indisponível.');
-      if (sessionTokenRef.current !== token || reviewPlaybackRequestRef.current !== generation) return;
-      const posterUri = normalizeServerUrl(streamPosters[item.cameraId] ?? null, session.apiUrl);
-      setReviewPlayback({ url, posterUri, offsetSeconds: target.offsetSeconds });
-    } catch (error) {
-      if (sessionTokenRef.current !== token || reviewPlaybackRequestRef.current !== generation) return;
-      Alert.alert('Revisão', error instanceof Error ? error.message : 'Não foi possível abrir a gravação.');
-    }
-  };
-
-  const closeReviewPlayback = () => {
-    reviewPlaybackRequestRef.current += 1;
-    setReviewPlayback(null);
-  };
-
   const downloadRecording = async (recording: Recording) => {
     if (!session || !capabilities.exportEvidence || downloadingRef.current.has(recording.id)) return;
     const currentSession = session;
@@ -1571,11 +1426,11 @@ function AppInner() {
       if (result.status && result.status >= 400) throw new Error(`Falha no download (HTTP ${result.status}).`);
       const ok = await saveToGallery(result.uri);
       if (sessionTokenRef.current === currentSession.token) {
-        Alert.alert('Download', ok ? 'Gravação salva na galeria.' : 'Não foi possível salvar (permissão de galeria negada).');
+        showAppNotice(ok ? 'Gravação salva' : 'Permissão necessária', ok ? 'A gravação está na galeria.' : 'Permita o acesso à galeria para salvar gravações.', ok ? 'success' : 'warning');
       }
     } catch (error) {
       if (sessionTokenRef.current === currentSession.token) {
-        Alert.alert('Download', error instanceof Error ? error.message : 'Não foi possível baixar.');
+        showAppNotice('Não foi possível baixar', error instanceof Error ? error.message : 'Tente novamente.', 'error');
       }
     } finally {
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
@@ -1591,22 +1446,25 @@ function AppInner() {
     // snapshot que pode estar há minutos visível no tile.
     const poster = await refreshPoster(camera.id) ?? streamPosters[camera.id];
     if (!poster) {
-      Alert.alert('Foto', 'Imagem ainda indisponível. Aguarde a transmissão carregar e tente novamente.');
+      showAppNotice('Imagem indisponível', 'Aguarde a câmera carregar e tente novamente.', 'warning');
       return;
     }
     const target = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}snapshot-${camera.id.replace(/[^a-zA-Z0-9_-]/g, '-')}-${Date.now()}.jpg`;
     try {
-      // O poster já carrega o token na query — baixa direto, sem header de auth.
-      const fresh = `${poster}${poster.includes('?') ? '&' : '?'}fresh=1&snap=${Date.now()}`;
-      const result = await FileSystem.downloadAsync(fresh, target);
-      if (result.status && result.status >= 400) throw new Error(`Falha ao capturar a imagem (HTTP ${result.status}).`);
-      const ok = await saveToGallery(result.uri);
+      // `refreshPoster` já pediu um frame atual e o guardou localmente. Copiar
+      // esse arquivo evita uma segunda captura e também funciona offline.
+      if (poster.startsWith('file:')) await FileSystem.copyAsync({ from: poster, to: target });
+      else {
+        const result = await FileSystem.downloadAsync(poster, target);
+        if (result.status && result.status >= 400) throw new Error(`Falha ao capturar a imagem (HTTP ${result.status}).`);
+      }
+      const ok = await saveToGallery(target);
       if (sessionTokenRef.current === currentSession.token) {
-        Alert.alert('Foto', ok ? 'Foto salva na galeria.' : 'Não foi possível salvar (permissão de galeria negada).');
+        showAppNotice(ok ? 'Foto salva' : 'Permissão necessária', ok ? 'A foto está na galeria.' : 'Permita o acesso à galeria para salvar fotos.', ok ? 'success' : 'warning');
       }
     } catch (error) {
       if (sessionTokenRef.current === currentSession.token) {
-        Alert.alert('Foto', error instanceof Error ? error.message : 'Não foi possível capturar a imagem.');
+        showAppNotice('Não foi possível capturar a foto', error instanceof Error ? error.message : 'Tente novamente.', 'error');
       }
     } finally {
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
@@ -1615,7 +1473,7 @@ function AppInner() {
 
   const openLive = (camera: Camera) => {
     if (!capabilities.liveView) {
-      Alert.alert('Ao vivo', 'Você não possui permissão para visualizar câmeras ao vivo.');
+      showAppNotice('Acesso não permitido', 'Seu usuário não pode visualizar câmeras ao vivo.', 'warning');
       return;
     }
     closePlayback();
@@ -1679,13 +1537,12 @@ function AppInner() {
     return () => clearInterval(timer);
   }, [session?.token, refreshing]);
 
-  // O token de poster dura 5 minutos. Renova antes disso para que um tile
-  // remontado nunca tente carregar uma URL já expirada.
+  // Verifica o cache em intervalos leves; só imagens com 3 dias entram no lote.
   useEffect(() => {
     if (!session || !cameras.length) return;
     const timer = setInterval(() => {
       if (appStateRef.current === 'active') void loadAllPosters(cameras);
-    }, 3.5 * 60 * 1000);
+    }, 20 * 60 * 1000);
     return () => clearInterval(timer);
   }, [session?.token, cameras]);
 
@@ -1771,9 +1628,6 @@ function AppInner() {
             onToggleRecording={toggleRecording}
             audioLigado={audioAoVivo}
             onAudioLigadoChange={definirAudioAoVivo}
-            gravacaoSistemaAtiva={gravacaoSistemaAtiva}
-            gravacaoSistemaOcupada={gravacaoSistemaOcupada}
-            onToggleGravacaoSistema={(c) => { void toggleGravacaoSistema(c); }}
             onSnapshot={takeSnapshot}
             onOpenPlayback={openPlayback}
             onClosePlayback={closePlayback}
@@ -1853,7 +1707,6 @@ function AppInner() {
           <BottomTabs
             active={tab}
             alarmCount={openAlarmCount}
-            reviewCount={reviewUnseenCount}
             onChange={(next) => leaveLive(() => setTab(next))}
           />
         ) : null}
@@ -1870,10 +1723,8 @@ function AppInner() {
       {theme.bg2 !== theme.bg ? (
         <LinearGradient colors={[theme.bg, theme.bg2]} style={StyleSheet.absoluteFill} pointerEvents="none" />
       ) : null}
-      {/* BARREIRA POR ABA. Havia só a da raiz: um crash de render em qualquer
-          tela levava o app inteiro para a tela de recuperação — um bug num card
-          da Revisão derrubava a live que o operador estava assistindo. Com a
-          `resetKey` na aba, trocar de aba já limpa o erro da anterior. */}
+      {/* BARREIRA POR ABA. Um erro numa tela não deve derrubar a live que o
+          operador está assistindo. A `resetKey` limpa o erro ao trocar de aba. */}
       <View style={[styles.body, { paddingTop: TOP_SAFE }]}>
         <ErrorBoundary resetKey={tab}>
         {tab === 'central' && (
@@ -1891,7 +1742,6 @@ function AppInner() {
               onOpenMosaic={() => setTab('mosaico')}
               onOpenPlayback={() => setTab('reproducao')}
               facilityName={branding.facilityName}
-              operationalMessages={operationalMessages}
               onPosterError={(cameraId) => { void refreshPoster(cameraId); }}
               apiUrl={session.apiUrl}
               token={session.token}
@@ -1979,30 +1829,6 @@ function AppInner() {
             onRetry={() => { if (selectedCamera) void loadRecordings(selectedCamera.id, recordingDateRef.current); }}
             onThumbnailError={refreshExpiredThumbnails}
             abrindoGravacaoId={abrindoGravacaoId}
-          />
-        )}
-
-        {tab === 'revisao' && (
-          <ReviewScreen
-            items={reviewItems}
-            total={reviewTotal}
-            unseenCount={reviewUnseenCount}
-            loading={reviewLoading}
-            refreshing={reviewRefreshing}
-            error={reviewError}
-            filters={reviewFilters}
-            cameras={cameras}
-            apiUrl={session.apiUrl}
-            token={session.token}
-            canPlayback={capabilities.playback}
-            reviewPlayback={reviewPlayback}
-            onChangeFilters={changeReviewFilters}
-            onRefresh={() => { void loadReview(reviewFilters, 'refresh'); void loadReviewUnseen(); }}
-            loadingMore={reviewLoadingMore}
-            onLoadMore={() => { void loadMoreReview(); }}
-            onOpenItem={(item) => { void openReviewItem(item); }}
-            onCloseReviewPlayback={closeReviewPlayback}
-            onMarkSeen={(item, seen) => { void markReviewSeen(item, seen); }}
           />
         )}
 
@@ -2096,20 +1922,17 @@ function AppInner() {
       {isRedesign ? (
         <BottomTabsRedesign
           active={tab}
-          onChange={(next) => { if (next !== 'reproducao') closePlayback(); if (next !== 'revisao') closeReviewPlayback(); setTab(next); }}
+          onChange={(next) => { if (next !== 'reproducao') closePlayback(); setTab(next); }}
           alarmCount={openAlarmCount}
-          reviewCount={reviewUnseenCount}
         />
       ) : (
       <BottomTabs
         active={tab}
         onChange={(next) => {
           if (next !== 'reproducao') closePlayback();
-          if (next !== 'revisao') closeReviewPlayback();
           setTab(next);
         }}
         alarmCount={openAlarmCount}
-        reviewCount={reviewUnseenCount}
       />
       )}
     </SafeAreaView>

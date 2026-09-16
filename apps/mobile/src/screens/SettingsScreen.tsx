@@ -3,13 +3,11 @@
  */
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
-import React, { useEffect, useState } from 'react';
-import { Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { AddCameraSheet } from '../components/AddCameraSheet';
 import { Icon, type IconName } from '../components/Icon';
-import { avaliarAtualizacao, baseDoApk, urlDoBuildInfo, type AtualizacaoDisponivel } from '../utils/atualizacao';
 import { useTheme } from '../theme/ThemeProvider';
-import { BRANDING } from '../branding';
 import type { User } from '../types';
 
 interface SettingsScreenProps {
@@ -50,53 +48,6 @@ export function SettingsScreen({
 }: SettingsScreenProps) {
   const { theme, themeMode, setThemeMode } = useTheme();
   const [addCameraOpen, setAddCameraOpen] = useState(false);
-  // Consulta silenciosa: falha (offline, manifesto ausente) não vira erro na
-  // tela — aviso de atualização que aparece por engano é pior que nenhum.
-  const [atualizacao, setAtualizacao] = useState<AtualizacaoDisponivel | null>(null);
-  // VERSÃO MÍNIMA EXIGIDA PELA INSTALAÇÃO. Sem isto, um APK antigo conversa com
-  // um servidor novo e quebra em silêncio: a tela mostra erro genérico e ninguém
-  // liga o defeito à versão. Endpoint público, mesma rota que o app já usa para
-  // a marca. Falha (servidor antigo, offline) = nenhuma exigência.
-  const [precisaAtualizar, setPrecisaAtualizar] = useState(false);
-  useEffect(() => {
-    if (!apiUrl) return;
-    let cancelado = false;
-    void (async () => {
-      try {
-        const resposta = await fetch(`${apiUrl.replace(/\/+$/, '')}/settings/branding`);
-        if (!resposta.ok) return;
-        const dados = await resposta.json();
-        const minima = Number(dados?.minMobileVersionCode ?? 0) || 0;
-        const atual = Number(Constants.expoConfig?.android?.versionCode ?? NaN);
-        if (!cancelado && minima > 0 && Number.isFinite(atual)) setPrecisaAtualizar(atual < minima);
-      } catch {
-        // silencioso de propósito
-      }
-    })();
-    return () => { cancelado = true; };
-  }, [apiUrl]);
-  useEffect(() => {
-    const slug = String(Constants.expoConfig?.extra?.client ?? 'default');
-    const base = BRANDING.apkBaseUrl || baseDoApk(apiUrl);
-    if (!base) return;
-    let cancelado = false;
-    void (async () => {
-      try {
-        const resposta = await fetch(urlDoBuildInfo(base, slug));
-        if (!resposta.ok) return;
-        const info = await resposta.json();
-        const atual = Number(Constants.expoConfig?.android?.versionCode ?? NaN);
-        const novidade = avaliarAtualizacao(info, atual, base, {
-          client: slug,
-          packageId: Constants.expoConfig?.android?.package,
-        });
-        if (!cancelado) setAtualizacao(novidade);
-      } catch {
-        // silencioso de propósito
-      }
-    })();
-    return () => { cancelado = true; };
-  }, [apiUrl]);
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -182,20 +133,6 @@ export function SettingsScreen({
         <Icon name="camera" size={18} color={theme.textMuted} />
       </Pressable>
 
-      {/* Conexão */}
-      <Text style={[styles.groupLabel, { color: theme.textMuted }]}>CONEXÃO</Text>
-      <View style={[styles.group, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-        <Row
-          icon={connected ? 'check' : 'alert'}
-          iconBg={connected ? 'rgba(34,197,94,0.14)' : theme.dangerBg}
-          iconColor={connected ? theme.success : theme.danger}
-          title="Conexão"
-          subtitle={connected ? 'Conectado' : 'Servidor indisponível'}
-          subtitleColor={connected ? theme.success : theme.danger}
-          theme={theme}
-        />
-      </View>
-
       {/* NOTIFICAÇÕES — o push (FCM) já funciona e é registrado ao entrar. O
           controle tinha ficado escondido por um comentário que envelheceu, e
           sem ele não havia como PARAR de receber sem desinstalar o app. */}
@@ -235,39 +172,6 @@ export function SettingsScreen({
         <Text style={[styles.logoutText, { color: theme.danger }]}>Sair da conta</Text>
       </Pressable>
       <Text style={[styles.version, { color: theme.textMuted }]}>S2Cam · versão {Constants.expoConfig?.version ?? '—'}</Text>
-
-      {/* AVISO DE VERSÃO NOVA. O APK é distribuído por link, não pela Play:
-          não há atualização automática nem aviso, e a frota fica com versões
-          misturadas sem ninguém saber. O `build-client.sh` já publica o
-          manifesto ao lado do APK — aqui só se compara e se oferece o link. */}
-      {precisaAtualizar ? (
-        <View style={[styles.atualizacao, { borderColor: theme.danger, backgroundColor: theme.surface }]}>
-          <Icon name="alert" size={18} color={theme.danger} strokeWidth={2} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.atualizacaoTitulo, { color: theme.text }]}>Atualize o aplicativo</Text>
-            <Text style={[styles.atualizacaoSub, { color: theme.textSub }]}>
-              Esta instalação exige uma versão mais nova. Enquanto isso, algumas telas podem falhar.
-            </Text>
-          </View>
-        </View>
-      ) : null}
-
-      {atualizacao ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Baixar a versão ${atualizacao.versionName}`}
-          onPress={() => { void Linking.openURL(atualizacao.url); }}
-          style={[styles.atualizacao, { borderColor: theme.accent, backgroundColor: theme.surface }]}
-        >
-          <Icon name="download" size={16} color={theme.accent} strokeWidth={2} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.atualizacaoTitulo, { color: theme.text }]}>Nova versão disponível</Text>
-            <Text style={[styles.atualizacaoSub, { color: theme.textSub }]}>
-              Versão {atualizacao.versionName} — toque para baixar o APK.
-            </Text>
-          </View>
-        </Pressable>
-      ) : null}
 
       <AddCameraSheet
         visible={addCameraOpen}
@@ -322,8 +226,5 @@ const styles = StyleSheet.create({
   addCameraIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   logout: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 15, marginBottom: 14 },
   logoutText: { fontSize: 14, fontWeight: '800' },
-  atualizacao: { flexDirection: 'row', alignItems: 'center', gap: 11, borderWidth: 1, borderRadius: 13, paddingHorizontal: 14, paddingVertical: 12, marginTop: 14 },
-  atualizacaoTitulo: { fontSize: 14, fontWeight: '700' },
-  atualizacaoSub: { fontSize: 12, marginTop: 1 },
   version: { textAlign: 'center', fontSize: 11.5, fontWeight: '600' },
 });

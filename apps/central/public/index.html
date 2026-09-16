@@ -1701,6 +1701,11 @@
             </div>
             <button id="app-edit-logo-remove" class="sm" type="button">Remover logo</button>
           </div>
+          <label class="app-icon-zoom-row" for="app-edit-logo-scale" style="margin-top:11px">
+            <span class="subtext" style="margin:0">Tamanho da logo no login</span>
+            <input id="app-edit-logo-scale" type="range" min="0.65" max="2" step="0.05" value="1" />
+            <span id="app-edit-logo-scale-value" class="mono" style="font-size:11px;min-width:38px">100%</span>
+          </label>
           <div class="brand-grid" style="margin-top:11px">
             <div class="field">
               <label for="app-edit-primary-hex">Cor de destaque</label>
@@ -5571,11 +5576,14 @@
         const primary = custom && validHexColor(primaryText) ? primaryText : '#4f8cff';
         const background = customBackground && validHexColor(backgroundText) ? backgroundText : '#11141a';
         const name = document.querySelector('#app-edit-name').value.trim() || 'Nome do cliente';
+        const logoScale = Math.max(0.65, Math.min(2, Number(document.querySelector('#app-edit-logo-scale').value) || 1));
         document.querySelector('#app-brand-preview').style.background = background;
         document.querySelector('#app-brand-preview-button').style.background = primary;
         document.querySelector('#app-brand-preview-name').textContent = name;
         const logo = document.querySelector('#app-brand-preview-logo');
         const fallback = document.querySelector('#app-brand-preview-fallback');
+        logo.style.transform = `scale(${logoScale})`;
+        document.querySelector('#app-edit-logo-scale-value').textContent = `${Math.round(logoScale * 100)}%`;
         if (appEditLogoDataUrl) {
           logo.src = appEditLogoDataUrl;
           logo.hidden = false;
@@ -5693,6 +5701,7 @@
         document.querySelector('#app-edit-primary-hex').value = '#2563eb';
         document.querySelector('#app-edit-background').value = '#111318';
         document.querySelector('#app-edit-background-hex').value = '#111318';
+        document.querySelector('#app-edit-logo-scale').value = '1';
         updateAppBrandPreview();
       }
       // A aba Apps é dirigida pela lista de INSTALAÇÕES (todos os clientes),
@@ -5781,6 +5790,7 @@
           document.querySelector('#app-edit-push').checked = data.pushEnabled === true;
           const branding = data.branding || {};
           appEditLogoDataUrl = branding.brandLogoDataUrl || '';
+          document.querySelector('#app-edit-logo-scale').value = String(branding.brandMobileLogoScale || 1);
           loadAppIconEditor(data.appIconDataUrl || '', { reset: true, dirty: false });
           const custom = branding.brandUseDefaultColors === false && validHexColor(branding.brandPrimaryColor);
           const primary = custom ? branding.brandPrimaryColor.toLowerCase() : '#2563eb';
@@ -5820,6 +5830,7 @@
         const branding = {
           facilityName: appName,
           brandLogoDataUrl: appEditLogoDataUrl,
+          brandMobileLogoScale: Math.max(0.65, Math.min(2, Number(document.querySelector('#app-edit-logo-scale').value) || 1)),
           brandUseDefaultColors: !customColors,
           brandPrimaryColor: customColors ? primaryColor : '',
           brandBackgroundColor: customBackground ? backgroundColor : '',
@@ -6191,6 +6202,7 @@
         reader.addEventListener('error', () => showToast('Não foi possível ler o logo.'));
         reader.readAsDataURL(file);
       });
+      document.querySelector('#app-edit-logo-scale').addEventListener('input', updateAppBrandPreview);
       document.querySelector('#app-edit-icon-zoom').addEventListener('input', (event) => {
         appEditIconZoom = Number(event.target.value) || 1;
         markAppIconCropChanged();

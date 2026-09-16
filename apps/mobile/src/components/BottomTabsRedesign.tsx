@@ -1,5 +1,5 @@
 /**
- * Tab bar do redesign — flutuante, como o mockup (Início/Câmeras/Ronda/Revisão/Eventos/Ajustes).
+ * Tab bar do redesign — flutuante (Início/Câmeras/Ronda/Eventos/Ajustes).
  * Mapeia para as abas existentes do app (central/mosaico/alarmes/ajustes) para não mudar
  * a lógica de navegação. Reprodução continua acessível de dentro das telas.
  */
@@ -13,19 +13,17 @@ interface Props {
   active: Tab;
   onChange: (tab: Tab) => void;
   alarmCount?: number;
-  reviewCount?: number;
 }
 
 const TABS: Array<{ id: Tab; label: string; icon: IconName }> = [
   { id: 'central', label: 'Início', icon: 'home' },
   { id: 'mosaico', label: 'Câmeras', icon: 'camera' },
   { id: 'ronda', label: 'Ronda', icon: 'clock' },
-  { id: 'revisao', label: 'Revisão', icon: 'eye' },
   { id: 'alarmes', label: 'Eventos', icon: 'bell' },
   { id: 'ajustes', label: 'Ajustes', icon: 'settings' },
 ];
 
-export function BottomTabsRedesign({ active, onChange, alarmCount = 0, reviewCount = 0 }: Props) {
+export function BottomTabsRedesign({ active, onChange, alarmCount = 0 }: Props) {
   const { theme } = useTheme();
   // edge-to-edge: o app desenha atrás da barra de navegação do Android; o inset
   // empurra a barra flutuante para cima dos botões do sistema (gesto ou 3 botões).
@@ -48,13 +46,12 @@ export function BottomTabsRedesign({ active, onChange, alarmCount = 0, reviewCou
               accessibilityState={{ selected: on }}
               accessibilityLabel={
                 tab.id === 'alarmes' && alarmCount > 0 ? `${tab.label}, ${alarmCount} em aberto`
-                : tab.id === 'revisao' && reviewCount > 0 ? `${tab.label}, ${reviewCount} para revisar`
                 : tab.label
               }
             >
               <View>
                 <Icon name={tab.icon} size={21} color={color} />
-                {(tab.id === 'alarmes' && alarmCount > 0) || (tab.id === 'revisao' && reviewCount > 0) ? <View style={[styles.dot, { backgroundColor: theme.danger, borderColor: theme.surface }]} /> : null}
+                {tab.id === 'alarmes' && alarmCount > 0 ? <View style={[styles.dot, { backgroundColor: theme.danger, borderColor: theme.surface }]} /> : null}
               </View>
               <Text style={[styles.label, { color, fontFamily: on ? 'InstrumentSans-SemiBold' : 'InstrumentSans-Medium' }]}>{tab.label}</Text>
             </TouchableOpacity>

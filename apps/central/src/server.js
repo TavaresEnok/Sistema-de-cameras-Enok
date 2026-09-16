@@ -2464,6 +2464,10 @@ function validateManagedBranding(raw, fallbackName) {
   }
   const facilityName = String(raw.facilityName || fallbackName || '').trim().slice(0, 200);
   const brandLogoDataUrl = String(raw.brandLogoDataUrl || '').trim();
+  const rawMobileLogoScale = Number(raw.brandMobileLogoScale ?? 1);
+  const brandMobileLogoScale = Number.isFinite(rawMobileLogoScale)
+    ? Math.max(0.65, Math.min(2, rawMobileLogoScale))
+    : 1;
   const brandUseDefaultColors = raw.brandUseDefaultColors === true;
   const brandPrimaryColor = String(raw.brandPrimaryColor || '').trim().toLowerCase();
   const brandBackgroundColor = String(raw.brandBackgroundColor || '').trim().toLowerCase();
@@ -2482,6 +2486,7 @@ function validateManagedBranding(raw, fallbackName) {
     value: {
       facilityName,
       brandLogoDataUrl,
+      brandMobileLogoScale,
       brandUseDefaultColors,
       brandPrimaryColor: brandUseDefaultColors ? '' : brandPrimaryColor,
       brandBackgroundColor: brandUseDefaultColors ? '' : brandBackgroundColor,
@@ -2509,6 +2514,7 @@ function managedBrandingFromInstallation(item, remoteBranding = null) {
   const fallback = {
     facilityName: effectiveAppName(item),
     brandLogoDataUrl: '',
+    brandMobileLogoScale: 1,
     brandUseDefaultColors: true,
     brandPrimaryColor: '',
     brandBackgroundColor: '',
@@ -2518,6 +2524,7 @@ function managedBrandingFromInstallation(item, remoteBranding = null) {
   return checked.ok ? checked.value : {
     facilityName: effectiveAppName(item),
     brandLogoDataUrl: '',
+    brandMobileLogoScale: 1,
     brandUseDefaultColors: true,
     brandPrimaryColor: '',
     brandBackgroundColor: '',
@@ -2682,10 +2689,17 @@ async function handlePatchApp(req, res, db, actor, installationId) {
   addAuditEvent(db, req, { type: 'apk.app_edited', actor: actor.email, result: 'accepted', installationId });
 
   let brandingChanged = false;
+  let brandingBuildChanged = false;
   if (Object.prototype.hasOwnProperty.call(body, 'branding')) {
+    const previousBranding = managedBrandingFromInstallation(item);
     const checked = validateManagedBranding(body.branding, appName || effectiveAppName(item));
     if (!checked.ok) return json(req, res, 400, { error: 'invalid_branding', message: checked.message });
     brandingChanged = JSON.stringify(item.branding || null) !== JSON.stringify(checked.value);
+    const { brandMobileLogoScale: _previousScale, ...previousBuildBranding } = previousBranding;
+    const { brandMobileLogoScale: _nextScale, ...nextBuildBranding } = checked.value;
+    // O tamanho da logo é lido em runtime pelo app. Alterá-lo não precisa gerar
+    // APK/AAB novo nem criar trabalho desnecessário no agente de build.
+    brandingBuildChanged = JSON.stringify(previousBuildBranding) !== JSON.stringify(nextBuildBranding);
     item.branding = checked.value;
     if (brandingChanged) {
       bumpConfigRevision(item);
@@ -2709,7 +2723,7 @@ async function handlePatchApp(req, res, db, actor, installationId) {
     apiUrlOverride: item.app.apiUrlOverride || '',
     pushEnabled: item.app.pushEnabled === true,
   });
-  if (hadBuild && (appSettingsChanged || brandingChanged || appIconChanged)) {
+  if (hadBuild && (appSettingsChanged || brandingBuildChanged || appIconChanged)) {
     rebuild = await pushAppToBuildAgent(item, actor, req, db, installationId);
   }
   await saveDb(db);

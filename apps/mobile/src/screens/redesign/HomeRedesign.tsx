@@ -3,8 +3,7 @@
  * (novo-mockup-app-drac). Recebe EXATAMENTE os mesmos dados que a CentralScreen atual,
  * então o App só troca um componente pelo outro quando isRedesign.
  *
- * Fiel ao handoff: saudação + nome do cliente (Sora), 3 pílulas de status, card de câmera
- * em destaque ao vivo, carrossel "Suas câmeras", "Atividade recente".
+ * Fiel ao handoff: saudação, estado das câmeras e acesso rápido ao ao vivo.
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -41,8 +40,6 @@ interface Props {
   onOpenMosaic: () => void;
   onOpenPlayback: () => void;
   facilityName?: string;
-  /** Avisos operacionais do servidor (mesma fonte da CentralScreen). */
-  operationalMessages?: string[];
   /** Poster expirado/quebrado → pede um novo ao App. */
   onPosterError?: (cameraId: string) => void;
   apiUrl: string;
@@ -76,7 +73,7 @@ function ClockBadge({ style, textStyle }: { style: any; textStyle: any }) {
 }
 
 export function HomeRedesign(props: Props) {
-  const { cameras, user, streamPosters, alarms, alarmCount, refreshing, onRefresh, onOpenCamera, onOpenAlarms, facilityName, operationalMessages, onPosterError } = props;
+  const { cameras, user, streamPosters, alarmCount, refreshing, onRefresh, onOpenCamera, onOpenAlarms, facilityName, onPosterError } = props;
   const { theme } = useTheme();
   const [addCameraOpen, setAddCameraOpen] = useState(false);
 
@@ -92,7 +89,6 @@ export function HomeRedesign(props: Props) {
   const hero = pinned ?? online[0] ?? cameras[0] ?? null;
   const heroPoster = hero ? streamPosters[hero.id] : null;
   const clientName = facilityName || user?.name?.trim().split(/\s+/)[0] || 'Você';
-  const opAlert = operationalMessages?.[0] ?? null;
 
   const pinCamera = (cam: Camera) => {
     const isPinned = featuredId === cam.id;
@@ -127,7 +123,7 @@ export function HomeRedesign(props: Props) {
           <Text style={styles.greet}>{greeting()},</Text>
           <Text style={styles.client} numberOfLines={1}>{clientName}</Text>
         </View>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Adicionar dispositivo" style={[styles.iconBtn, { backgroundColor: theme.accent }]} onPress={() => setAddCameraOpen(true)} activeOpacity={0.8}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Adicionar câmera" style={[styles.iconBtn, { backgroundColor: theme.accent }]} onPress={() => setAddCameraOpen(true)} activeOpacity={0.8}>
           <Icon name="plus" size={20} color={theme.textOnAccent} strokeWidth={2.4} />
         </TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Alarmes" style={styles.iconBtn} onPress={onOpenAlarms} activeOpacity={0.8}>
@@ -145,14 +141,6 @@ export function HomeRedesign(props: Props) {
         <Pill theme={theme} color={theme.danger} value={recording} label="gravando" pulse />
         <Pill theme={theme} color={theme.textMuted} value={offline} label="offline" />
       </View>
-
-      {/* Aviso operacional do servidor (paridade com a tela Início atual) */}
-      {opAlert ? (
-        <View style={styles.opBanner}>
-          <Icon name="alert" size={16} color={theme.warning} />
-          <Text style={styles.opBannerText} numberOfLines={2}>{opAlert}</Text>
-        </View>
-      ) : null}
 
       {/* Hero: câmera em destaque (long-press para fixar/soltar) */}
       {hero ? (
@@ -262,41 +250,6 @@ export function HomeRedesign(props: Props) {
       </ScrollView>
       </> : null}
 
-      {/* Atividade recente */}
-      <View style={styles.sectionHead}>
-        <Text style={styles.sectionTitle}>Atividade recente</Text>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Ver todos os eventos" onPress={onOpenAlarms}><Text style={styles.link}>Ver tudo</Text></TouchableOpacity>
-      </View>
-      <View style={{ gap: 9 }}>
-        {alarms.slice(0, 4).map((a) => {
-          const cam = a.cameraId ? cameras.find((c) => c.id === a.cameraId) : undefined;
-          const poster = cam ? streamPosters[cam.id] : null;
-          return (
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${labelForEvent(a.type)}. ${a.cameraName || cam?.name || 'Sistema'}`}
-              key={a.id}
-              style={styles.activity}
-              activeOpacity={0.85}
-              onPress={() => (cam ? onOpenCamera(cam) : onOpenAlarms())}
-            >
-              <View style={styles.activityThumb}>
-                {poster ? (
-                  <Image source={{ uri: poster }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                ) : (
-                  <View style={[StyleSheet.absoluteFill, styles.cardThumbEmpty]}><Icon name="bell" size={13} color={theme.textMuted} /></View>
-                )}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.activityTitle} numberOfLines={1}>{labelForEvent(a.type)}</Text>
-                <Text style={styles.activitySub} numberOfLines={1}>
-                  {(a.cameraName || cam?.name || 'Câmera')} · {timeAgo(a.occurredAt)}
-                </Text>
-              </View>
-              <Icon name="forward" size={16} color={theme.textMuted} />
-            </TouchableOpacity>
-          );
-        })}
-        {alarms.length === 0 ? <Text style={styles.empty}>Sem atividade recente.</Text> : null}
-      </View>
       </ScrollView>
       {/* Modal fora do ScrollView: evita que foco, gestos e botão Voltar sejam
           disputados pela página Início durante o cadastro. */}
@@ -326,27 +279,6 @@ const pillStyle = StyleSheet.create({
   value: { fontFamily: TITLE, fontSize: 15, fontWeight: '700' },
   label: { fontFamily: UI, fontSize: 10.5, fontWeight: '500' },
 });
-
-function labelForEvent(type: string): string {
-  const k = String(type ?? '').toLowerCase();
-  if (k.includes('motion') || k.includes('movimento')) return 'Movimento detectado';
-  if (k.includes('person') || k.includes('pessoa')) return 'Pessoa detectada';
-  if (k.includes('face') || k.includes('rosto')) return 'Rosto detectado';
-  if (k.includes('offline')) return 'Câmera offline';
-  if (k.includes('online')) return 'Câmera online';
-  if (k.includes('disk') || k.includes('storage')) return 'Alerta de armazenamento';
-  return 'Evento detectado';
-}
-function timeAgo(iso?: string): string {
-  if (!iso) return 'agora';
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.round(diff / 60000);
-  if (m < 1) return 'agora';
-  if (m < 60) return `${m}min`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h`;
-  return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-}
 
 function makeStyles(t: any) {
   return StyleSheet.create({

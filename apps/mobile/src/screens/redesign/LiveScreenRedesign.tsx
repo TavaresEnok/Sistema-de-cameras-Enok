@@ -16,6 +16,7 @@ import { Icon, type IconName } from '../../components/Icon';
 import type { SavedClip } from '../../services/clips';
 import type { ActivePlayback, Camera, Direction, LiveDetection, Recording } from '../../types';
 import { isOnlineStatus, ptzLabel } from '../../utils/camera-view';
+import { localDateKey } from '../../utils/format';
 
 const TITLE = 'Sora';
 const UI = 'InstrumentSans';
@@ -53,10 +54,6 @@ interface Props {
   /** Áudio ao vivo: quem pede o perfil com som ao servidor é o App. */
   audioLigado?: boolean;
   onAudioLigadoChange?: (ligado: boolean) => void;
-  /** Gravação da câmera NO SISTEMA (acervo), diferente do clipe no aparelho. */
-  gravacaoSistemaAtiva?: boolean;
-  gravacaoSistemaOcupada?: boolean;
-  onToggleGravacaoSistema?: (c: Camera) => void;
   onBack: () => void;
   onSendPtz: (d: Direction) => void;
   onToggleRecording: (c: Camera) => void;
@@ -95,7 +92,7 @@ export function LiveScreenRedesign(props: Props) {
   const { camera, topInset, streamUrl, whepUrl, posterUrl, hdUrl, onRequestHd, onExitHd, detections,
     recordings, recordingsLoading, recordingDate, activePlayback, recordingActive, ptzActive, ptzFeedback,
     canPlayback, canDownload, myRecordings, notificationsMuted, onToggleNotifications, onBack, onSendPtz, onToggleRecording,
-    audioLigado = false, onAudioLigadoChange, gravacaoSistemaAtiva = false, gravacaoSistemaOcupada = false, onToggleGravacaoSistema,
+    audioLigado = false, onAudioLigadoChange,
     onSnapshot, onOpenPlayback, onClosePlayback, onSelectDate, onDownloadRecording, onPlayLocal, onDeleteLocal } = props;
   const { theme } = useTheme();
   const s = makeStyles(theme);
@@ -144,7 +141,9 @@ export function LiveScreenRedesign(props: Props) {
       });
     }
   };
-  const canPtz = camera.ptzCapable !== false && camera.canControl !== false;
+  // Uma sonda ONVIF antiga pode marcar falso mesmo quando a câmera possui PTZ.
+  // Tentamos o comando sempre; somente a permissão do usuário bloqueia antes.
+  const canPtz = camera.canControl !== false;
 
   // Aspecto REAL da câmera (igual ao app antigo): o container do vídeo tem a
   // MESMA proporção do stream, então `contain` preenche sem cortar e sem tarjas.
@@ -308,12 +307,9 @@ export function LiveScreenRedesign(props: Props) {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.actionsRow} contentContainerStyle={s.actions}>
             <ActionBtn s={s} theme={theme} icon="mic" label={audioAvailable === false ? 'Sem áudio' : 'Áudio'} active={!muted && audioAvailable !== false} disabled={audioAvailable === false} onPress={() => { const querSom = muted; setMuted(!querSom); onAudioLigadoChange?.(querSom); }} />
             <ActionBtn s={s} theme={theme} icon="camera" label="Capturar" onPress={() => onSnapshot(camera)} />
-            <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label="Gravar" active={recordingActive} danger={recordingActive} onPress={() => onToggleRecording(camera)} />
+            <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label={props.recordingBusy ? 'Salvando…' : 'Gravar'} active={recordingActive} danger={recordingActive} disabled={props.recordingBusy} onPress={() => onToggleRecording(camera)} />
             <ActionBtn s={s} theme={theme} icon="bell" label={notificationsMuted ? 'Silenciada' : 'Notificar'} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
             <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'HD' : 'Economia'} active={hdMode} onPress={toggleHd} />
-            {onToggleGravacaoSistema ? (
-              <ActionBtn s={s} theme={theme} icon="radio" label={gravacaoSistemaAtiva ? 'Gravando' : 'Gravar 24h'} active={gravacaoSistemaAtiva} disabled={gravacaoSistemaOcupada} onPress={() => onToggleGravacaoSistema(camera)} />
-            ) : null}
             <ActionBtn s={s} theme={theme} icon="expand" label="Tela" onPress={() => setFullscreen(true)} />
           </ScrollView>
 
@@ -342,7 +338,7 @@ export function LiveScreenRedesign(props: Props) {
               </View>
             </View>
           ) : null}
-          {ptzOpen && !canPtz ? <Text style={s.ptzNote}>Esta câmera não suporta PTZ ou você não tem permissão.</Text> : null}
+          {ptzOpen && !canPtz ? <Text style={s.ptzNote}>Seu usuário não tem permissão para controlar esta câmera.</Text> : null}
 
           {/* Espaço restante preenchido com CONTEÚDO ÚTIL (como o painel inferior
               do app antigo): as gravações do dia desta câmera, prontas p/ tocar.
@@ -393,6 +389,7 @@ export function LiveScreenRedesign(props: Props) {
           myRecordings={myRecordings} activePlayback={activePlayback}
           canPlayback={canPlayback} canDownload={canDownload}
           onOpenPlayback={onOpenPlayback} onSelectDate={onSelectDate}
+          onPreviousDate={props.onPreviousDate} onNextDate={props.onNextDate}
           onDownloadRecording={onDownloadRecording} onLoadMoreRecordings={props.onLoadMoreRecordings}
           onRetryRecordings={props.onRetryRecordings} onThumbnailError={props.onThumbnailError}
           onPlayLocal={onPlayLocal} onDeleteLocal={onDeleteLocal}
@@ -406,20 +403,22 @@ export function LiveScreenRedesign(props: Props) {
  * chips de data, linha do tempo 24h, download do trecho, e clipes locais. */
 function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMore, recordingsError, recordingsTotal,
   downloadingIds, recordingDate, myRecordings, activePlayback,
-  canPlayback, canDownload, onOpenPlayback, onSelectDate, onDownloadRecording, onLoadMoreRecordings,
+  canPlayback, canDownload, onOpenPlayback, onSelectDate, onPreviousDate, onNextDate, onDownloadRecording, onLoadMoreRecordings,
   onRetryRecordings, onThumbnailError, onPlayLocal, onDeleteLocal }: {
   s: any; theme: any; recordings: Recording[]; recordingsLoading: boolean; recordingsLoadingMore: boolean;
   recordingsError: string | null; recordingsTotal: number; downloadingIds: string[]; recordingDate: string;
   myRecordings: SavedClip[]; activePlayback: { recording: Recording; url: string } | null;
   canPlayback: boolean; canDownload: boolean;
   onOpenPlayback: (r: Recording) => void; onSelectDate: (d: string) => void;
+  onPreviousDate: () => void; onNextDate: () => void;
   onDownloadRecording: (r: Recording) => void; onLoadMoreRecordings: () => void;
   onRetryRecordings: () => void; onThumbnailError: () => void;
   onPlayLocal: (c: SavedClip) => void; onDeleteLocal: (c: SavedClip) => void;
 }) {
   const [source, setSource] = useState<'server' | 'local'>('server');
   const [trackWidth, setTrackWidth] = useState(0);
-  const chips = recentDateChips(recordingDate);
+  const dateScrollRef = useRef<ScrollView>(null);
+  const chips = recentDateChips();
 
   // Segmentos da linha do tempo 24h a partir das gravações do dia.
   const segs = recordings.map((r) => {
@@ -452,7 +451,7 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
     })[0];
     if (nearest) onOpenPlayback(nearest.recording);
   };
-  const isToday = recordingDate === new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD local
+  const isToday = recordingDate === localDateKey();
   const nowPct = isToday ? ((new Date().getHours() * 3600 + new Date().getMinutes() * 60) / 86400) * 100 : null;
 
   return (
@@ -473,8 +472,16 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
 
       {source === 'server' ? (
         <>
-          {/* Chips de data */}
-          <View style={s.dateChips}>
+          {/* Navegação por até 90 dias: setas para o dia vizinho e faixa
+              horizontal para saltos maiores sem ficar preso em cinco datas. */}
+          <View style={s.dateNavRow}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Dia anterior" style={s.dateArrow} onPress={onPreviousDate}><Icon name="chevronLeft" size={17} color={theme.text} /></TouchableOpacity>
+            <View style={{ flex: 1, alignItems: 'center' }}>
+              <Text style={s.selectedDate}>{new Date(`${recordingDate}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}</Text>
+            </View>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Próximo dia" accessibilityState={{ disabled: isToday }} disabled={isToday} style={[s.dateArrow, isToday && { opacity: 0.35 }]} onPress={onNextDate}><Icon name="chevronRight" size={17} color={theme.text} /></TouchableOpacity>
+          </View>
+          <ScrollView ref={dateScrollRef} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.dateChips} onContentSizeChange={() => dateScrollRef.current?.scrollToEnd({ animated: false })}>
             {chips.map((c) => {
               const on = c.key === recordingDate;
               return (
@@ -484,7 +491,7 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
                 </TouchableOpacity>
               );
             })}
-          </View>
+          </ScrollView>
 
           {/* Linha do tempo 24h */}
           <View style={s.tlCard}>
@@ -583,7 +590,8 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
                   </TouchableOpacity>
                   <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.85} onPress={() => onPlayLocal(c)}>
                     <Text style={s.recRowTitle} numberOfLines={1}>{c.cameraName}</Text>
-                    <Text style={s.recRowSub}>{new Date(c.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</Text>
+                    <Text style={s.localDate}>{new Date(c.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</Text>
+                    <Text style={s.recRowSub}>{new Date(c.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={s.localDelBtn}
@@ -605,11 +613,11 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
   );
 }
 
-/** 5 dias mais recentes terminando na data selecionada (ou hoje se for futuro). */
-function recentDateChips(selected: string): Array<{ key: string; dow: string; num: string }> {
-  const base = new Date(`${selected}T12:00:00`);
+/** Últimos 90 dias, do mais antigo até hoje. */
+function recentDateChips(): Array<{ key: string; dow: string; num: string }> {
+  const base = new Date(`${localDateKey()}T12:00:00`);
   const out: Array<{ key: string; dow: string; num: string }> = [];
-  for (let i = 4; i >= 0; i--) {
+  for (let i = 89; i >= 0; i--) {
     const d = new Date(base);
     d.setDate(d.getDate() - i);
     out.push({
@@ -722,8 +730,11 @@ function makeStyles(t: any) {
     srcSub: { fontFamily: UI, fontSize: 9.5, color: t.textMuted, fontWeight: '500' },
 
     // Chips de data
-    dateChips: { flexDirection: 'row', gap: 8, marginBottom: 14 },
-    dateChip: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 14, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border },
+    dateNavRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+    dateArrow: { width: 42, height: 42, borderRadius: 13, borderWidth: 1, borderColor: t.border, backgroundColor: t.surface, alignItems: 'center', justifyContent: 'center' },
+    selectedDate: { fontFamily: UI, fontSize: 12.5, lineHeight: 17, fontWeight: '700', color: t.text, textAlign: 'center', textTransform: 'capitalize' },
+    dateChips: { flexDirection: 'row', gap: 8, marginBottom: 14, paddingHorizontal: 1 },
+    dateChip: { width: 58, alignItems: 'center', paddingVertical: 9, borderRadius: 14, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border },
     dateChipOn: { backgroundColor: t.accent, borderColor: t.accent },
     dateChipDow: { fontFamily: UI, fontSize: 10, fontWeight: '700', letterSpacing: 0.5, color: t.textSub },
     dateChipNum: { fontFamily: TITLE, fontSize: 16, fontWeight: '700', color: t.text, marginTop: 1 },
@@ -758,6 +769,7 @@ function makeStyles(t: any) {
     recThumbEmpty: { alignItems: 'center', justifyContent: 'center', backgroundColor: t.surfaceAlt },
     recRowTitle: { fontFamily: MONO, fontSize: 13, fontWeight: '600', color: t.text },
     recRowSub: { fontFamily: UI, fontSize: 11.5, color: t.textSub, marginTop: 2 },
+    localDate: { fontFamily: UI, fontSize: 12.5, fontWeight: '700', color: t.text, marginTop: 3, textTransform: 'capitalize' },
     recDl: { width: 32, height: 32, borderRadius: 10, backgroundColor: t.surfaceAlt, alignItems: 'center', justifyContent: 'center' },
     loadMore: { height: 46, borderRadius: 14, borderWidth: 1, borderColor: t.border, backgroundColor: t.surface, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
     loadMoreText: { fontFamily: UI, fontSize: 13, fontWeight: '600', color: t.textSub },

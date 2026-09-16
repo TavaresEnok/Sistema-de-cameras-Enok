@@ -353,7 +353,7 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
   };
 
   const title = useMemo(() => ({
-    home: 'Adicionar dispositivo', discover: 'Câmeras por perto', qr: 'Ler QR Code',
+    home: 'Adicionar câmera', discover: 'Câmeras por perto', qr: 'Ler QR Code',
     provision: 'Preparar câmera nova', details: 'Configurar câmera',
     review: 'Confirmar instalação', success: 'Câmera adicionada',
   })[screen], [screen]);
@@ -492,33 +492,24 @@ export function AddCameraSheet({ visible, apiUrl, token, onClose, onCreated }: A
 
 function HomeStep({ theme, quota, quotaLoading, onDiscover, onQr, onProvision, onRemote, onManual }: { theme: any; quota: Quota | null; quotaLoading: boolean; onDiscover: () => void; onQr: () => void; onProvision: () => void; onRemote: () => void; onManual: () => void }) {
   return <>
-    <Text style={[styles.heroTitle, { color: theme.text }]}>Adicione sua câmera</Text>
-    <Text style={[styles.heroSub, { color: theme.textSub }]}>Escolha uma opção. Na maioria dos casos, você não precisa saber IP, porta ou protocolo.</Text>
     <QuotaBanner theme={theme} loading={quotaLoading} quota={quota} />
-    <Pressable accessibilityRole="button" style={styles.autoMethodWrap} onPress={onDiscover}>
+    <Pressable accessibilityRole="button" accessibilityLabel="Adicionar câmera por RTSP" style={styles.autoMethodWrap} onPress={onManual}>
       <LinearGradient colors={[theme.accent, theme.accentDark]} style={styles.autoMethod}>
-        <View style={styles.autoMethodIcon}><Icon name="search" size={27} color={theme.textOnAccent} /></View>
+        <View style={styles.autoMethodIcon}><Icon name="camera" size={27} color={theme.textOnAccent} /></View>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.autoMethodTitle, { color: theme.textOnAccent }]}>Encontrar câmeras</Text>
-          <Text style={[styles.autoMethodSub, { color: theme.textOnAccent }]}>Busca automática no Wi-Fi ou cabo</Text>
+          <Text style={[styles.autoMethodTitle, { color: theme.textOnAccent }]}>Câmera por RTSP</Text>
+          <Text style={[styles.autoMethodSub, { color: theme.textOnAccent }]}>Conectar usando o endereço da câmera</Text>
         </View>
         <Icon name="chevronRight" size={20} color={theme.textOnAccent} />
       </LinearGradient>
     </Pressable>
     <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>OUTRAS FORMAS</Text>
     <View style={[styles.methodList, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <MethodRow theme={theme} icon="search" title="Encontrar câmeras na rede" subtitle="Busca automática no Wi-Fi ou cabo" onPress={onDiscover} />
       <MethodRow theme={theme} icon="qrCode" title="Ler QR Code" subtitle="QR com endereço IP ou RTSP" onPress={onQr} />
       <MethodRow theme={theme} icon="wifi" title="Preparar câmera nova" subtitle="Guia para primeiro uso ou troca de Wi-Fi" onPress={onProvision} />
-      <MethodRow theme={theme} icon="radio" title="Câmera 4G ou remota" subtitle="A câmera envia o vídeo ao sistema" onPress={onRemote} last />
+      <MethodRow theme={theme} icon="radio" title="Câmera RTMP" subtitle="Usar o endereço RTMP configurado na câmera" onPress={onRemote} last />
     </View>
-    <Pressable accessibilityRole="button" accessibilityLabel="Adicionar câmera por endereço IP" style={styles.manualLink} onPress={onManual}>
-      <Icon name="edit" size={17} color={theme.textSub} />
-      <View style={{ flex: 1 }}>
-        <Text style={[styles.manualText, { color: theme.text }]}>Já tenho o endereço da câmera</Text>
-        <Text style={[styles.manualSub, { color: theme.textMuted }]}>Adicionar por IP</Text>
-      </View>
-      <Icon name="chevronRight" size={17} color={theme.textMuted} />
-    </Pressable>
   </>;
 }
 
@@ -526,7 +517,7 @@ function DetailsStep(props: { theme: any; sourceMode: SourceMode; ip: string; na
   const { theme, sourceMode, ip, name, username, password, rtspPort, httpPort, onvifPort, rtspPath, showPass, manualConnectionNeeded, checking, submitting, canSave } = props;
   if (sourceMode === 'rtmp_push') {
     return <>
-      <Text style={[styles.heroTitle, { color: theme.text }]}>Câmera 4G ou remota</Text>
+      <Text style={[styles.heroTitle, { color: theme.text }]}>Câmera RTMP</Text>
       <Text style={[styles.heroSub, { color: theme.textSub }]}>Dê um nome à câmera. O sistema criará um endereço curto para você copiar.</Text>
       <Field label="Nome da câmera" theme={theme}><TextInput accessibilityLabel="Nome da câmera" value={name} onChangeText={props.onName} maxLength={100} returnKeyType="done" placeholder="Ex.: Entrada principal" placeholderTextColor={theme.textMuted} style={[styles.inputText, { color: theme.text }]} /></Field>
       <PrimaryButton theme={theme} loading={submitting} disabled={!canSave} icon="plus" label="Criar endereço da câmera" onPress={props.onSubmit} />
@@ -570,7 +561,10 @@ function QuotaBanner({ theme, loading, quota }: { theme: any; loading: boolean; 
   if (loading) return <View style={[styles.quota, { backgroundColor: theme.surface, borderColor: theme.border }]}><ActivityIndicator size="small" color={theme.textSub} /><Text style={[styles.quotaText, { color: theme.textSub }]}>Verificando seu plano…</Text></View>;
   if (!quota) return null;
   const full = !quota.canAdd;
-  return <View style={[styles.quota, { backgroundColor: full ? theme.dangerBg : theme.surface, borderColor: full ? theme.danger : theme.border }]}><Icon name={full ? 'alert' : 'camera'} size={16} color={full ? theme.danger : theme.accent} /><Text style={[styles.quotaText, { color: full ? theme.danger : theme.textSub }]}>{full ? `Limite atingido: ${quota.used} de ${quota.limit}.` : `${quota.used} de ${quota.limit} câmera(s) usada(s).`}</Text></View>;
+  const label = full
+    ? (quota.limit > 0 ? `Limite de câmeras atingido: ${quota.used} de ${quota.limit}.` : 'Limite de câmeras atingido.')
+    : `${quota.used} de ${quota.limit} câmeras cadastradas.`;
+  return <View style={[styles.quota, { backgroundColor: full ? theme.dangerBg : theme.surface, borderColor: full ? theme.danger : theme.border }]}><Icon name={full ? 'alert' : 'camera'} size={16} color={full ? theme.danger : theme.accent} /><Text style={[styles.quotaText, { color: full ? theme.danger : theme.textSub }]}>{label}</Text></View>;
 }
 
 function Field({ label, theme, children }: { label: string; theme: any; children: React.ReactNode }) { return <View style={styles.field}><Text style={[styles.label, { color: theme.textMuted }]}>{label}</Text><View style={[styles.input, { backgroundColor: theme.surface, borderColor: theme.border }]}>{children}</View></View>; }

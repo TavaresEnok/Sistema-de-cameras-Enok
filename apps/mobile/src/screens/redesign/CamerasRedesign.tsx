@@ -25,6 +25,7 @@ import type { Camera } from '../../types';
 
 const TITLE = 'Sora';
 const UI = 'InstrumentSans';
+const INITIAL_VISIBLE_CAMERAS = 60;
 
 interface Props {
   cameras: Camera[];
@@ -47,6 +48,7 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('Todas');
   const [view, setView] = useState<'list' | 'mosaic'>('list');
+  const [visibleLimit, setVisibleLimit] = useState(INITIAL_VISIBLE_CAMERAS);
   const [managedCamera, setManagedCamera] = useState<Camera | null>(null);
   const { width: windowWidth } = useWindowDimensions();
   // ── UMA FONTE DE FAVORITAS ───────────────────────────────────────────────
@@ -76,6 +78,11 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
   }, [cameras, query, group, favs]);
 
   const onlineCount = cameras.filter((c) => isOnlineStatus(c.status)).length;
+  const visibleCameras = filtered.slice(0, visibleLimit);
+
+  useEffect(() => {
+    setVisibleLimit(INITIAL_VISIBLE_CAMERAS);
+  }, [query, group, view]);
 
   // Mural AO VIVO: as 4 primeiras ONLINE (na ordem filtrada, favoritas primeiro)
   // tocam vídeo de verdade (paths de grade, 720p); as demais ficam com poster —
@@ -155,11 +162,11 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
         {/* Lista */}
         {view === 'list' ? (
           <View style={{ gap: 10, marginTop: 14 }}>
-            {filtered.map((cam) => <ListRow key={cam.id} cam={cam} poster={streamPosters[cam.id]} theme={theme} s={s} fav={favs.includes(cam.id)} onToggleFav={() => toggleFav(cam.id)} onOpen={() => onOpenCamera(cam)} onManage={() => setManagedCamera(cam)} />)}
+            {visibleCameras.map((cam) => <ListRow key={cam.id} cam={cam} poster={streamPosters[cam.id]} theme={theme} s={s} fav={favs.includes(cam.id)} onToggleFav={() => toggleFav(cam.id)} onOpen={() => onOpenCamera(cam)} onManage={() => setManagedCamera(cam)} />)}
           </View>
         ) : (
           <View style={s.grid}>
-            {filtered.map((cam) => (
+            {visibleCameras.map((cam) => (
               <MosaicTile
                 key={cam.id}
                 cam={cam}
@@ -174,6 +181,16 @@ export function CamerasRedesign({ cameras, streamPosters, streamUrls, streamWhep
             ))}
           </View>
         )}
+        {visibleCameras.length < filtered.length ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Mostrar mais câmeras"
+            style={s.loadMore}
+            onPress={() => setVisibleLimit((current) => current + INITIAL_VISIBLE_CAMERAS)}
+          >
+            <Text style={s.loadMoreText}>Mostrar mais {Math.min(INITIAL_VISIBLE_CAMERAS, filtered.length - visibleCameras.length)} câmeras</Text>
+          </TouchableOpacity>
+        ) : null}
         {filtered.length === 0 ? <Text style={s.empty}>Nenhuma câmera encontrada.</Text> : null}
       </ScrollView>
       <CameraManagementSheet
@@ -331,5 +348,7 @@ function makeStyles(t: any, windowWidth: number) {
     tileStatus: { width: 8, height: 8, borderRadius: 4, marginBottom: 4 },
 
     empty: { fontFamily: UI, fontSize: 14, color: t.textMuted, textAlign: 'center', paddingVertical: 30 },
+    loadMore: { minHeight: 46, marginTop: 16, borderRadius: 14, borderWidth: 1, borderColor: t.border, backgroundColor: t.surface, alignItems: 'center', justifyContent: 'center' },
+    loadMoreText: { fontFamily: UI, fontSize: 13.5, fontWeight: '700', color: t.accent },
   });
 }

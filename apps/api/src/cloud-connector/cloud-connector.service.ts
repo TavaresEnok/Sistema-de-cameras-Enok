@@ -1132,6 +1132,7 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
     await settings.patch({
       facilityName,
       brandLogoDataUrl: String(source.brandLogoDataUrl || '').trim(),
+      brandMobileLogoScale: Number(source.brandMobileLogoScale ?? 1),
       brandUseDefaultColors: useDefaultColors,
       brandPrimaryColor: primaryColor,
       brandBackgroundColor: String(source.brandBackgroundColor || '').trim(),
@@ -1164,6 +1165,7 @@ export class CloudConnectorService implements OnModuleInit, OnModuleDestroy {
     return {
       facilityName: String(branding.facilityName || '').trim(),
       brandLogoDataUrl: String(branding.brandLogoDataUrl || '').trim(),
+      brandMobileLogoScale: Number(branding.brandMobileLogoScale ?? 1),
       brandUseDefaultColors: branding.brandUseDefaultColors === true,
       brandPrimaryColor: String(branding.brandPrimaryColor || '').trim().toLowerCase(),
       brandBackgroundColor: String(branding.brandBackgroundColor || '').trim().toLowerCase(),

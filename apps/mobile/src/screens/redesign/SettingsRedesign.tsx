@@ -4,13 +4,13 @@
  * armazenamento, lista de ações, sair. Ligado ao usuário/tema reais.
  */
 import Constants from 'expo-constants';
-import { useEffect, useState } from 'react';
-import { Linking, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { Icon, type IconName } from '../../components/Icon';
 import { AddCameraSheet } from '../../components/AddCameraSheet';
-import { avaliarAtualizacao, baseDoApk, urlDoBuildInfo, type AtualizacaoDisponivel } from '../../utils/atualizacao';
-import { BRANDING } from '../../branding';
+import { request } from '../../services/api';
+import { showAppNotice } from '../../services/app-notice';
 
 const TITLE = 'Sora';
 const UI = 'InstrumentSans';
@@ -42,35 +42,40 @@ function initials(name?: string | null): string {
 }
 
 export function SettingsRedesign(props: Props) {
-  const { user, apiUrl, token, connected, biometricAvailable, biometricEnabled, biometricLabel, onBiometricChange, onLogout, onCamerasChanged, facilityName } = props;
+  const { user, apiUrl, token, biometricAvailable, biometricEnabled, biometricLabel, onBiometricChange, onLogout, onCamerasChanged } = props;
   const { pushEnabled = true, pushSupported = true, onPushChange } = props;
   const { theme, themeMode, setThemeMode } = useTheme();
   const [addCameraOpen, setAddCameraOpen] = useState(false);
-  const [atualizacao, setAtualizacao] = useState<AtualizacaoDisponivel | null>(null);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
   const s = makeStyles(theme);
   const version = Constants.expoConfig?.version ?? '1.0';
 
-  useEffect(() => {
-    const slug = String(Constants.expoConfig?.extra?.client ?? 'default');
-    const base = BRANDING.apkBaseUrl || baseDoApk(apiUrl);
-    if (!base) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const response = await fetch(urlDoBuildInfo(base, slug));
-        if (!response.ok) return;
-        const current = Number(Constants.expoConfig?.android?.versionCode ?? NaN);
-        const next = avaliarAtualizacao(await response.json(), current, base, {
-          client: slug,
-          packageId: Constants.expoConfig?.android?.package,
-        });
-        if (!cancelled) setAtualizacao(next);
-      } catch {
-        // Atualização é informativa; ficar offline não deve bloquear Ajustes.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [apiUrl]);
+  const closePassword = () => {
+    if (passwordBusy) return;
+    setPasswordOpen(false);
+    setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setPasswordError('');
+  };
+  const changePassword = async () => {
+    if (!token) return;
+    if (!currentPassword || !newPassword) { setPasswordError('Preencha a senha atual e a nova senha.'); return; }
+    if (newPassword !== confirmPassword) { setPasswordError('A confirmação não corresponde à nova senha.'); return; }
+    setPasswordBusy(true); setPasswordError('');
+    try {
+      await request(apiUrl, '/users/me/password', token, {
+        method: 'PATCH', body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      setPasswordOpen(false);
+      showAppNotice('Senha alterada', 'Entre novamente usando sua nova senha.', 'success', 5000);
+      setTimeout(onLogout, 900);
+    } catch (error) {
+      setPasswordError(error instanceof Error ? error.message : 'Não foi possível alterar a senha.');
+    } finally { setPasswordBusy(false); }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -87,23 +92,11 @@ export function SettingsRedesign(props: Props) {
           {user?.role ? <Text style={s.roleBadge}>{ROLE_LABEL[user.role] ?? user.role}</Text> : null}
         </View>
 
-        {/* Provedor: só aparece quando HÁ nome real da instalação.
-            O fallback era o literal "Grupo Flash" — e como o App nunca passava
-            `facilityName`, TODO build white-label mostrava o nome de outro
-            cliente, com um selo "Ativo" que não vinha de dado nenhum. */}
-        {facilityName ? (
-          <View style={[s.card, { marginTop: 12 }]}>
-            <View style={s.providerIcon}><Icon name="server" size={18} color={theme.accent} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.providerName}>{facilityName}</Text>
-              <Text style={s.providerSub}>Instalação conectada</Text>
-            </View>
-          </View>
-        ) : null}
-
         {/* Configuração */}
         <Text style={s.section}>Configuração</Text>
         <View style={s.group}>
+          <Item theme={theme} s={s} icon="lock" label="Alterar minha senha" subtitle="Atualize sua senha de acesso" onPress={() => setPasswordOpen(true)} />
+          <View style={s.divider} />
           <View style={s.themeOptions} accessibilityRole="radiogroup">
             {([
               { id: 'system' as const, label: 'Sistema', icon: 'settings' as const },
@@ -155,30 +148,13 @@ export function SettingsRedesign(props: Props) {
           <Item theme={theme} s={s} icon="plus" label="Adicionar câmera" subtitle="Busca automática, QR Code ou endereço" onPress={() => setAddCameraOpen(true)} />
         </View>
 
-        {atualizacao ? (
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel={`Baixar nova versão ${atualizacao.versionName}`}
-            style={[s.updateCard, { borderColor: theme.accent }]}
-            onPress={() => { void Linking.openURL(atualizacao.url); }}
-          >
-            <View style={[s.prefIcon, { backgroundColor: theme.accentBg }]}><Icon name="download" size={17} color={theme.accent} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.updateTitle}>Atualização disponível</Text>
-              <Text style={s.updateText}>Versão {atualizacao.versionName} · toque para instalar</Text>
-            </View>
-            <Icon name="forward" size={16} color={theme.accent} />
-          </TouchableOpacity>
-        ) : null}
-
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Sair da conta" style={s.logout} activeOpacity={0.85} onPress={onLogout}>
           <Icon name="logout" size={18} color={theme.danger} />
           <Text style={s.logoutText}>Sair da conta</Text>
         </TouchableOpacity>
 
-        <View style={s.footer} accessibilityLiveRegion="polite" accessibilityLabel={connected ? `Servidor conectado. Versão ${version}` : `Sem conexão com o servidor. Versão ${version}`}>
-          <View style={[s.statusDot, { backgroundColor: connected ? theme.success : theme.danger }]} />
-          <Text style={s.footerText}>{connected ? 'servidor conectado' : 'sem conexão'} · v{version}</Text>
+        <View style={s.footer} accessibilityLabel={`S2Cam. Versão ${version}`}>
+          <Text style={s.footerText}>S2Cam · v{version}</Text>
         </View>
       </ScrollView>
 
@@ -189,8 +165,31 @@ export function SettingsRedesign(props: Props) {
         onClose={() => setAddCameraOpen(false)}
         onCreated={onCamerasChanged}
       />
+      <Modal visible={passwordOpen} transparent animationType="fade" onRequestClose={closePassword}>
+        <View style={s.modalRoot}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closePassword} accessibilityLabel="Fechar alteração de senha" />
+          <View style={s.passwordCard}>
+            <Text style={s.passwordTitle}>Alterar minha senha</Text>
+            <Text style={s.passwordSub}>Use sua senha atual para confirmar que é você.</Text>
+            <PasswordField s={s} label="Senha atual" value={currentPassword} onChange={setCurrentPassword} />
+            <PasswordField s={s} label="Nova senha" value={newPassword} onChange={setNewPassword} />
+            <PasswordField s={s} label="Confirmar nova senha" value={confirmPassword} onChange={setConfirmPassword} />
+            {passwordError ? <Text style={s.passwordError}>{passwordError}</Text> : null}
+            <View style={s.passwordActions}>
+              <TouchableOpacity style={s.passwordCancel} disabled={passwordBusy} onPress={closePassword}><Text style={s.passwordCancelText}>Cancelar</Text></TouchableOpacity>
+              <TouchableOpacity style={s.passwordSave} disabled={passwordBusy} onPress={() => { void changePassword(); }}>
+                {passwordBusy ? <ActivityIndicator color={theme.textOnAccent} /> : <Text style={s.passwordSaveText}>Salvar senha</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
+}
+
+function PasswordField({ s, label, value, onChange }: { s: any; label: string; value: string; onChange: (value: string) => void }) {
+  return <View style={{ gap: 6 }}><Text style={s.passwordLabel}>{label}</Text><TextInput value={value} onChangeText={onChange} secureTextEntry autoCapitalize="none" autoCorrect={false} style={s.passwordInput} /></View>;
 }
 
 function Prefs({ theme, s, icon, label, value, onChange }: { theme: any; s: any; icon: IconName; label: string; value: boolean; onChange: (v: boolean) => void }) {
@@ -256,5 +255,17 @@ function makeStyles(t: any) {
     footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 22 },
     statusDot: { width: 6, height: 6, borderRadius: 3 },
     footerText: { fontFamily: MONO, fontSize: 11, color: t.textMuted },
+    modalRoot: { flex: 1, backgroundColor: 'rgba(0,0,0,0.62)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+    passwordCard: { width: '100%', maxWidth: 480, borderRadius: 22, borderWidth: 1, borderColor: t.border, backgroundColor: t.surface, padding: 20, gap: 14 },
+    passwordTitle: { fontFamily: TITLE, fontSize: 20, fontWeight: '800', color: t.text },
+    passwordSub: { fontFamily: UI, fontSize: 13, lineHeight: 18, color: t.textSub, marginTop: -7 },
+    passwordLabel: { fontFamily: UI, fontSize: 12, fontWeight: '700', color: t.textSub },
+    passwordInput: { minHeight: 49, borderRadius: 13, borderWidth: 1, borderColor: t.border, backgroundColor: t.surfaceAlt, color: t.text, paddingHorizontal: 13, fontFamily: UI, fontSize: 15 },
+    passwordError: { fontFamily: UI, fontSize: 12.5, lineHeight: 17, color: t.danger },
+    passwordActions: { flexDirection: 'row', gap: 9, marginTop: 2 },
+    passwordCancel: { flex: 1, minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: t.border, alignItems: 'center', justifyContent: 'center' },
+    passwordCancelText: { fontFamily: UI, fontSize: 14, fontWeight: '700', color: t.textSub },
+    passwordSave: { flex: 1.35, minHeight: 48, borderRadius: 13, backgroundColor: t.accent, alignItems: 'center', justifyContent: 'center' },
+    passwordSaveText: { fontFamily: UI, fontSize: 14, fontWeight: '800', color: t.textOnAccent },
   });
 }

@@ -13,7 +13,6 @@ interface BottomTabsProps {
   active: Tab;
   onChange: (tab: Tab) => void;
   alarmCount?: number;
-  reviewCount?: number;
 }
 
 const TABS: Array<{ id: Tab; label: string; icon: IconName }> = [
@@ -21,12 +20,11 @@ const TABS: Array<{ id: Tab; label: string; icon: IconName }> = [
   { id: 'mosaico', label: 'Mosaico', icon: 'grid' },
   { id: 'ronda', label: 'Ronda', icon: 'clock' },
   { id: 'reproducao', label: 'Reprodução', icon: 'play' },
-  { id: 'revisao', label: 'Revisão', icon: 'eye' },
   { id: 'alarmes', label: 'Alarmes', icon: 'bell' },
   { id: 'ajustes', label: 'Ajustes', icon: 'settings' },
 ];
 
-export function BottomTabs({ active, onChange, alarmCount = 0, reviewCount = 0 }: BottomTabsProps) {
+export function BottomTabs({ active, onChange, alarmCount = 0 }: BottomTabsProps) {
   const { theme } = useTheme();
 
   // edge-to-edge: o app desenha atrás da barra de navegação do Android. O inset
@@ -43,7 +41,7 @@ export function BottomTabs({ active, onChange, alarmCount = 0, reviewCount = 0 }
       {TABS.map((tab) => {
         const on = active === tab.id;
         const color = on ? theme.accent : theme.menuText;
-        const badgeCount = tab.id === 'alarmes' ? alarmCount : tab.id === 'revisao' ? reviewCount : 0;
+        const badgeCount = tab.id === 'alarmes' ? alarmCount : 0;
         const showBadge = badgeCount > 0;
         const filled = tab.icon === 'play';
         return (

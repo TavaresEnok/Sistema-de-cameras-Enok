@@ -38,6 +38,8 @@ export interface BrandingPalette {
 export interface RuntimeBranding {
   facilityName: string;
   logoDataUrl: string;
+  /** Multiplicador visual da logo no login (0,65–2), entregue em runtime. */
+  logoScale: number;
   /** true = usa a paleta original do app e preserva as cores personalizadas. */
   useDefaultColors: boolean;
   /** Chaves históricas sem prefixo: tema escuro. */
@@ -53,6 +55,7 @@ type BrandingResponse = {
   /** Menor versionCode aceito por esta instalação (ausente/0 = sem exigência). */
   minMobileVersionCode?: number | string;
   brandLogoDataUrl?: string;
+  brandMobileLogoScale?: number | string;
   brandUseDefaultColors?: boolean;
   brandPrimaryColor?: string;
   brandBackgroundColor?: string;
@@ -104,6 +107,7 @@ export const EMPTY_PALETTE: BrandingPalette = {
 export const EMPTY_BRANDING: RuntimeBranding = {
   facilityName: '',
   logoDataUrl: '',
+  logoScale: 1,
   useDefaultColors: true,
   dark: EMPTY_PALETTE,
   light: EMPTY_PALETTE,
@@ -133,6 +137,7 @@ export async function fetchBranding(apiUrl: string): Promise<RuntimeBranding> {
   return {
     facilityName: t(data.facilityName),
     logoDataUrl: t(data.brandLogoDataUrl),
+    logoScale: Math.max(0.65, Math.min(2, Number(data.brandMobileLogoScale ?? 1) || 1)),
     // Ausente mantém compatibilidade com servidores antigos, que sempre
     // aplicavam as cores personalizadas retornadas pelo endpoint.
     useDefaultColors: data.brandUseDefaultColors === true,

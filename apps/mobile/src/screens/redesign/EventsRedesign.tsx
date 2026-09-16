@@ -1,6 +1,6 @@
 /**
  * Eventos (redesign) — réplica da tela "Atividade" do mockup: título, chips
- * Todos/Movimento/Sistema, agrupado por dia (HOJE/ONTEM), linhas com miniatura + ponto de
+ * Todos/Movimento, agrupado por dia (HOJE/ONTEM), linhas com miniatura + ponto de
  * tipo + título + câmera·hora + hora mono. Ligada aos alarmes reais.
  */
 import { useMemo, useState } from 'react';
@@ -33,7 +33,6 @@ interface Props {
 const FILTERS = [
   { id: 'all', label: 'Todos' },
   { id: 'motion', label: 'Movimento' },
-  { id: 'system', label: 'Sistema' },
 ] as const;
 
 /** Evento de SISTEMA (vs. movimento/IA) — tolerante a variações de caixa/formato. */
@@ -65,7 +64,7 @@ function dayLabel(iso: string): string {
 
 export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onRefresh, onOpenCamera, highlightedAlarmId, canManage, onAck, onResolve, erro }: Props) {
   const { theme } = useTheme();
-  const [filter, setFilter] = useState<'all' | 'motion' | 'system'>('all');
+  const [filter, setFilter] = useState<'all' | 'motion'>('all');
   const s = makeStyles(theme);
 
   // Teto de renderização: a lista NÃO é virtualizada (ScrollView), então sem
@@ -73,11 +72,11 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
   // o histórico completo vive no servidor/painel web.
   const EVENT_CAP = 50;
   const { groups, truncated } = useMemo(() => {
-    const list = alarms.filter((a) => {
-      if (filter === 'all') return true;
-      const sys = isSystemEvent(a.type);
-      return filter === 'system' ? sys : !sys;
-    });
+    // O aplicativo do cliente mostra ocorrências das câmeras. Alertas internos
+    // de disco, storage, servidor e conexão pertencem somente à operação web.
+    const clientEvents = alarms.filter((a) => !isSystemEvent(a.type) && Boolean(a.cameraId));
+    const list = clientEvents.filter((a) => filter === 'all'
+      || /motion|movimento/i.test(String(a.type ?? '')));
     const capped = list.slice(0, EVENT_CAP);
     const byDay = new Map<string, Alarm[]>();
     for (const a of capped) {
@@ -95,7 +94,7 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
       >
-        <Text style={s.title}>Atividade</Text>
+        <Text style={s.title}>Eventos</Text>
 
         <View style={s.chips}>
           {FILTERS.map((f) => {
@@ -115,11 +114,10 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
               {items.map((a) => {
                 const cam = a.cameraId ? cameras.find((c) => c.id === a.cameraId) : undefined;
                 const poster = cam ? streamPosters[cam.id] : null;
-                const sys = isSystemEvent(a.type);
                 return (
                   <TouchableOpacity
                     accessibilityRole="button"
-                    accessibilityLabel={`${labelForEvent(a.type)}. ${a.cameraName || cam?.name || 'Sistema'}. ${new Date(a.occurredAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
+                    accessibilityLabel={`${labelForEvent(a.type)}. ${a.cameraName || cam?.name || 'Câmera'}. ${new Date(a.occurredAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
                     accessibilityState={{ disabled: !a.cameraId }}
                     key={a.id}
                     style={[s.row, highlightedAlarmId === a.id && { borderColor: theme.accent, borderWidth: 1.5 }]}
@@ -131,14 +129,14 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
                         <Image source={{ uri: poster }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                       ) : (
                         <View style={[StyleSheet.absoluteFill, s.thumbEmpty]}>
-                          <Icon name={sys ? 'server' : 'aperture'} size={15} color={theme.textMuted} />
+                          <Icon name="aperture" size={15} color={theme.textMuted} />
                         </View>
                       )}
-                      <View style={[s.typeDot, { backgroundColor: sys ? theme.warning : theme.accent }]} />
+                      <View style={[s.typeDot, { backgroundColor: theme.accent }]} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={s.rowTitle} numberOfLines={1}>{(() => { const k = labelForEvent(a.type); return k !== 'Evento detectado' ? k : (a.title || k); })()}</Text>
-                      <Text style={s.rowSub} numberOfLines={1}>{(a.cameraName || cam?.name || 'Sistema')}</Text>
+                      <Text style={s.rowSub} numberOfLines={1}>{(a.cameraName || cam?.name || 'Câmera')}</Text>
                     </View>
                     <View style={{ alignItems: 'flex-end', gap: 6 }}>
                       <Text style={s.time}>{new Date(a.occurredAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</Text>
@@ -146,9 +144,9 @@ export function EventsRedesign({ alarms, cameras, streamPosters, refreshing, onR
                           `onAck`/`onResolve`, então o operador simplesmente não
                           conseguia tratar alarme nenhum neste APK — perda de
                           função silenciosa em relação ao app clássico. */}
-                      {canManage && a.status !== 'resolved' ? (
+                      {canManage && String(a.status).toUpperCase() !== 'RESOLVED' ? (
                         <View style={{ flexDirection: 'row', gap: 6 }}>
-                          {a.status === 'open' ? (
+                          {String(a.status).toUpperCase() === 'OPEN' ? (
                             <TouchableOpacity
                               accessibilityRole="button"
                               accessibilityLabel={`Reconhecer alarme ${a.title || labelForEvent(a.type)}`}
