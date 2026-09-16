@@ -142,8 +142,11 @@ test('o painel oferece editor curto com logo, destaque, fundo opcional e prévia
     'app-brand-preview', 'app-edit-logo-file', 'app-edit-primary',
     'app-edit-custom-background', 'app-edit-brand-default',
     'app-icon-preview', 'app-edit-icon-file', 'app-edit-icon-remove',
+    'app-icon-crop-stage', 'app-icon-crop-canvas', 'app-edit-icon-zoom', 'app-edit-icon-reset',
   ]) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /Identidade visual/);
   assert.match(html, /Ícone do aplicativo/);
+  assert.match(html, /exportAppIconCrop/);
+  assert.match(html, /setPointerCapture/);
   assert.match(html, /A instalação aplicará automaticamente/);
 });

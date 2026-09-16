@@ -891,11 +891,30 @@
       .brand-color-row input[type="color"] { width: 42px; padding: 3px; cursor: pointer; }
       .brand-logo-row { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; }
       .brand-delivery { min-height: 18px; margin-top: 8px; color: var(--quiet); font-size: 11.5px; }
+      .app-icon-editor { display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 18px; align-items: center; margin: 12px 0; }
+      .app-icon-crop-stage { position: relative; width: 224px; aspect-ratio: 1; overflow: hidden; border-radius: 25%;
+        border: 1px solid var(--line); background: #071013; cursor: grab; touch-action: none; user-select: none;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.04), 0 12px 30px rgba(0,0,0,.18); }
+      .app-icon-crop-stage.dragging { cursor: grabbing; }
+      .app-icon-crop-stage canvas { display: block; width: 100%; height: 100%; }
+      .app-icon-crop-stage::after { content: ""; position: absolute; inset: 11%; border: 1px dashed rgba(255,255,255,.42);
+        border-radius: 22%; pointer-events: none; }
+      .app-icon-empty { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.72);
+        font-size: 12px; text-align: center; padding: 28px; pointer-events: none; }
+      .app-icon-controls { display: grid; gap: 12px; min-width: 0; }
+      .app-icon-result { display: flex; align-items: center; gap: 11px; }
+      .app-icon-result-frame { width: 68px; height: 68px; flex: 0 0 auto; overflow: hidden; border-radius: 18px;
+        display: grid; place-items: center; background: #071013; border: 1px solid var(--line); }
+      .app-icon-result-frame canvas { display: block; width: 100%; height: 100%; }
+      .app-icon-zoom-row { display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; align-items: center; gap: 9px; }
+      .app-icon-zoom-row input[type="range"] { width: 100%; accent-color: var(--brand); }
       @media (max-width: 620px) {
         .brand-editor-head { display: grid; }
         .brand-preview { grid-template-columns: 1fr; }
         .brand-preview-side { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.09); }
         .brand-grid { grid-template-columns: 1fr; }
+        .app-icon-editor { grid-template-columns: 1fr; justify-items: center; }
+        .app-icon-controls { width: 100%; }
       }
 
       /* ── Skeleton ─────────────────────────────────────────────────────── */
@@ -1710,12 +1729,26 @@
               <div class="brand-editor-copy">Aparece na tela inicial do Android. Não altera a logo nem o visual do sistema do cliente.</div>
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:12px;margin-top:10px">
-            <div style="width:54px;height:54px;border-radius:13px;overflow:hidden;display:grid;place-items:center;background:var(--surface-2);border:1px solid var(--line)">
-              <img id="app-icon-preview" alt="Prévia do ícone do aplicativo" style="width:100%;height:100%;object-fit:contain" hidden />
-              <span id="app-icon-preview-fallback" style="font-weight:700;color:var(--accent)">S2</span>
+          <div class="app-icon-editor">
+            <div id="app-icon-crop-stage" class="app-icon-crop-stage" role="application" aria-label="Recorte do ícone. Arraste a imagem para reposicionar.">
+              <canvas id="app-icon-crop-canvas" width="768" height="768"></canvas>
+              <div id="app-icon-crop-empty" class="app-icon-empty">Escolha uma imagem para começar</div>
             </div>
-            <div class="subtext" style="margin:0">Se não escolher um arquivo, o app usa o ícone padrão S2Cam.</div>
+            <div class="app-icon-controls">
+              <div class="app-icon-result">
+                <div class="app-icon-result-frame">
+                  <canvas id="app-icon-preview" width="160" height="160" aria-label="Prévia aproximada no Android" hidden></canvas>
+                  <span id="app-icon-preview-fallback" style="font-weight:700;color:var(--accent)">S2</span>
+                </div>
+                <div class="subtext" style="margin:0"><strong style="display:block;color:var(--ink);margin-bottom:2px">Prévia no celular</strong>Arraste para posicionar. Use o zoom até a marca ficar legível dentro da área segura.</div>
+              </div>
+              <label class="app-icon-zoom-row" for="app-edit-icon-zoom">
+                <span class="subtext" style="margin:0">Zoom</span>
+                <input id="app-edit-icon-zoom" type="range" min="0.5" max="6" step="0.01" value="1" disabled />
+                <span id="app-edit-icon-zoom-value" class="mono" style="font-size:11px;min-width:38px">100%</span>
+              </label>
+              <button id="app-edit-icon-reset" class="ghost sm" type="button" disabled>Centralizar imagem</button>
+            </div>
           </div>
           <div class="brand-logo-row" style="margin-top:10px">
             <div class="field">
@@ -1724,7 +1757,7 @@
             </div>
             <button id="app-edit-icon-remove" class="sm" type="button">Usar padrão</button>
           </div>
-          <div class="subtext">Salvar uma mudança de ícone gera uma nova versão do APK/AAB deste cliente.</div>
+          <div class="subtext">O recorte mostrado será usado no próximo APK/AAB. Salvar uma mudança gera uma nova versão do aplicativo.</div>
         </section>
         <div class="alert-item" style="margin-top:12px;border-color:var(--amber-line);background:var(--amber-soft)">
           <span class="badge warn">Atenção</span>
@@ -5465,6 +5498,13 @@
       let appsBuildPoll = null;
       let appEditLogoDataUrl = '';
       let appEditIconDataUrl = '';
+      let appEditIconImage = null;
+      let appEditIconZoom = 1;
+      let appEditIconOffsetX = 0;
+      let appEditIconOffsetY = 0;
+      let appEditIconDirty = false;
+      let appEditIconPointer = null;
+      let appEditIconLoadId = 0;
 
       function validHexColor(value) {
         return /^#[0-9a-f]{6}$/i.test(String(value || '').trim());
@@ -5508,18 +5548,95 @@
         }
       }
 
-      function updateAppIconPreview() {
-        const icon = document.querySelector('#app-icon-preview');
+      function renderAppIconEditor() {
+        const canvas = document.querySelector('#app-icon-crop-canvas');
+        const preview = document.querySelector('#app-icon-preview');
+        const empty = document.querySelector('#app-icon-crop-empty');
         const fallback = document.querySelector('#app-icon-preview-fallback');
-        if (appEditIconDataUrl) {
-          icon.src = appEditIconDataUrl;
-          icon.hidden = false;
+        const zoom = document.querySelector('#app-edit-icon-zoom');
+        const reset = document.querySelector('#app-edit-icon-reset');
+        const zoomValue = document.querySelector('#app-edit-icon-zoom-value');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#071013';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (appEditIconImage) {
+          const base = Math.min(canvas.width / appEditIconImage.naturalWidth, canvas.height / appEditIconImage.naturalHeight);
+          const width = appEditIconImage.naturalWidth * base * appEditIconZoom;
+          const height = appEditIconImage.naturalHeight * base * appEditIconZoom;
+          const x = (canvas.width - width) / 2 + appEditIconOffsetX;
+          const y = (canvas.height - height) / 2 + appEditIconOffsetY;
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(appEditIconImage, x, y, width, height);
+          const pctx = preview.getContext('2d');
+          pctx.clearRect(0, 0, preview.width, preview.height);
+          pctx.fillStyle = '#071013';
+          pctx.fillRect(0, 0, preview.width, preview.height);
+          // Simula a margem segura do adaptive icon usada pelo Android.
+          const safe = preview.width * 0.72;
+          pctx.drawImage(canvas, (preview.width - safe) / 2, (preview.height - safe) / 2, safe, safe);
+          preview.hidden = false;
           fallback.hidden = true;
+          empty.hidden = true;
+          zoom.disabled = false;
+          reset.disabled = false;
         } else {
-          icon.removeAttribute('src');
-          icon.hidden = true;
+          preview.hidden = true;
           fallback.hidden = false;
+          empty.hidden = false;
+          zoom.disabled = true;
+          reset.disabled = true;
         }
+        zoom.value = String(appEditIconZoom);
+        zoomValue.textContent = `${Math.round(appEditIconZoom * 100)}%`;
+      }
+
+      function loadAppIconEditor(dataUrl, { reset = true, dirty = false } = {}) {
+        const loadId = ++appEditIconLoadId;
+        appEditIconDataUrl = dataUrl || '';
+        appEditIconDirty = dirty;
+        appEditIconImage = null;
+        if (reset) {
+          appEditIconZoom = 1;
+          appEditIconOffsetX = 0;
+          appEditIconOffsetY = 0;
+        }
+        if (!dataUrl) {
+          renderAppIconEditor();
+          return;
+        }
+        renderAppIconEditor();
+        const image = new Image();
+        image.addEventListener('load', () => {
+          if (loadId !== appEditIconLoadId) return;
+          appEditIconImage = image;
+          renderAppIconEditor();
+        }, { once: true });
+        image.addEventListener('error', () => {
+          if (loadId !== appEditIconLoadId) return;
+          appEditIconImage = null;
+          showToast('Não foi possível abrir a imagem do ícone.');
+          renderAppIconEditor();
+        }, { once: true });
+        image.src = dataUrl;
+      }
+
+      function markAppIconCropChanged() {
+        if (!appEditIconImage) return;
+        appEditIconDirty = true;
+        renderAppIconEditor();
+      }
+
+      function exportAppIconCrop() {
+        if (!appEditIconImage) return '';
+        if (!appEditIconDirty && appEditIconDataUrl) return appEditIconDataUrl;
+        const canvas = document.querySelector('#app-icon-crop-canvas');
+        for (const quality of [0.92, 0.86, 0.78, 0.68]) {
+          const result = canvas.toDataURL('image/jpeg', quality);
+          if (result.length <= 540000) return result;
+        }
+        throw new Error('O recorte ficou grande demais. Use uma imagem mais simples ou menor.');
       }
 
       function resetAppBrandingToDefault() {
@@ -5607,7 +5724,7 @@
           document.querySelector('#app-edit-push').checked = data.pushEnabled === true;
           const branding = data.branding || {};
           appEditLogoDataUrl = branding.brandLogoDataUrl || '';
-          appEditIconDataUrl = data.appIconDataUrl || '';
+          loadAppIconEditor(data.appIconDataUrl || '', { reset: true, dirty: false });
           const custom = branding.brandUseDefaultColors === false && validHexColor(branding.brandPrimaryColor);
           const primary = custom ? branding.brandPrimaryColor.toLowerCase() : '#2563eb';
           const background = validHexColor(branding.brandBackgroundColor) ? branding.brandBackgroundColor.toLowerCase() : '#111318';
@@ -5627,7 +5744,7 @@
               ? `Falha ao aplicar: ${delivery.error || 'sem detalhe'}`
               : delivery.desiredRevision > 0 ? 'Identidade aplicada pela instalação.' : '';
           updateAppBrandPreview();
-          updateAppIconPreview();
+          renderAppIconEditor();
           document.querySelector('#app-edit-dialog').showModal();
         } catch { showToast('Não foi possível carregar os dados do app.'); }
       }
@@ -5650,10 +5767,17 @@
           brandPrimaryColor: customColors ? primaryColor : '',
           brandBackgroundColor: customBackground ? backgroundColor : '',
         };
+        let croppedIconDataUrl = '';
+        try {
+          croppedIconDataUrl = exportAppIconCrop();
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : 'Não foi possível preparar o ícone.');
+          return;
+        }
         try {
           const res = await fetch(centralUrl(`/api/admin/installations/${encodeURIComponent(id)}/app`), {
             method: 'PATCH', credentials: 'include', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ appName, packageId, apiUrl, pushEnabled, branding, appIconDataUrl: appEditIconDataUrl }),
+            body: JSON.stringify({ appName, packageId, apiUrl, pushEnabled, branding, appIconDataUrl: croppedIconDataUrl }),
           });
           const data = await res.json();
           if (!res.ok) { showToast(data.message || data.error || 'Falha ao salvar.'); return; }
@@ -6010,10 +6134,49 @@
         reader.addEventListener('error', () => showToast('Não foi possível ler o logo.'));
         reader.readAsDataURL(file);
       });
+      document.querySelector('#app-edit-icon-zoom').addEventListener('input', (event) => {
+        appEditIconZoom = Number(event.target.value) || 1;
+        markAppIconCropChanged();
+      });
+      document.querySelector('#app-edit-icon-reset').addEventListener('click', () => {
+        appEditIconZoom = 1;
+        appEditIconOffsetX = 0;
+        appEditIconOffsetY = 0;
+        markAppIconCropChanged();
+      });
+      const appIconCropStage = document.querySelector('#app-icon-crop-stage');
+      appIconCropStage.addEventListener('pointerdown', (event) => {
+        if (!appEditIconImage) return;
+        event.preventDefault();
+        appIconCropStage.setPointerCapture(event.pointerId);
+        appIconCropStage.classList.add('dragging');
+        appEditIconPointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+      });
+      appIconCropStage.addEventListener('pointermove', (event) => {
+        if (!appEditIconPointer || appEditIconPointer.id !== event.pointerId) return;
+        const factor = 768 / Math.max(1, appIconCropStage.getBoundingClientRect().width);
+        appEditIconOffsetX += (event.clientX - appEditIconPointer.x) * factor;
+        appEditIconOffsetY += (event.clientY - appEditIconPointer.y) * factor;
+        appEditIconPointer.x = event.clientX;
+        appEditIconPointer.y = event.clientY;
+        markAppIconCropChanged();
+      });
+      const finishAppIconDrag = (event) => {
+        if (!appEditIconPointer || appEditIconPointer.id !== event.pointerId) return;
+        appEditIconPointer = null;
+        appIconCropStage.classList.remove('dragging');
+      };
+      appIconCropStage.addEventListener('pointerup', finishAppIconDrag);
+      appIconCropStage.addEventListener('pointercancel', finishAppIconDrag);
+      appIconCropStage.addEventListener('wheel', (event) => {
+        if (!appEditIconImage) return;
+        event.preventDefault();
+        appEditIconZoom = Math.min(6, Math.max(0.5, appEditIconZoom * (event.deltaY > 0 ? 0.94 : 1.06)));
+        markAppIconCropChanged();
+      }, { passive: false });
       document.querySelector('#app-edit-icon-remove').addEventListener('click', () => {
-        appEditIconDataUrl = '';
         document.querySelector('#app-edit-icon-file').value = '';
-        updateAppIconPreview();
+        loadAppIconEditor('', { reset: true, dirty: true });
       });
       document.querySelector('#app-edit-icon-file').addEventListener('change', (event) => {
         const file = event.target.files?.[0];
@@ -6030,8 +6193,7 @@
         }
         const reader = new FileReader();
         reader.addEventListener('load', () => {
-          appEditIconDataUrl = String(reader.result || '');
-          updateAppIconPreview();
+          loadAppIconEditor(String(reader.result || ''), { reset: true, dirty: true });
         });
         reader.addEventListener('error', () => showToast('Não foi possível ler o ícone.'));
         reader.readAsDataURL(file);

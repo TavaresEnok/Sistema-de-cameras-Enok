@@ -122,7 +122,7 @@ test('white-label: ícone próprio vem da Central sem substituir a logo do clien
   assert(agent.includes('resetAppIcon'), 'remoção do ícone precisa voltar ao padrão sem sobrar asset antigo');
   assert(agent.includes('stageClientAppIcon'), 'ícone deve ser convertido separadamente da identidade visual');
   assert(agent.includes("['icon.png', 'adaptive-icon.png']"), 'Android precisa receber as duas variantes do launcher');
-  assert(agent.includes('iconContentCrop') && agent.includes('colorkey=0x${edge}'), 'ícone com moldura deve aproveitar a área útil da arte');
+  assert(!agent.includes('iconContentCrop'), 'agente não pode alterar novamente o recorte escolhido visualmente na Central');
 });
 
 test('barra ao vivo deixa PTZ fechado e mantém as cinco ações na ordem operacional', () => {
