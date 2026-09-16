@@ -37,7 +37,7 @@ test('step encerra no RelativeMove aceito, sem start/stop contínuo', async () =
   assert.deepEqual(called, ['relative']);
 });
 
-test('Intelbras/Dahua não confia em RelativeMove falso-positivo e usa pulso curto', async () => {
+test('Intelbras/Dahua não confia em RelativeMove falso-positivo e usa pulso mínimo', async () => {
   const ptz = service() as any;
   const called: string[] = [];
   ptz.sendPtzWithFallbacks = async () => {
@@ -59,8 +59,30 @@ test('Intelbras/Dahua não confia em RelativeMove falso-positivo e usa pulso cur
 
   assert.equal(result.ok, true);
   assert.equal(result.mode, 'step');
-  assert.equal(result.durationMs, 160);
+  assert.equal(result.durationMs, 80);
   assert.deepEqual(called, ['start', 'stop']);
+});
+
+test('Intelbras/Dahua tenta CGI antes da rota ONVIF que pode mentir sucesso', async () => {
+  const ptz = service() as any;
+  const called: string[] = [];
+  ptz.sendProprietaryPtz = async (_camera: unknown, action: string) => {
+    called.push(`cgi:${action}`);
+    return { ok: true, message: 'ok', protocol: 'cgi' };
+  };
+  ptz.tryKnownPtzRoute = async () => {
+    called.push('onvif');
+    return { ok: true, message: 'ok' };
+  };
+
+  const result = await ptz.sendPtzWithFallbacks({
+    id: 'camera-dahua',
+    rtspPath: '/cam/realmonitor?channel=1&subtype=0',
+  } as never, 'start', 'Left', 1);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.protocol, 'cgi');
+  assert.deepEqual(called, ['cgi:start'], 'ONVIF não pode interceptar o comando nativo');
 });
 
 test('CGI PTZ tenta primeiro a porta cadastrada sem varrer portas TCP', async () => {

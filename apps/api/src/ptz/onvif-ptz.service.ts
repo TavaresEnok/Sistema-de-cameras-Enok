@@ -747,6 +747,16 @@ export class OnvifPtzService {
     direction?: NonNullable<PtzCommandDto['direction']>,
     speed?: number,
   ) {
+    // Intelbras/Dahua e OEMs precisam receber start/stop pelo MESMO CGI.
+    // Tentar primeiro a rota ONVIF gravada é perigoso: alguns firmwares
+    // respondem HTTP 200 ao ContinuousMove/Stop, mas ignoram o Stop. O motor
+    // continua girando embora o sistema mostre sucesso. Para essa família o
+    // protocolo nativo é a primeira tentativa; ONVIF fica como contingência.
+    if (action !== 'relative' && this.shouldPreferProprietaryPtz(camera)) {
+      const proprietary = await this.sendProprietaryPtz(camera, action, direction);
+      if (proprietary.ok) return proprietary;
+    }
+
     const known = await this.tryKnownPtzRoute(camera, action, direction, speed);
     if (known) return known;
 
@@ -758,16 +768,6 @@ export class OnvifPtzService {
     const auth = this.resolveOnvifCredentials(camera);
     const candidatePaths = await this.caminhosParaTentar(camera, onvifPort, auth);
     const errors: string[] = [];
-
-    if (action !== 'relative' && this.shouldPreferProprietaryPtz(camera)) {
-      const proprietaryResult = await this.sendProprietaryPtz(camera, action, direction);
-      if (proprietaryResult.ok) {
-        return proprietaryResult;
-      }
-      if (proprietaryResult.message) {
-        errors.push(`cgi-bin/ptz.cgi: ${proprietaryResult.message}`);
-      }
-    }
 
     const profileDiscovery = await this.discoverProfileTokens({
       host: camera.ip,
@@ -1148,7 +1148,12 @@ export class OnvifPtzService {
 
     // Equipamentos antigos sem RelativeMove ainda recebem um pulso mínimo.
     // É só contingência; a interface nunca pede mais o antigo padrão de 420ms.
-    const stepDuration = Math.max(120, Math.min(600, Number(durationMs ?? 160)));
+    // No CGI o controle de velocidade do equipamento já está no mínimo
+    // (arg2=1). O pulso anterior de 160 ms ainda era longo para domes rápidas;
+    // usamos metade, com faixa estreita. ONVIF legado mantém a faixa anterior.
+    const stepDuration = this.shouldPreferProprietaryPtz(camera)
+      ? Math.max(60, Math.min(120, Math.round(Number(durationMs ?? 160) / 2)))
+      : Math.max(120, Math.min(600, Number(durationMs ?? 160)));
     const start = await this.move(camera, direction, speed);
     if (!start.ok) return start;
     await new Promise((resolve) => setTimeout(resolve, stepDuration));
