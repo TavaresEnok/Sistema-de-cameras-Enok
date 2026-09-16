@@ -132,7 +132,7 @@ function ensureBuildWorktree(commit, slug) {
     const cleanup = spawnSync('find', [
       nodeModules,
       '-type', 'd',
-      '-path', '*/android/.cxx',
+      '-name', '.cxx',
       '-prune',
       '-exec', 'rm', '-rf', '--', '{}', '+',
     ], { encoding: 'utf8' });
