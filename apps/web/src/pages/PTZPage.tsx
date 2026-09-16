@@ -53,6 +53,12 @@ type PtzDiagnostics = {
   ptzLikelyWorking: boolean;
 };
 
+type PtzTestResult = {
+  sucesso: boolean;
+  titulo: string;
+  detalhe: string;
+};
+
 function ControlButton({
   label,
   icon,
@@ -127,7 +133,24 @@ export default function PTZPage() {
   const [lastError, setLastError] = useState<string | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
   const [diagnostics, setDiagnostics] = useState<PtzDiagnostics | null>(null);
+  const [cameraParaTestar, setCameraParaTestar] = useState('');
+  const [testando, setTestando] = useState(false);
+  const [resultadoDoTeste, setResultadoDoTeste] = useState<PtzTestResult | null>(null);
   const activeMovementRef = useRef<{ cameraId: string; cameraName: string; direction: PTZDirection; startPromise?: ReturnType<typeof sendPtzCommand> } | null>(null);
+
+  const candidatas = useMemo(
+    () => cameras
+      .filter((camera) => camera.enabled)
+      .sort((a, b) => Number(b.isOnline) - Number(a.isOnline) || a.name.localeCompare(b.name, 'pt-BR')),
+    [cameras],
+  );
+
+  const situacaoDeDeteccao = useCallback((camera: typeof cameras[number]) => {
+    if (!camera.isOnline) {
+      return { podeTestar: false, motivo: 'Esta câmera está offline. Aguarde o sinal voltar antes de verificar o controle PTZ.' };
+    }
+    return { podeTestar: true, motivo: 'A verificação consulta o equipamento e informa se o controle PTZ está disponível.' };
+  }, []);
 
   const requestedCameraId = useMemo(() => {
     if (typeof window === 'undefined') return null;
@@ -277,6 +300,41 @@ export default function PTZPage() {
       setDiagnosing(false);
     }
   }, [accessToken, selectedCam]);
+
+  const testarCamera = useCallback(async () => {
+    const camera = candidatas.find((item) => item.id === cameraParaTestar);
+    if (!camera || !accessToken || !situacaoDeDeteccao(camera).podeTestar) return;
+
+    setTestando(true);
+    setResultadoDoTeste(null);
+    try {
+      const response = await fetch(`${API_URL}/ptz/${camera.id}/diagnostics`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const data = (await response.json()) as PtzDiagnostics;
+      setResultadoDoTeste(data.ptzLikelyWorking
+        ? {
+          sucesso: true,
+          titulo: 'Controle PTZ encontrado',
+          detalhe: 'Esta câmera respondeu ao teste. Abra o painel para usar os controles.',
+        }
+        : {
+          sucesso: false,
+          titulo: 'Controle PTZ não confirmado',
+          detalhe: 'Confira se a câmera possui PTZ e se a porta ONVIF ou HTTP foi configurada corretamente.',
+        });
+    } catch {
+      setResultadoDoTeste({
+        sucesso: false,
+        titulo: 'Não foi possível verificar a câmera',
+        detalhe: 'Confira a conexão da câmera e tente novamente.',
+      });
+    } finally {
+      setTestando(false);
+    }
+  }, [accessToken, cameraParaTestar, candidatas, situacaoDeDeteccao]);
 
   if (!ptzCameras.length) {
     return (
@@ -569,7 +627,7 @@ export default function PTZPage() {
                 active={activeDirection === 'Up'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('Up')}
-                onStop={() => undefined}
+                onStop={() => void stopMove()}
               />
               <div />
               <ControlButton
@@ -578,7 +636,7 @@ export default function PTZPage() {
                 active={activeDirection === 'Left'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('Left')}
-                onStop={() => undefined}
+                onStop={() => void stopMove()}
               />
               <button
                 type="button"
@@ -595,7 +653,7 @@ export default function PTZPage() {
                 active={activeDirection === 'Right'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('Right')}
-                onStop={() => undefined}
+                onStop={() => void stopMove()}
               />
               <div />
               <ControlButton
@@ -604,7 +662,7 @@ export default function PTZPage() {
                 active={activeDirection === 'Down'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('Down')}
-                onStop={() => undefined}
+                onStop={() => void stopMove()}
               />
               <div />
             </div>
@@ -616,7 +674,7 @@ export default function PTZPage() {
                 active={activeDirection === 'ZoomIn'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('ZoomIn')}
-                onStop={() => undefined}
+                onStop={() => void stopMove()}
               />
               <ControlButton
                 label="Afastar zoom"
@@ -624,7 +682,7 @@ export default function PTZPage() {
                 active={activeDirection === 'ZoomOut'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('ZoomOut')}
-                onStop={() => undefined}
+                onStop={() => void stopMove()}
               />
             </div>
 
