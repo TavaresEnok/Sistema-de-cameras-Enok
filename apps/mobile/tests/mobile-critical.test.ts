@@ -122,6 +122,7 @@ test('release do app exige checkout aprovado e código commitado', () => {
 test('build-agent limpa cache CMake compartilhado e expõe a causa da falha', () => {
   const agent = readFileSync('scripts/build-agent.mjs', 'utf8');
   assert(agent.includes("'-path', '*/android/.cxx'"), 'agente deve remover o cache .cxx contaminado entre worktrees');
+  assert(agent.includes("path.join(worktree, 'node_modules')"), 'limpeza deve alcançar dependências hoisted na raiz do monorepo');
   assert(agent.includes('summarizeBuildFailure'), 'agente deve guardar um motivo útil para falhas de build');
   assert(agent.includes("error: lastJob.status === 'failed'"), 'lista de clientes deve entregar a causa da última falha à Central');
 });

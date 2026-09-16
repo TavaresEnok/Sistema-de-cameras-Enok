@@ -124,8 +124,11 @@ function ensureBuildWorktree(commit, slug) {
   // Como os worktrees reutilizam dependências por hardlink, esse cache pode ter
   // sido produzido por outra geração e o Gradle falha com CXX1420. É conteúdo
   // temporário: limpá-lo preserva as dependências e isola cada build.
-  const nodeModules = path.join(mobile, 'node_modules');
-  if (fs.existsSync(nodeModules)) {
+  // pnpm pode resolver o módulo tanto pelo node_modules da raiz do monorepo
+  // quanto pelo node_modules do app. Limpe ambos: limpar apenas o segundo não
+  // alcança expo-modules-core quando ele foi hoisted para a raiz.
+  for (const nodeModules of [path.join(worktree, 'node_modules'), path.join(mobile, 'node_modules')]) {
+    if (!fs.existsSync(nodeModules)) continue;
     const cleanup = spawnSync('find', [
       nodeModules,
       '-type', 'd',
