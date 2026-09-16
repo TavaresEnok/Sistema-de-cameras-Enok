@@ -94,6 +94,29 @@ test('sondada há pouco não é re-sondada, mas "forçar" ignora o intervalo', a
   assert.equal(forcando.ptzCapable, true);
 });
 
+test('endpoint PTZ completo e já aprovado não volta a mapear portas automaticamente', async () => {
+  const conhecida = {
+    ...CAM_BASE,
+    ptzCapable: true,
+    ptzCapableSource: 'auto',
+    ptzProbedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    onvifPort: 8003,
+    onvifPath: '/onvif/ptz_service',
+    onvifProfileToken: 'Profile000',
+  };
+  const { svc, chamadasDeSonda, gravado } = montar(conhecida, {
+    ptzLikelyWorking: true,
+    detected: { ok: true },
+  });
+
+  const r = await svc.sondar('cam-1');
+
+  assert.equal(r.sondou, false);
+  assert.equal(r.motivo, 'endpoint-ja-conhecido');
+  assert.equal(chamadasDeSonda.length, 0, 'rota persistida não deve gerar nova busca');
+  assert.equal(gravado.length, 0, 'não precisa regravar o que já está preenchido');
+});
+
 test('câmera desativada não é sondada', async () => {
   const { svc, chamadasDeSonda } = montar({ ...CAM_BASE, enabled: false }, { ptzLikelyWorking: true, detected: {} });
   const r = await svc.sondar('cam-1');

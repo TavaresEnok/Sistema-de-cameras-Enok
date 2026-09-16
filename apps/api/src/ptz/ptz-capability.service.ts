@@ -86,6 +86,19 @@ export class PtzCapabilityService {
     if (camera.ptzCapableSource === 'manual') {
       return { sondou: false, motivo: 'definido-manualmente' as const, ptzCapable: camera.ptzCapable };
     }
+    // Endpoint automático completo já é a resposta da descoberta. Não volte a
+    // mapear portas só porque a câmera oscilou ou porque passaram 24 horas.
+    // Se essa rota realmente deixar de funcionar, o comando PTZ faz a
+    // recuperação por fallback; a sonda automática existe para preencher o
+    // que ainda está desconhecido, não para revalidar eternamente o conhecido.
+    if (
+      !opcoes.forcar
+      && camera.ptzCapable === true
+      && Number.isFinite(camera.onvifPort)
+      && Boolean(camera.onvifPath?.trim())
+    ) {
+      return { sondou: false, motivo: 'endpoint-ja-conhecido' as const, ptzCapable: true };
+    }
     if (!opcoes.forcar && this.sondadaRecentemente(camera)) {
       return { sondou: false, motivo: 'sondada-recentemente' as const, ptzCapable: camera.ptzCapable };
     }
