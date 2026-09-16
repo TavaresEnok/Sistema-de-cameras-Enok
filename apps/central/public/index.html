@@ -1802,6 +1802,11 @@
 
       const state = {
         loaded: false,
+        // `loaded` só fica verdadeiro depois que a lista principal chegou. Assim
+        // a Central nunca apresenta uma frota vazia como se fosse um dado real
+        // enquanto a sessão e a API ainda estão sendo sincronizadas.
+        loading: false,
+        loadSequence: 0,
         installations: [],
         selectedId: localStorage.getItem('drac-central-selected') || '',
         detailTab: 'visao',
@@ -5250,6 +5255,15 @@
         // Piggyback no ciclo que já existe: o painel se atualiza sozinho, então
         // um deploy feito com a aba aberta aparece sem ninguém precisar olhar.
         void marcarVersao();
+        const sequence = ++state.loadSequence;
+        const firstLoad = !state.loaded;
+        if (firstLoad) {
+          state.loading = true;
+          // A tela já pode estar restaurada do navegador. Repinta já com os
+          // skeletons, em vez de deixá-la mostrar o HTML vazio por alguns
+          // segundos até a primeira resposta da Central.
+          render();
+        }
         try {
           if (!state.user) {
             const me = await fetch(centralUrl('/api/auth/me'), { credentials: 'include' }).catch(() => null);
@@ -5258,10 +5272,28 @@
               state.user = data.authenticated ? data.user : null;
             }
           }
-          if (!state.user) { setAuthenticated(null); return; }
+          if (!state.user) {
+            state.loading = false;
+            setAuthenticated(null);
+            return;
+          }
           setAuthenticated(state.user);
-          const res = await fetch(centralUrl('/api/admin/installations'), { credentials: 'include' });
+          if (firstLoad) render();
+
+          // A lista de clientes é a informação crítica para a tela inicial.
+          // As demais consultas não podem ficar na frente dela: antes eram
+          // feitas em sequência e atrasavam toda a primeira pintura.
+          const installationsPromise = fetch(centralUrl('/api/admin/installations'), { credentials: 'include' });
+          const summaryPromise = fetch(centralUrl('/api/admin/summary'), { credentials: 'include' }).catch(() => null);
+          const releasesPromise = fetch(centralUrl('/api/admin/releases'), { credentials: 'include' }).catch(() => null);
+          const auditPromise = state.view === 'auditoria'
+            ? fetch(centralUrl('/api/admin/audit'), { credentials: 'include' }).catch(() => null)
+            : null;
+
+          const res = await installationsPromise;
           if (!res.ok) {
+            if (sequence !== state.loadSequence) return;
+            state.loading = false;
             state.user = null;
             state.installations = [];
             setAuthenticated(null);
@@ -5269,20 +5301,11 @@
             return;
           }
           const data = await res.json();
+          if (sequence !== state.loadSequence) return;
           state.loaded = true;
+          state.loading = false;
           state.installations = Array.isArray(data.items) ? data.items : [];
           notifyCommChanges();
-          const summaryRes = await fetch(centralUrl('/api/admin/summary'), { credentials: 'include' }).catch(() => null);
-          state.summary = summaryRes?.ok ? await summaryRes.json() : null;
-          const releasesRes = await fetch(centralUrl('/api/admin/releases'), { credentials: 'include' }).catch(() => null);
-          state.releases = releasesRes?.ok ? await releasesRes.json() : null;
-          if (state.view === 'auditoria') {
-            const auditRes = await fetch(centralUrl('/api/admin/audit'), { credentials: 'include' });
-            if (auditRes.ok) {
-              const auditData = await auditRes.json();
-              state.auditEvents = Array.isArray(auditData.items) ? auditData.items : [];
-            }
-          }
           if (!state.installations.some(item => item.id === state.selectedId)) {
             state.selectedId = state.installations[0]?.id || '';
           }
@@ -5290,10 +5313,31 @@
           document.querySelector('#last-update').textContent = `Atualizado ${new Date().toLocaleTimeString('pt-BR')}`;
           state.countdown = REFRESH_SECONDS;
           paintPulse();
+          // Mostra os clientes assim que eles chegam; resumo, releases e
+          // auditoria continuam em paralelo e atualizam sem apagar a tela.
           render();
-          // Série temporal é opcional: falha aqui não pode afetar o painel.
           void refreshFleetSeries();
+
+          const readOptionalJson = async (responsePromise) => {
+            const response = await responsePromise;
+            if (!response?.ok) return null;
+            return response.json().catch(() => null);
+          };
+          const [summary, releases, audit] = await Promise.all([
+            readOptionalJson(summaryPromise),
+            readOptionalJson(releasesPromise),
+            readOptionalJson(auditPromise),
+          ]);
+          if (sequence !== state.loadSequence) return;
+          state.summary = summary;
+          state.releases = releases;
+          if (audit) {
+            state.auditEvents = Array.isArray(audit.items) ? audit.items : [];
+          }
+          render();
         } catch {
+          if (sequence !== state.loadSequence) return;
+          state.loading = false;
           showToast('Falha ao atualizar a central.');
         }
       }
