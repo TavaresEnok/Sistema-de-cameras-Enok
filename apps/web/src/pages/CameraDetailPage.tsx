@@ -732,11 +732,11 @@ export default function CameraDetailPage() {
     setLastCommand(`Enviando ${direction} para ${cam.name}`);
 
     try {
-      movement.startPromise = sendPtzCommand(cam.id, { action: 'start', direction });
+      movement.startPromise = sendPtzCommand(cam.id, { action: 'step', direction, speed: 5, durationMs: 160 });
       await movement.startPromise;
       if (activeMovementRef.current === movement) {
         setCommandState('ok');
-        setLastCommand(`Movimento ${direction} ativo em ${cam.name}`);
+        setLastCommand(`Ajuste ${direction} aplicado em ${cam.name}`);
       }
     } catch (error) {
       const message = getRequestErrorMessage(error, 'Falha ao iniciar PTZ.');
@@ -1617,9 +1617,9 @@ export default function CameraDetailPage() {
                   </div>
                   <div className="mx-auto grid w-fit grid-cols-3 gap-2">
                     <div />
-                    <PtzButton icon={ArrowUp} label="Cima" active={activeDirection === 'Up'} disabled={controlsDisabled} onStart={() => void startMove('Up')} onStop={() => void stopMove()} />
+                    <PtzButton icon={ArrowUp} label="Cima" active={activeDirection === 'Up'} disabled={controlsDisabled} onStart={() => void startMove('Up')} onStop={() => undefined} />
                     <div />
-                    <PtzButton icon={ArrowLeft} label="Esquerda" active={activeDirection === 'Left'} disabled={controlsDisabled} onStart={() => void startMove('Left')} onStop={() => void stopMove()} />
+                    <PtzButton icon={ArrowLeft} label="Esquerda" active={activeDirection === 'Left'} disabled={controlsDisabled} onStart={() => void startMove('Left')} onStop={() => undefined} />
                     <button
                       type="button"
                       onClick={() => void stopMove()}
@@ -1629,14 +1629,14 @@ export default function CameraDetailPage() {
                     >
                       <Crosshair className="h-4 w-4" />
                     </button>
-                    <PtzButton icon={ArrowRight} label="Direita" active={activeDirection === 'Right'} disabled={controlsDisabled} onStart={() => void startMove('Right')} onStop={() => void stopMove()} />
+                    <PtzButton icon={ArrowRight} label="Direita" active={activeDirection === 'Right'} disabled={controlsDisabled} onStart={() => void startMove('Right')} onStop={() => undefined} />
                     <div />
-                    <PtzButton icon={ArrowDown} label="Baixo" active={activeDirection === 'Down'} disabled={controlsDisabled} onStart={() => void startMove('Down')} onStop={() => void stopMove()} />
+                    <PtzButton icon={ArrowDown} label="Baixo" active={activeDirection === 'Down'} disabled={controlsDisabled} onStart={() => void startMove('Down')} onStop={() => undefined} />
                     <div />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <PtzButton icon={ZoomIn} label="Zoom In" active={activeDirection === 'ZoomIn'} disabled={controlsDisabled} onStart={() => void startMove('ZoomIn')} onStop={() => void stopMove()} />
-                    <PtzButton icon={ZoomOut} label="Zoom Out" active={activeDirection === 'ZoomOut'} disabled={controlsDisabled} onStart={() => void startMove('ZoomOut')} onStop={() => void stopMove()} />
+                    <PtzButton icon={ZoomIn} label="Zoom In" active={activeDirection === 'ZoomIn'} disabled={controlsDisabled} onStart={() => void startMove('ZoomIn')} onStop={() => undefined} />
+                    <PtzButton icon={ZoomOut} label="Zoom Out" active={activeDirection === 'ZoomOut'} disabled={controlsDisabled} onStart={() => void startMove('ZoomOut')} onStop={() => undefined} />
                   </div>
                   <div className="rounded-md border border-border bg-background/55 px-2.5 py-2 text-[11px] text-muted-foreground">
                     {commandState === 'error' ? 'Erro operacional' : commandState === 'sending' ? 'Enviando comando...' : 'Pronto'}

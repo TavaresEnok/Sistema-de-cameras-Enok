@@ -964,7 +964,7 @@ function AppInner() {
         session.apiUrl,
         `/ptz/${target.id}/move`,
         session.token,
-        { method: 'POST', body: JSON.stringify({ action: 'step', direction, durationMs: 450, speed: 5 }) },
+        { method: 'POST', body: JSON.stringify({ action: 'step', direction, durationMs: 160, speed: 5 }) },
       );
       if (data?.status === 'error') { ptzFail(); return; }
       setTimeout(() => setPtzFeedback(null), 650);

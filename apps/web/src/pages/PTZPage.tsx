@@ -168,11 +168,11 @@ export default function PTZPage() {
       setLastCommand(`Enviando comando para ${DIRECTION_LABEL[direction]} em ${selectedCam.name}`);
 
       try {
-        movement.startPromise = sendPtzCommand(selectedCam.id, { action: 'start', direction, speed });
+        movement.startPromise = sendPtzCommand(selectedCam.id, { action: 'step', direction, speed, durationMs: 160 });
         await movement.startPromise;
         if (activeMovementRef.current === movement) {
           setCommandState('ok');
-          setLastCommand(`Movimento para ${DIRECTION_LABEL[direction]} ativo em ${selectedCam.name}`);
+          setLastCommand(`Ajuste para ${DIRECTION_LABEL[direction]} aplicado em ${selectedCam.name}`);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Falha ao iniciar comando PTZ.';
@@ -569,7 +569,7 @@ export default function PTZPage() {
                 active={activeDirection === 'Up'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('Up')}
-                onStop={() => void stopMove()}
+                onStop={() => undefined}
               />
               <div />
               <ControlButton
@@ -578,7 +578,7 @@ export default function PTZPage() {
                 active={activeDirection === 'Left'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('Left')}
-                onStop={() => void stopMove()}
+                onStop={() => undefined}
               />
               <button
                 type="button"
@@ -595,7 +595,7 @@ export default function PTZPage() {
                 active={activeDirection === 'Right'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('Right')}
-                onStop={() => void stopMove()}
+                onStop={() => undefined}
               />
               <div />
               <ControlButton
@@ -604,7 +604,7 @@ export default function PTZPage() {
                 active={activeDirection === 'Down'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('Down')}
-                onStop={() => void stopMove()}
+                onStop={() => undefined}
               />
               <div />
             </div>
@@ -616,7 +616,7 @@ export default function PTZPage() {
                 active={activeDirection === 'ZoomIn'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('ZoomIn')}
-                onStop={() => void stopMove()}
+                onStop={() => undefined}
               />
               <ControlButton
                 label="Afastar zoom"
@@ -624,7 +624,7 @@ export default function PTZPage() {
                 active={activeDirection === 'ZoomOut'}
                 disabled={controlsDisabled}
                 onStart={() => void startMove('ZoomOut')}
-                onStop={() => void stopMove()}
+                onStop={() => undefined}
               />
             </div>
 

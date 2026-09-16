@@ -44,6 +44,13 @@ type DetectOnvifInput = {
 
 type RelayState = 'active' | 'inactive';
 
+type LearnedPtzRoute = {
+  port: number;
+  path: string;
+  profileToken: string;
+  learnedAt: number;
+};
+
 @Injectable()
 export class OnvifPtzService {
   private readonly logger = new Logger(OnvifPtzService.name);
@@ -52,6 +59,12 @@ export class OnvifPtzService {
   private readonly onvifFallbackPorts = [8075, 8080, 8000, 8899, 2020];
   private readonly proprietaryPtzPort = 8075;
   private readonly moveWatchdogs = new Map<string, NodeJS.Timeout>();
+  // Um joystick não pode redescobrir ONVIF a cada toque. A descoberta completa
+  // pode consultar serviços, perfis e caminhos e leva segundos mesmo na LAN.
+  // Guardamos somente a rota que JÁ aceitou um comando e a descartamos se ela
+  // falhar; mudar porta/caminho no cadastro também invalida o cache.
+  private readonly learnedPtzRoutes = new Map<string, LearnedPtzRoute>();
+  private readonly learnedPtzRouteTtlMs = 12 * 60 * 60 * 1000;
 
   constructor(
     private readonly cryptoService: CryptoService,
@@ -202,14 +215,19 @@ export class OnvifPtzService {
 </soap:Envelope>`;
   }
 
-  buildRelativeMoveSoapBody(direction: NonNullable<PtzCommandDto['direction']>, profileToken: string) {
+  buildRelativeMoveSoapBody(direction: NonNullable<PtzCommandDto['direction']>, profileToken: string, speed?: number) {
+    // RelativeMove usa coordenadas normalizadas. O antigo 0.2 equivalia a até
+    // 20% do curso da câmera em UM toque — dezenas de graus em domes comuns.
+    // Um toque deve ser um ajuste fino; repetição de toques dá o percurso longo.
+    const requestedSpeed = Math.max(1, Math.min(10, Number(speed ?? 5)));
+    const step = Number((0.004 + requestedSpeed * 0.001).toFixed(3));
     const map: Record<NonNullable<PtzCommandDto['direction']>, [number, number, number]> = {
-      Up: [0, 0.2, 0],
-      Down: [0, -0.2, 0],
-      Left: [-0.2, 0, 0],
-      Right: [0.2, 0, 0],
-      ZoomIn: [0, 0, 0.2],
-      ZoomOut: [0, 0, -0.2],
+      Up: [0, step, 0],
+      Down: [0, -step, 0],
+      Left: [-step, 0, 0],
+      Right: [step, 0, 0],
+      ZoomIn: [0, 0, step],
+      ZoomOut: [0, 0, -step],
     };
     const [x, y, z] = map[direction];
     return `<?xml version="1.0" encoding="utf-8"?>
@@ -661,12 +679,77 @@ export class OnvifPtzService {
     return Array.from(new Set([ptz, media, ...palpites].filter((v): v is string => Boolean(v))));
   }
 
-  private async sendPtzWithFallbacks(
+  private forgetLearnedPtzRoute(cameraId: string) {
+    this.learnedPtzRoutes.delete(cameraId);
+  }
+
+  private rememberPtzRoute(cameraId: string, route: Omit<LearnedPtzRoute, 'learnedAt'>) {
+    this.learnedPtzRoutes.set(cameraId, { ...route, learnedAt: Date.now() });
+  }
+
+  private knownPtzRoutes(camera: Camera): Array<Omit<LearnedPtzRoute, 'learnedAt'>> {
+    const routes: Array<Omit<LearnedPtzRoute, 'learnedAt'>> = [];
+    const learned = this.learnedPtzRoutes.get(camera.id);
+    if (learned && Date.now() - learned.learnedAt < this.learnedPtzRouteTtlMs) {
+      routes.push({ port: learned.port, path: learned.path, profileToken: learned.profileToken });
+    } else if (learned) {
+      this.forgetLearnedPtzRoute(camera.id);
+    }
+
+    // A sonda de capacidade já grava a rota descoberta. Ela é a melhor primeira
+    // tentativa depois de reiniciar a API, sem uma redescoberta no clique.
+    if (camera.onvifPort && camera.onvifPath?.trim()) {
+      routes.push({
+        port: camera.onvifPort,
+        path: camera.onvifPath.trim(),
+        profileToken: camera.onvifProfileToken?.trim() || 'Profile000',
+      });
+    }
+
+    return routes.filter((route, index, list) => list.findIndex((other) => (
+      other.port === route.port && other.path === route.path && other.profileToken === route.profileToken
+    )) === index);
+  }
+
+  private async tryKnownPtzRoute(
     camera: Camera,
-    action: 'start' | 'stop',
+    action: 'start' | 'stop' | 'relative',
     direction?: NonNullable<PtzCommandDto['direction']>,
     speed?: number,
   ) {
+    const auth = this.resolveOnvifCredentials(camera);
+    for (const route of this.knownPtzRoutes(camera)) {
+      const body = action === 'relative'
+        ? this.buildRelativeMoveSoapBody(direction!, route.profileToken, speed)
+        : this.buildSoapBody(action, direction, route.profileToken, speed);
+      const result = await this.digestSoapRequest({
+        host: camera.ip,
+        port: route.port,
+        path: route.path,
+        body,
+        username: auth.username,
+        password: auth.password,
+        // O caminho já foi comprovado. Mais de 1,5 s numa LAN não é aceitável
+        // para joystick; em WAN a tentativa completa abaixo ainda existe.
+        timeout: 1500,
+      });
+      if (result.ok) {
+        this.rememberPtzRoute(camera.id, route);
+        return { ok: true, message: 'ok', onvifPort: route.port, onvifPath: route.path, profileToken: route.profileToken };
+      }
+    }
+    return null;
+  }
+
+  private async sendPtzWithFallbacks(
+    camera: Camera,
+    action: 'start' | 'stop' | 'relative',
+    direction?: NonNullable<PtzCommandDto['direction']>,
+    speed?: number,
+  ) {
+    const known = await this.tryKnownPtzRoute(camera, action, direction, speed);
+    if (known) return known;
+
     const onvifPort = await this.findOnvifPort(camera);
     if (!onvifPort) {
       return { ok: false, message: 'ONVIF unreachable' };
@@ -676,7 +759,7 @@ export class OnvifPtzService {
     const candidatePaths = await this.caminhosParaTentar(camera, onvifPort, auth);
     const errors: string[] = [];
 
-    if (this.shouldPreferProprietaryPtz(camera)) {
+    if (action !== 'relative' && this.shouldPreferProprietaryPtz(camera)) {
       const proprietaryResult = await this.sendProprietaryPtz(camera, action, direction);
       if (proprietaryResult.ok) {
         return proprietaryResult;
@@ -698,7 +781,9 @@ export class OnvifPtzService {
 
     for (const onvifPath of candidatePaths) {
       for (const profileToken of candidateTokens) {
-        const body = this.buildSoapBody(action, direction, profileToken, speed);
+        const body = action === 'relative'
+          ? this.buildRelativeMoveSoapBody(direction!, profileToken, speed)
+          : this.buildSoapBody(action, direction, profileToken, speed);
         const result = await this.digestSoapRequest({
           host: camera.ip,
           port: onvifPort,
@@ -709,6 +794,7 @@ export class OnvifPtzService {
           timeout: 5000,
         });
         if (result.ok) {
+          this.rememberPtzRoute(camera.id, { port: onvifPort, path: onvifPath, profileToken });
           return {
             ok: true,
             message: 'ok',
@@ -719,7 +805,7 @@ export class OnvifPtzService {
           };
         }
         if (action === 'start' && direction) {
-          const relativeBody = this.buildRelativeMoveSoapBody(direction, profileToken);
+          const relativeBody = this.buildRelativeMoveSoapBody(direction, profileToken, speed);
           const relativeResult = await this.digestSoapRequest({
             host: camera.ip,
             port: onvifPort,
@@ -730,6 +816,7 @@ export class OnvifPtzService {
             timeout: 5000,
           });
           if (relativeResult.ok) {
+            this.rememberPtzRoute(camera.id, { port: onvifPort, path: onvifPath, profileToken });
             return {
               ok: true,
               message: 'ok',
@@ -746,12 +833,14 @@ export class OnvifPtzService {
       }
     }
 
-    const proprietaryResult = await this.sendProprietaryPtz(camera, action, direction);
-    if (proprietaryResult.ok) {
-      return proprietaryResult;
-    }
-    if (proprietaryResult.message) {
-      errors.push(`cgi-bin/ptz.cgi: ${proprietaryResult.message}`);
+    if (action !== 'relative') {
+      const proprietaryResult = await this.sendProprietaryPtz(camera, action, direction);
+      if (proprietaryResult.ok) {
+        return proprietaryResult;
+      }
+      if (proprietaryResult.message) {
+        errors.push(`cgi-bin/ptz.cgi: ${proprietaryResult.message}`);
+      }
     }
 
     // O operador recebe a CAUSA e o que fazer; o rastro técnico continua
@@ -1051,7 +1140,16 @@ export class OnvifPtzService {
   }
 
   async step(camera: Camera, direction: NonNullable<PtzCommandDto['direction']>, speed?: number, durationMs?: number) {
-    const stepDuration = Math.max(120, Math.min(2500, Number(durationMs ?? 420)));
+    // Primeiro usa RelativeMove: é atômico, não depende de um stop chegar a
+    // tempo e impede que um toque curto vire uma rotação de dezenas de graus.
+    const relative = await this.sendPtzWithFallbacks(camera, 'relative', direction, speed);
+    if (relative.ok) {
+      return { ...relative, mode: 'relative_move' };
+    }
+
+    // Equipamentos antigos sem RelativeMove ainda recebem um pulso mínimo.
+    // É só contingência; a interface nunca pede mais o antigo padrão de 420ms.
+    const stepDuration = Math.max(120, Math.min(600, Number(durationMs ?? 160)));
     const start = await this.move(camera, direction, speed);
     if (!start.ok) return start;
     await new Promise((resolve) => setTimeout(resolve, stepDuration));
