@@ -144,9 +144,10 @@ function AppInner() {
   const [streamUrls, setStreamUrls] = useState<Record<string, string | null>>({});
   const [streamWhep, setStreamWhep] = useState<Record<string, string | null>>({});
   const [streamPosters, setStreamPosters] = useState<Record<string, string | null>>({});
-  // URL HLS de MÁXIMA QUALIDADE (passthrough H.265, sem transcode) da câmera ao
-  // vivo aberta. Buscada sob demanda quando o usuário liga o modo HD.
+  // Fontes de MÁXIMA QUALIDADE. WebRTC original é o caminho prioritário de
+  // baixa latência; HLS original permanece como recuperação de compatibilidade.
   const [hdUrl, setHdUrl] = useState<string | null>(null);
+  const [hdWhepUrl, setHdWhepUrl] = useState<string | null>(null);
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [recordingsTotal, setRecordingsTotal] = useState(0);
   const [recordingsLoading, setRecordingsLoading] = useState(false);
@@ -169,7 +170,7 @@ function AppInner() {
   const [savedClips, setSavedClips] = useState<SavedClip[]>([]);
   const [recordingDate, setRecordingDate] = useState(() => localDateKey());
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
-  const [capabilities, setCapabilities] = useState<MobileCapabilities>({ liveView: true, playback: true, exportEvidence: false, alarmAck: false });
+  const [capabilities, setCapabilities] = useState<MobileCapabilities>({ liveView: true, playback: true, exportEvidence: false, alarmAck: false, ptzControl: false });
   const [downloadingIds, setDownloadingIds] = useState<string[]>([]);
   const selectedCamera = cameras.find((camera) => camera.id === selectedCameraId) ?? cameras[0] ?? null;
   const sessionScope = session ? `${session.apiUrl}|${session.user.id}` : 'anonymous';
@@ -397,13 +398,14 @@ function AppInner() {
           playback: data.permissions?.playback !== false,
           exportEvidence: data.permissions?.exportEvidence === true,
           alarmAck: data.permissions?.alarmAck === true,
+          ptzControl: data.permissions?.ptzControl === true,
         };
         setCapabilities(next);
         setCanManageAlarms(next.alarmAck);
       })
       .catch(() => {
         if (sessionTokenRef.current === token) {
-          const fallback = { liveView: true, playback: true, exportEvidence: false, alarmAck: false };
+          const fallback = { liveView: true, playback: true, exportEvidence: false, alarmAck: false, ptzControl: false };
           setCapabilities(fallback);
           setCanManageAlarms(false);
         }
@@ -479,6 +481,7 @@ function AppInner() {
   // A URL de máxima qualidade é por câmera; não vaza entre telas.
   useEffect(() => {
     setHdUrl(null);
+    setHdWhepUrl(null);
   }, [liveCamera?.id]);
 
   // Máxima qualidade é sempre a primeira fonte da tela individual. Depois que
@@ -488,16 +491,27 @@ function AppInner() {
     const token = session.token;
     const generation = ++hdRequestRef.current;
     try {
-      const data = await requestCachedStreamUrls<StreamUrls>(session.apiUrl, cameraId, session.token, undefined, modoMaxima());
+      const data = await requestCachedStreamUrls<StreamUrls>(
+        session.apiUrl,
+        cameraId,
+        session.token,
+        { headers: { 'X-S2Cam-Native-WebRTC': 'hevc' } },
+        modoMaxima(),
+      );
       if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return false;
       const hls = authenticatedMediaUrl(data.protocols?.hlsUrl, session.apiUrl, data.streamToken);
-      if (!hls) throw new Error('sem HLS');
+      const whepRaw = data.protocols?.whepUrl
+        ?? (data.protocols?.webrtcUrl ? `${data.protocols.webrtcUrl.replace(/\/+$/, '')}/whep` : null);
+      const whep = authenticatedMediaUrl(whepRaw, session.apiUrl, data.streamToken);
+      if (!hls && !whep) throw new Error('sem fonte ao vivo');
       setHdUrl(hls);
+      setHdWhepUrl(whep);
       void loadStream(cameraId, 'grid');
       return true;
     } catch {
       if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return false;
       setHdUrl(null);
+      setHdWhepUrl(null);
       // Sem alerta modal: se a fonte grande estiver temporariamente indisponível,
       // abre Economia e uma nova entrada tentará a Máxima novamente.
       void loadStream(cameraId, 'grid', true);
@@ -613,10 +627,11 @@ function AppInner() {
     setStreamWhep({});
     setStreamPosters({});
     setHdUrl(null);
+    setHdWhepUrl(null);
     setActivePlayback(null);
     setNotificationsMuted(false);
     setCanManageAlarms(false);
-    setCapabilities({ liveView: true, playback: true, exportEvidence: false, alarmAck: false });
+    setCapabilities({ liveView: true, playback: true, exportEvidence: false, alarmAck: false, ptzControl: false });
     downloadingRef.current.clear();
     pendingClipDownloadsRef.current.clear();
     setDownloadingIds([]);
@@ -991,6 +1006,10 @@ function AppInner() {
     if (!session || !target) return;
     if (target.canControl === false) {
       showAppNotice('Controle PTZ indisponível', 'Seu usuário não tem permissão para controlar esta câmera.', 'warning');
+      return;
+    }
+    if (!capabilities.ptzControl) {
+      showAppNotice('Controle PTZ sem permissão', 'Peça ao administrador para liberar o controle PTZ para o seu perfil.', 'warning');
       return;
     }
     setPtzActive(direction);
@@ -1603,6 +1622,7 @@ function AppInner() {
             whepUrl={streamWhep[live.id] ?? null}
             posterUrl={streamPosters[live.id] ?? null}
             hdUrl={hdUrl}
+            hdWhepUrl={hdWhepUrl}
             onRequestHd={() => loadHdStream(live.id)}
             onExitHd={() => { void loadStream(live.id, 'grid'); }}
             recordings={recordings}
@@ -1654,6 +1674,7 @@ function AppInner() {
           whepUrl={streamWhep[live.id] ?? null}
           posterUrl={streamPosters[live.id] ?? null}
           hdUrl={hdUrl}
+          hdWhepUrl={hdWhepUrl}
           onRequestHd={() => loadHdStream(live.id)}
           onExitHd={() => { void loadStream(live.id, 'grid'); }}
           detections={liveDetections}

@@ -28,8 +28,10 @@ interface Props {
   streamUrl: string | null;
   whepUrl: string | null;
   posterUrl: string | null;
-  /** Máxima qualidade (HLS passthrough), sob demanda. */
+  /** HLS original, mantido como recuperação de compatibilidade. */
   hdUrl: string | null;
+  /** WebRTC/WHEP original: caminho prioritário e de baixa latência do HD+. */
+  hdWhepUrl: string | null;
   onRequestHd: () => Promise<boolean>;
   onExitHd: () => void;
   recordings: Recording[];
@@ -89,7 +91,7 @@ function ClockBadge({ style, textStyle }: { style: any; textStyle: any }) {
 }
 
 export function LiveScreenRedesign(props: Props) {
-  const { camera, topInset, streamUrl, whepUrl, posterUrl, hdUrl, onRequestHd, onExitHd, detections,
+  const { camera, topInset, streamUrl, whepUrl, posterUrl, hdUrl, hdWhepUrl, onRequestHd, onExitHd, detections,
     recordings, recordingsLoading, recordingDate, activePlayback, recordingActive, ptzActive, ptzFeedback,
     canPlayback, canDownload, myRecordings, notificationsMuted, onToggleNotifications, onBack, onSendPtz, onToggleRecording,
     audioLigado = false, onAudioLigadoChange,
@@ -120,9 +122,10 @@ export function LiveScreenRedesign(props: Props) {
       void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
     };
   }, [fullscreen]);
-  // Máxima qualidade (HLS H.265 passthrough), como no app atual. Reseta ao trocar de câmera.
+  // HD+ tenta o WebRTC original; HLS é somente o fallback.
   const [hdMode, setHdMode] = useState(true);
-  const hdActive = hdMode && !!hdUrl;
+  const hdAvailable = !!hdUrl || !!hdWhepUrl;
+  const hdActive = hdMode && hdAvailable;
   const requestHdRef = useRef(onRequestHd);
   requestHdRef.current = onRequestHd;
   useEffect(() => {
@@ -162,7 +165,7 @@ export function LiveScreenRedesign(props: Props) {
   // mesmo custo de trocar de câmera — aceitável e simples.
   const video = isPlaying ? (
     <PlaybackVideo uri={activePlayback!.url} posterUri={activePlayback!.recording.thumbnailUrl} onRetry={props.onRetryPlayback} onNaoDecodificou={props.onNaoDecodificou} onProgresso={props.onProgressoPlayback} initialPositionSeconds={activePlayback!.retomarEm ?? null} style={s.videoFill} />
-  ) : hdMode && !hdUrl ? (
+  ) : hdMode && !hdAvailable ? (
     <View style={s.qualityLoading}>
       <ActivityIndicator color="#ffffff" />
       <Text style={s.qualityLoadingText}>Abrindo em máxima resolução…</Text>
@@ -170,7 +173,7 @@ export function LiveScreenRedesign(props: Props) {
   ) : (
     <LiveVideo
       uri={hdActive ? hdUrl : streamUrl}
-      whepUri={hdActive ? null : whepUrl}
+      whepUri={hdActive ? hdWhepUrl : whepUrl}
       posterUri={posterUrl}
       // IGUAL AO APP ANTIGO (LiveScreen): videoStyle = flex:1 (NÃO absoluteFill).
       // O wrapper interno do player força position:relative; com absoluteFill os
@@ -216,6 +219,7 @@ export function LiveScreenRedesign(props: Props) {
             <Icon name="close" size={18} color="#fff" />
           </TouchableOpacity>
         </View>
+        {!isPlaying ? <View style={[s.fsQualityBadge, { top: Math.max(topInset, insets.top) + 54, left: 16 + insets.left }]}><Text style={s.hdBadgeText}>{hdMode ? 'HD+' : 'Economia'}</Text></View> : null}
         {ptzOpen && canPtz && !isPlaying ? (
           <View style={s.fsPtzPad}>
             <PtzBtn s={s} theme={theme} icon="arrowUp" dir="Up" pos={{ top: 2, alignSelf: 'center' }} active={ptzActive === 'Up'} onPress={onSendPtz} disabled={!canPtz} />
@@ -281,9 +285,7 @@ export function LiveScreenRedesign(props: Props) {
             {recordingActive ? (
               <View style={s.recBadge}><View style={s.recDot} /><Text style={s.recText}>REC</Text></View>
             ) : null}
-            {hdActive ? (
-              <View style={s.hdBadge}><Text style={s.hdBadgeText}>HD</Text></View>
-            ) : null}
+            <View style={[s.hdBadge, recordingActive && s.hdBadgeWithRecording]}><Text style={s.hdBadgeText}>{hdMode ? 'HD+' : 'Economia'}</Text></View>
             {status !== 'live' ? (
               <View style={s.statusPill}><Text style={s.statusText}>{status === 'connecting' ? 'Conectando…' : status === 'reconnecting' ? 'Reconectando…' : status === 'offline' ? 'Offline' : ''}</Text></View>
             ) : null}
@@ -309,7 +311,7 @@ export function LiveScreenRedesign(props: Props) {
             <ActionBtn s={s} theme={theme} icon="camera" label="Capturar" onPress={() => onSnapshot(camera)} />
             <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label={props.recordingBusy ? 'Salvando…' : 'Gravar'} active={recordingActive} danger={recordingActive} disabled={props.recordingBusy} onPress={() => onToggleRecording(camera)} />
             <ActionBtn s={s} theme={theme} icon="bell" label={notificationsMuted ? 'Silenciada' : 'Notificar'} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
-            <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'HD' : 'Economia'} active={hdMode} onPress={toggleHd} />
+            <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'Economia' : 'HD+'} active={hdMode} onPress={toggleHd} />
             <ActionBtn s={s} theme={theme} icon="expand" label="Tela" onPress={() => setFullscreen(true)} />
           </ScrollView>
 
@@ -676,7 +678,8 @@ function makeStyles(t: any) {
     recText: { color: '#fff', fontFamily: UI, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
     statusPill: { position: 'absolute', bottom: 10, alignSelf: 'center', backgroundColor: 'rgba(5,8,14,0.7)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
     statusText: { color: '#fff', fontFamily: UI, fontSize: 12, fontWeight: '600' },
-    hdBadge: { position: 'absolute', bottom: 10, left: 10, backgroundColor: 'rgba(62,139,255,0.92)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 7 },
+    hdBadge: { position: 'absolute', top: 10, left: 10, backgroundColor: 'rgba(5,8,14,0.66)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 7 },
+    hdBadgeWithRecording: { top: 42 },
     hdBadgeText: { color: '#fff', fontFamily: MONO, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
 
     // Tela cheia (mockup FULLSCREEN)
@@ -684,6 +687,7 @@ function makeStyles(t: any) {
     fsTop: { position: 'absolute', flexDirection: 'row', alignItems: 'center', gap: 8 },
     fsName: { color: '#fff', fontFamily: TITLE, fontSize: 15, fontWeight: '700', flexShrink: 1 },
     fsClock: { backgroundColor: 'rgba(4,7,13,0.5)', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8 },
+    fsQualityBadge: { position: 'absolute', backgroundColor: 'rgba(4,7,13,0.58)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 7 },
     fsClose: { width: 36, height: 36, borderRadius: 11, backgroundColor: 'rgba(4,7,13,0.5)', alignItems: 'center', justifyContent: 'center' },
     fsBottom: { position: 'absolute', left: 0, right: 0, bottom: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16 },
     fsBtn: { width: 50, height: 50, borderRadius: 16, backgroundColor: 'rgba(8,12,20,0.5)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center' },

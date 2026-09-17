@@ -106,6 +106,7 @@ export type MobileCapabilities = {
   playback: boolean;
   exportEvidence: boolean;
   alarmAck: boolean;
+  ptzControl: boolean;
 };
 
 export type StreamUrls = {

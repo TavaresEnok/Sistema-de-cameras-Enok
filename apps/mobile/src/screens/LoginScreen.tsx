@@ -1,7 +1,7 @@
 /** LoginScreen — autenticação real (POST /auth/login via App). Visual do redesign. */
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { BRANDING, BRAND_LOGO } from '../branding';
 import { Icon } from '../components/Icon';
 import { useTheme } from '../theme/ThemeProvider';
@@ -45,12 +45,18 @@ export function LoginScreen({
   const logoSize = Math.round(104 * branding.logoScale);
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: theme.bg }}
-      contentContainerStyle={styles.root}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
+    <KeyboardAvoidingView
+      style={[styles.keyboardRoot, { backgroundColor: theme.bg }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.root}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        automaticallyAdjustKeyboardInsets
+        showsVerticalScrollIndicator={false}
+      >
       <LinearGradient
         colors={[theme.accentBg, 'transparent']}
         start={{ x: 0.8, y: 0 }}
@@ -203,11 +209,13 @@ export function LoginScreen({
       </View>
       <Text style={[styles.site, { color: withAlpha(theme.bgText, 0.58) ?? theme.bgText }]}>s2cam.com.br</Text>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  keyboardRoot: { flex: 1 },
   root: { flexGrow: 1, paddingHorizontal: 30, justifyContent: 'center', paddingVertical: 40 },
   shell: { width: '100%', maxWidth: 520, alignSelf: 'center' },
   glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 360 },

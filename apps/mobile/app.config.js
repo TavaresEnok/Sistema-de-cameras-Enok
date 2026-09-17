@@ -183,6 +183,9 @@ module.exports = () => ({
     },
     android: {
       ...base.android,
+      // O teclado deve reduzir a janela, não ficar por cima dos campos. Isso é
+      // especialmente importante no login em aparelhos com teclado alto.
+      softwareKeyboardLayoutMode: 'resize',
       package: c.packageId || base.android.package,
       // FCM/push por cliente: cada cliente tem seu próprio pacote → seu próprio
       // google-services.json (registrado no MESMO projeto Firebase). Se o cliente

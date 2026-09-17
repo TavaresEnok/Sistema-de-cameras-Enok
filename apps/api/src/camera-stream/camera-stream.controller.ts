@@ -114,6 +114,10 @@ export class CameraStreamController {
   }
 
   private supportsHevcWebPlayback(req: Request) {
+    // O aplicativo nativo faz a tentativa de H.265 por WebRTC e possui fallback
+    // HLS local. O opt-in evita oferecer HEVC/WHEP a navegadores que certamente
+    // não o negociam, preservando o comportamento seguro da web.
+    if (String(req.headers['x-s2cam-native-webrtc'] ?? '').toLowerCase() === 'hevc') return true;
     const ua = String(req.headers['user-agent'] ?? '').toLowerCase();
     const isAppleDevice = /iphone|ipad|ipod|macintosh|mac os x/.test(ua);
     const isSafariFamily =
@@ -537,14 +541,12 @@ export class CameraStreamController {
     const supportsOriginalOnClient = this.supportsHevcWebPlayback(req);
 
     const { sourceUrl: _sourceUrl, ...safeMediaBridge } = mediaBridge;
-    // O WHEP usado pelos aplicativos atuais negocia H.264, não H.265. Quando a
-    // fonte original é HEVC, oferecê-la por WebRTC faz o cliente tentar, falhar,
-    // cair para HLS e tentar WebRTC novamente mais tarde. A câmera permanece
-    // saudável, mas o operador vê "Conectando" periodicamente. Máxima resolução
-    // continua em passthrough: apenas escolhemos HLS, que o player nativo Android
-    // decodifica sem converter o vídeo no servidor.
+    // HEVC/WHEP só é oferecido a clientes que declaram suporte. Navegadores sem
+    // suporte continuam exclusivamente no HLS; o app nativo tenta WebRTC e tem
+    // o próprio fallback para HLS, sem conversão do vídeo original.
     const originalHlsOnly = (viewMode === 'original' || viewMode === 'original-audio')
-      && isHevcCodec(sourceCodec ?? originalCodec);
+      && isHevcCodec(sourceCodec ?? originalCodec)
+      && !supportsOriginalOnClient;
     const clientMediaBridge = originalHlsOnly
       ? { ...safeMediaBridge, whepUrl: null, webrtcUrl: null }
       : safeMediaBridge;

@@ -1609,3 +1609,9 @@ test('permissions audit: rotas sensiveis mantem RequirePermission', () => {
   assertRoutePermission('src/ai/ai.controller.ts', "@Patch('settings')", 'serverConfig');
   assertRoutePermission('src/ai/ai.controller.ts', "@Post('sync')", 'serverConfig');
 });
+
+test('HD+ nativo pode tentar HEVC por WebRTC sem alterar navegadores incompatíveis', () => {
+  const source = readFileSync('src/camera-stream/camera-stream.controller.ts', 'utf8');
+  assert(source.includes("req.headers['x-s2cam-native-webrtc']"), 'o app nativo precisa ter opt-in explícito para HEVC/WHEP');
+  assert(source.includes('&& !supportsOriginalOnClient'), 'HEVC deve continuar HLS-only para clientes sem suporte declarado');
+});

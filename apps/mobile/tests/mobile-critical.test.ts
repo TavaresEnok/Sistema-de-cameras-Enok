@@ -101,6 +101,7 @@ test('stream WHEP: app lê o TURN temporário antes de criar o peer', () => {
 });
 
 test('ao vivo recupera WebRTC congelado e abre câmera única em máxima qualidade', () => {
+  const app = readFileSync('App.tsx', 'utf8');
   const whep = readFileSync('src/components/WebRtcVideo.tsx', 'utf8');
   const player = readFileSync('src/components/VideoPlayers.tsx', 'utf8');
   const live = readFileSync('src/screens/LiveScreen.tsx', 'utf8');
@@ -109,6 +110,17 @@ test('ao vivo recupera WebRTC congelado e abre câmera única em máxima qualida
   assert(whep.includes('MEDIA_STALL_TIMEOUT_MS'), 'WebRTC congelado precisa de limite explícito');
   assert(player.includes('setWebrtcFailed(false)') && player.includes('30_000'), 'fallback HLS deve voltar a testar WebRTC');
   assert(live.includes('useState(true)') && redesign.includes('useState(true)'), 'tela única deve começar em máxima qualidade');
+  assert(app.includes('setHdWhepUrl(whep)'), 'HD+ deve priorizar o WebRTC original em vez de forçar HLS');
+  assert(app.includes("'X-S2Cam-Native-WebRTC': 'hevc'"), 'app nativo deve declarar a tentativa HEVC/WHEP ao servidor');
+  assert(live.includes('whepUri={hdWhepUrl}') && redesign.includes('whepUri={hdActive ? hdWhepUrl : whepUrl}'), 'as duas telas ao vivo devem entregar WHEP no HD+');
+  assert(live.includes("{hdMode ? 'Economia' : 'HD+'}") && redesign.includes("label={hdMode ? 'Economia' : 'HD+'}"), 'o botão deve mostrar a qualidade para a qual vai trocar');
+});
+
+test('login mantém os campos visíveis acima do teclado', () => {
+  const login = readFileSync('src/screens/LoginScreen.tsx', 'utf8');
+  const config = readFileSync('app.config.js', 'utf8');
+  assert(login.includes('KeyboardAvoidingView'), 'login deve reposicionar o formulário quando o teclado abrir');
+  assert(config.includes("softwareKeyboardLayoutMode: 'resize'"), 'Android deve redimensionar a janela acima do teclado');
 });
 
 test('release do app exige checkout aprovado e código commitado', () => {

@@ -28,7 +28,7 @@ export class PtzController {
    * Leitura pura — não move nada — então basta poder CONTROLAR a câmera, o
    * mesmo portão do resto do PTZ.
    */
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.VIEWER)
   @RequirePermission('ptzControl')
   @Get(':cameraId/presets')
   async listarPresets(@CurrentUser() user: AuthUser, @Param('cameraId') cameraId: string) {
@@ -40,7 +40,7 @@ export class PtzController {
       : { status: 'error', message: r.message, presets: [] };
   }
 
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.VIEWER)
   @RequirePermission('ptzControl')
   @Post(':cameraId/presets/:presetToken/goto')
   async irParaPreset(
@@ -98,7 +98,7 @@ export class PtzController {
   }
 
   /** Onde a câmera está apontando agora. Eixo não informado volta null. */
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.VIEWER)
   @RequirePermission('ptzControl')
   @Get(':cameraId/position')
   async posicao(@CurrentUser() user: AuthUser, @Param('cameraId') cameraId: string) {
@@ -108,7 +108,7 @@ export class PtzController {
     return r.ok ? { status: 'ok', position: r.position } : { status: 'error', message: r.message, position: null };
   }
 
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.VIEWER)
   @RequirePermission('ptzControl')
   @Post(':cameraId/absolute')
   async moverAbsoluto(
@@ -124,7 +124,7 @@ export class PtzController {
     return r.ok ? { status: 'ok', cameraId, details: r } : { status: 'error', message: r.message };
   }
 
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.VIEWER)
   @RequirePermission('ptzControl')
   @Post(':cameraId/move')
   async move(
@@ -190,7 +190,7 @@ export class PtzController {
     };
   }
 
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.VIEWER)
   @RequirePermission('ptzControl')
   @Get(':cameraId/diagnostics')
   async diagnostics(
@@ -214,7 +214,7 @@ export class PtzController {
    * quem marcou à mão continua mandando, e a resposta diz isso em vez de
    * fingir que sondou.
    */
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.VIEWER)
   @RequirePermission('ptzControl')
   @Post(':cameraId/probe')
   async probe(
@@ -228,7 +228,7 @@ export class PtzController {
     return resultado;
   }
 
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.VIEWER)
   @RequirePermission('ptzControl')
   @Get(':cameraId/relays')
   async relays(
@@ -246,7 +246,7 @@ export class PtzController {
     return result;
   }
 
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.VIEWER)
   @RequirePermission('ptzControl')
   @Post(':cameraId/relays/trigger')
   async triggerRelay(

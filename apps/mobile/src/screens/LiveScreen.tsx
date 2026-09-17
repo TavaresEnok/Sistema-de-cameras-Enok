@@ -30,8 +30,10 @@ interface LiveScreenProps {
   streamUrl: string | null;
   whepUrl: string | null;
   posterUrl: string | null;
-  /** URL HLS de máxima qualidade (passthrough H.265); null até o usuário pedir. */
+  /** HLS original, usado como recuperação quando o WebRTC não abre. */
   hdUrl: string | null;
+  /** WebRTC/WHEP original: caminho prioritário do HD+ com baixa latência. */
+  hdWhepUrl: string | null;
   onRequestHd: () => Promise<boolean>;
   onExitHd: () => void;
   detections: LiveDetection[];
@@ -123,7 +125,7 @@ function tokensFor(glass: boolean, theme: Theme): ControlTokens {
 }
 
 export function LiveScreen({
-  camera, topInset = 0, streamUrl, whepUrl, posterUrl, hdUrl, onRequestHd, onExitHd, detections, ptzActive, ptzFeedback,
+  camera, topInset = 0, streamUrl, whepUrl, posterUrl, hdUrl, hdWhepUrl, onRequestHd, onExitHd, detections, ptzActive, ptzFeedback,
   recordings, recordingsTotal, recordingsLoading, recordingsLoadingMore, recordingsError,
   myRecordings, onPlayLocal, onDeleteLocal, recordingDate, activePlayback, recordingActive, recordingBusy,
   onBack, onSendPtz, onToggleRecording, onSnapshot,
@@ -140,9 +142,10 @@ export function LiveScreen({
   useEffect(() => { setMuted(!audioLigado); }, [audioLigado]);
   // null = ainda não sabemos (conectando/HLS); false = stream sem faixa de áudio.
   const [audioAvailable, setAudioAvailable] = useState<boolean | null>(null);
-  // Máxima qualidade (HLS H.265 passthrough). hdUrl chega do App sob demanda.
+  // HD+ tenta o WebRTC original e só cai para HLS se necessário.
   const [hdMode, setHdMode] = useState(true);
-  const hdActive = hdMode && !!hdUrl;
+  const hdAvailable = !!hdUrl || !!hdWhepUrl;
+  const hdActive = hdMode && hdAvailable;
   const requestHdRef = useRef(onRequestHd);
   requestHdRef.current = onRequestHd;
   useEffect(() => {
@@ -218,16 +221,16 @@ export function LiveScreen({
     <>
       {playing ? (
         <PlaybackVideo uri={activePlayback!.url} posterUri={activePlayback!.recording.thumbnailUrl} onRetry={onRetryPlayback} onNaoDecodificou={onNaoDecodificou} onProgresso={onProgressoPlayback} initialPositionSeconds={activePlayback!.retomarEm ?? null} style={StyleSheet.absoluteFill} />
-      ) : hdMode && !hdUrl ? (
+      ) : hdMode && !hdAvailable ? (
         <View style={[StyleSheet.absoluteFill, styles.qualityLoading]}>
           <ActivityIndicator color="#ffffff" />
           <Text style={styles.qualityLoadingText}>Abrindo em máxima resolução…</Text>
         </View>
       ) : hdActive ? (
-        // Máxima qualidade: HLS H.265 puro (whepUri=null força o caminho HLS).
+        // Máxima qualidade com a mesma baixa latência do modo Economia.
         <LiveVideo
           uri={hdUrl}
-          whepUri={null}
+          whepUri={hdWhepUrl}
           posterUri={posterUrl}
           videoStyle={styles.videoFill}
           muted={muted}
@@ -292,7 +295,7 @@ export function LiveScreen({
       style={[styles.hdPill, hdMode ? { backgroundColor: theme.accent, borderColor: theme.accent } : null]}
     >
       <Icon name="aperture" size={11} color="#fff" strokeWidth={2.4} />
-      <Text style={styles.hdPillText}>{hdMode ? 'HD' : 'Economia'}</Text>
+      <Text style={styles.hdPillText}>{hdMode ? 'Economia' : 'HD+'}</Text>
     </Pressable>
   ) : null;
 
@@ -435,6 +438,7 @@ export function LiveScreen({
 
       <View style={[styles.videoFlush, { aspectRatio: aspect }]} onLayout={onVideoLayout}>
         {videoEl}
+        {!playing ? <View style={styles.qualityBadge}><Text style={styles.qualityBadgeText}>{hdMode ? 'HD+' : 'Economia'}</Text></View> : null}
         {hdPill ? <View style={styles.hdPillTopRight}>{hdPill}</View> : null}
         {playing ? (
           <Pressable style={styles.closePlayback} onPress={onClosePlayback} hitSlop={8}>
@@ -727,6 +731,8 @@ const styles = StyleSheet.create({
   topRightGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   hdPill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999, paddingVertical: 5, paddingHorizontal: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.28)' },
   hdPillText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
+  qualityBadge: { position: 'absolute', top: 10, left: 10, backgroundColor: 'rgba(0,0,0,0.58)', borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4 },
+  qualityBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
 
   // Imersivo
   root: { flex: 1, backgroundColor: '#070809' },
