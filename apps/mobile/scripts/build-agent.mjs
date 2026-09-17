@@ -88,8 +88,16 @@ function ensureBuildWorktree(commit, slug) {
   if (!/^[0-9a-f]{40}$/i.test(String(commit || ''))) throw new Error('commit de release inválido');
   if (!SLUG_RE.test(String(slug || ''))) throw new Error('cliente inválido para build');
 
-  // Confirma que o commit chegou a este clone antes de criar arquivos.
-  git(['cat-file', '-e', `${commit}^{commit}`], { cwd: REPO_ROOT });
+  // A Central pode aprovar uma release segundos depois de o agente iniciar.
+  // Nesse caso o clone local ainda não conhece o commit. Busque o remoto sob
+  // demanda e confira novamente; sem isso toda primeira geração da release
+  // falha instantaneamente com "Not a valid object name".
+  try {
+    git(['cat-file', '-e', `${commit}^{commit}`], { cwd: REPO_ROOT });
+  } catch {
+    git(['fetch', '--prune', 'origin'], { cwd: REPO_ROOT });
+    git(['cat-file', '-e', `${commit}^{commit}`], { cwd: REPO_ROOT });
+  }
   fs.mkdirSync(BUILD_WORKTREES_DIR, { recursive: true, mode: 0o700 });
   const worktree = path.join(BUILD_WORKTREES_DIR, String(commit).toLowerCase());
   const mobile = path.join(worktree, 'apps', 'mobile');
