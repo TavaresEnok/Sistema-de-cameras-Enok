@@ -8,15 +8,16 @@ const service = () => new OnvifPtzService(
   { getCamera: () => ({}) } as never,
 );
 
-test('PTZ por toque usa deslocamento relativo pequeno, proporcional à velocidade', () => {
+test('PTZ por toque usa o ângulo solicitado e velocidade interna fixa', () => {
   const ptz = service();
-  const lento = ptz.buildRelativeMoveSoapBody('Right', 'Profile000', 1);
-  const normal = ptz.buildRelativeMoveSoapBody('Right', 'Profile000', 5);
-  const rapido = ptz.buildRelativeMoveSoapBody('Right', 'Profile000', 10);
+  const preciso = ptz.buildRelativeMoveSoapBody('Right', 'Profile000', 1);
+  const normal = ptz.buildRelativeMoveSoapBody('Right', 'Profile000', 3);
+  const amplo = ptz.buildRelativeMoveSoapBody('Right', 'Profile000', 10);
 
-  assert.match(lento, /PanTilt x="0\.005" y="0"/);
-  assert.match(normal, /PanTilt x="0\.009" y="0"/);
-  assert.match(rapido, /PanTilt x="0\.014" y="0"/);
+  assert.match(preciso, /PanTilt x="0\.0056" y="0"/);
+  assert.match(normal, /PanTilt x="0\.0167" y="0"/);
+  assert.match(amplo, /PanTilt x="0\.0556" y="0"/);
+  assert.match(normal, /<tptz:Speed>[\s\S]*PanTilt x="0\.5" y="0\.5"/);
   assert.doesNotMatch(normal, /PanTilt x="0\.2"/, 'um toque não pode voltar a equivaler a 20% do curso');
 });
 
@@ -31,7 +32,7 @@ test('step encerra no RelativeMove aceito, sem start/stop contínuo', async () =
     throw new Error('não deveria cair no movimento contínuo');
   };
 
-  const result = await ptz.step({ id: 'camera-1' } as never, 'Left', 5, 160);
+  const result = await ptz.step({ id: 'camera-1' } as never, 'Left', 3);
   assert.equal(result.ok, true);
   assert.equal(result.mode, 'relative_move');
   assert.deepEqual(called, ['relative']);
@@ -55,11 +56,12 @@ test('Intelbras/Dahua não confia em RelativeMove falso-positivo e usa pulso mí
   const result = await ptz.step({
     id: 'camera-dahua',
     rtspPath: '/cam/realmonitor?channel=1&subtype=0',
-  } as never, 'Left', 1, 160);
+  } as never, 'Left', 3);
 
   assert.equal(result.ok, true);
   assert.equal(result.mode, 'step');
-  assert.equal(result.durationMs, 80);
+  assert.equal(result.durationMs, 40);
+  assert.equal(result.angleDegrees, 3);
   assert.deepEqual(called, ['start', 'stop']);
 });
 

@@ -58,6 +58,7 @@ test('snapshot local enviado à Central contém apenas a marca simples', async (
   assert.deepEqual(await service.getManagedBrandingState(), {
     facilityName: 'D-GUARDIAN',
     brandLogoDataUrl: 'data:image/png;base64,AAAA',
+    brandMobileLogoScale: 1,
     brandUseDefaultColors: false,
     brandPrimaryColor: '#ffb407',
     brandBackgroundColor: '#0e0c08',

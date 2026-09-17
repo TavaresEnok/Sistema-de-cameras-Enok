@@ -156,12 +156,12 @@ export class PtzController {
 
     if (command.action === 'step') {
       if (!command.direction) {
-        return { status: 'error', message: 'direction é obrigatório quando action=step' };
+        return { status: 'error', message: 'Escolha uma direção para mover a câmera.' };
       }
-      const result = await this.ptzService.step(camera, command.direction, command.speed, command.durationMs);
+      const result = await this.ptzService.step(camera, command.direction, command.angleDegrees, command.durationMs);
       await this.auditService.log(user.id, 'ptz.step', 'Camera', cameraId, {
         direction: command.direction,
-        speed: command.speed ?? null,
+        angleDegrees: command.angleDegrees ?? 3,
         durationMs: command.durationMs ?? null,
         ok: result.ok,
       }, req);
@@ -172,7 +172,7 @@ export class PtzController {
     }
 
     if (!command.direction) {
-      return { status: 'error', message: 'direction é obrigatório quando action=start' };
+      return { status: 'error', message: 'Escolha uma direção para mover a câmera.' };
     }
 
     const result = await this.ptzService.move(camera, command.direction, command.speed, command.durationMs);

@@ -5750,7 +5750,7 @@
           const readiness = building
             ? { cls: 'building', text: 'O aplicativo está sendo preparado. Esta página atualiza sozinha.' }
             : hasArtifact ? { cls: 'ready', text: 'Aplicativo pronto para instalar ou publicar na Play Store.' }
-              : status === 'failed' ? { cls: 'problem', text: `Falha ao gerar: ${buildError}` }
+              : status === 'failed' ? { cls: 'problem', text: `Não foi possível concluir a geração. ${buildError}` }
                 : { cls: '', text: 'Revise os dados do cliente e gere o primeiro aplicativo.' };
           const packageId = (ac && ac.packageId) || app.packageId || 'Será criado ao gerar';
           const apiUrl = (ac && ac.apiUrl) || app.apiUrlOverride || 'Servidor será identificado automaticamente';

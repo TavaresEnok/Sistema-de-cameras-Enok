@@ -53,6 +53,7 @@ type LearnedPtzRoute = {
 
 @Injectable()
 export class OnvifPtzService {
+  private readonly fixedOperatorSpeed = 5;
   private readonly logger = new Logger(OnvifPtzService.name);
   // 2020 é a porta padrão de Mercusys/TP-Link e estava só no fim de uma lista
   // montada em outro ponto do arquivo; aqui ela entra no palpite principal.
@@ -215,21 +216,24 @@ export class OnvifPtzService {
 </soap:Envelope>`;
   }
 
-  buildRelativeMoveSoapBody(direction: NonNullable<PtzCommandDto['direction']>, profileToken: string, speed?: number) {
-    // RelativeMove usa coordenadas normalizadas. O antigo 0.2 equivalia a até
-    // 20% do curso da câmera em UM toque — dezenas de graus em domes comuns.
-    // Um toque deve ser um ajuste fino; repetição de toques dá o percurso longo.
-    const requestedSpeed = Math.max(1, Math.min(10, Number(speed ?? 5)));
-    const step = Number((0.004 + requestedSpeed * 0.001).toFixed(3));
+  buildRelativeMoveSoapBody(direction: NonNullable<PtzCommandDto['direction']>, profileToken: string, angleDegrees?: number) {
+    // O espaço ONVIF genérico vai de -1 a 1. Pan cobre aproximadamente 360° e
+    // tilt, 180°. A câmera ainda pode limitar o curso, por isso a interface
+    // apresenta o valor como deslocamento aproximado, nunca como velocidade.
+    const requestedAngle = Math.max(1, Math.min(30, Number(angleDegrees ?? 3)));
+    const panStep = Number((requestedAngle / 180).toFixed(4));
+    const tiltStep = Number((requestedAngle / 90).toFixed(4));
+    const zoomStep = Number(Math.max(0.01, requestedAngle / 300).toFixed(4));
     const map: Record<NonNullable<PtzCommandDto['direction']>, [number, number, number]> = {
-      Up: [0, step, 0],
-      Down: [0, -step, 0],
-      Left: [-step, 0, 0],
-      Right: [step, 0, 0],
-      ZoomIn: [0, 0, step],
-      ZoomOut: [0, 0, -step],
+      Up: [0, tiltStep, 0],
+      Down: [0, -tiltStep, 0],
+      Left: [-panStep, 0, 0],
+      Right: [panStep, 0, 0],
+      ZoomIn: [0, 0, zoomStep],
+      ZoomOut: [0, 0, -zoomStep],
     };
     const [x, y, z] = map[direction];
+    const fixedSpeed = this.speedToFactor(this.fixedOperatorSpeed);
     return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
   <soap:Body>
@@ -239,6 +243,10 @@ export class OnvifPtzService {
         <tt:PanTilt x="${x}" y="${y}" />
         <tt:Zoom x="${z}" />
       </tptz:Translation>
+      <tptz:Speed>
+        <tt:PanTilt x="${fixedSpeed}" y="${fixedSpeed}" />
+        <tt:Zoom x="${fixedSpeed}" />
+      </tptz:Speed>
     </tptz:RelativeMove>
   </soap:Body>
 </soap:Envelope>`;
@@ -1135,14 +1143,15 @@ export class OnvifPtzService {
     return result;
   }
 
-  async step(camera: Camera, direction: NonNullable<PtzCommandDto['direction']>, speed?: number, durationMs?: number) {
+  async step(camera: Camera, direction: NonNullable<PtzCommandDto['direction']>, angleDegrees?: number, durationMs?: number) {
+    const safeAngle = Math.max(1, Math.min(30, Number(angleDegrees ?? 3)));
     // Intelbras/Dahua e vários OEMs respondem HTTP 200 ao RelativeMove, mas
     // simplesmente não se mexem. Neles usamos o CGI nativo em pulso curto.
     // Para ONVIF comum, RelativeMove continua sendo a opção mais precisa.
     if (!this.shouldPreferProprietaryPtz(camera)) {
-      const relative = await this.sendPtzWithFallbacks(camera, 'relative', direction, speed);
+      const relative = await this.sendPtzWithFallbacks(camera, 'relative', direction, safeAngle);
       if (relative.ok) {
-        return { ...relative, mode: 'relative_move' };
+        return { ...relative, mode: 'relative_move', angleDegrees: safeAngle };
       }
     }
 
@@ -1151,17 +1160,21 @@ export class OnvifPtzService {
     // No CGI o controle de velocidade do equipamento já está no mínimo
     // (arg2=1). O pulso anterior de 160 ms ainda era longo para domes rápidas;
     // usamos metade, com faixa estreita. ONVIF legado mantém a faixa anterior.
-    const stepDuration = this.shouldPreferProprietaryPtz(camera)
-      ? Math.max(60, Math.min(120, Math.round(Number(durationMs ?? 160) / 2)))
-      : Math.max(120, Math.min(600, Number(durationMs ?? 160)));
-    const start = await this.move(camera, direction, speed);
+    const stepDuration = Number.isFinite(durationMs)
+      ? (this.shouldPreferProprietaryPtz(camera)
+        ? Math.max(40, Math.min(120, Math.round(Number(durationMs) / 2)))
+        : Math.max(80, Math.min(600, Number(durationMs))))
+      : (this.shouldPreferProprietaryPtz(camera)
+        ? Math.max(40, Math.min(120, Math.round(safeAngle * 12)))
+        : Math.max(80, Math.min(450, Math.round(safeAngle * 30))));
+    const start = await this.move(camera, direction, this.fixedOperatorSpeed);
     if (!start.ok) return start;
     await new Promise((resolve) => setTimeout(resolve, stepDuration));
     const stop = await this.stop(camera, direction);
     if (!stop.ok) {
-      return { ok: false, message: `Step iniciou, mas falhou ao parar: ${stop.message}`, mode: 'step', durationMs: stepDuration, start, stop };
+      return { ok: false, message: 'A câmera começou a se mover, mas não confirmou a parada. Use o botão Parar e confira a porta ONVIF/HTTP.', mode: 'step', durationMs: stepDuration, angleDegrees: safeAngle, start, stop };
     }
-    return { ok: true, message: 'ok', mode: 'step', durationMs: stepDuration, start, stop };
+    return { ok: true, message: 'ok', mode: 'step', durationMs: stepDuration, angleDegrees: safeAngle, start, stop };
   }
 
   async goHome(camera: Camera) {

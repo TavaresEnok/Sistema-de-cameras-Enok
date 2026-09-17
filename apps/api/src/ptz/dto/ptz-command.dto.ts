@@ -20,6 +20,13 @@ export class PtzCommandDto {
   @Max(10)
   speed?: number;
 
+  /** Deslocamento aproximado de um toque. A velocidade é fixa no servidor. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(30)
+  angleDegrees?: number;
+
   @IsOptional()
   @IsInt()
   @Min(120)

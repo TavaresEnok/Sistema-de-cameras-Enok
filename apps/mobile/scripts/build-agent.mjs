@@ -155,16 +155,28 @@ function ensureBuildWorktree(commit, slug) {
 function summarizeBuildFailure(log, code) {
   const text = String(log || '');
   if (/CXX1420|structured log file|configure_fingerprint\.bin/i.test(text)) {
-    return 'Cache nativo do Android inconsistente (CMake). Gere novamente; o agente limpará esse cache automaticamente.';
+    return 'Um arquivo temporário do Android ficou inconsistente. O sistema já fez a limpeza; tente gerar novamente.';
   }
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const marker = lines.findIndex((line) => line === '* What went wrong:');
-  if (marker >= 0) {
-    const detail = lines.slice(marker + 1).find((line) => !line.startsWith('*') && !line.startsWith('> Run with'));
-    if (detail) return detail.slice(0, 900);
+  if (/no space left|enospc|espa[cç]o insuficiente|disk full/i.test(text)) {
+    return 'O servidor está sem espaço suficiente para preparar o aplicativo.';
   }
-  const explicit = [...lines].reverse().find((line) => /error|erro|failed|falhou|inválid|ausente/i.test(line));
-  return (explicit || `A geração terminou com código ${code ?? 'desconhecido'}.`).slice(0, 900);
+  if (/keystore|signing|private key|certificate|assinatura/i.test(text)) {
+    return 'Não foi possível assinar o aplicativo. Confira a configuração de publicação.';
+  }
+  if (/firebase|google-services\.json|messaging/i.test(text)) {
+    return 'Não foi possível preparar as notificações do aplicativo. Confira a configuração do Firebase.';
+  }
+  if (/logo|icon|adaptive.?icon|imagem|image|png|jpeg|sharp/i.test(text)) {
+    return 'Uma imagem da personalização não pôde ser processada. Escolha outra imagem e tente novamente.';
+  }
+  if (/network|timed? ?out|econn|could not (get|resolve|download)|unable to resolve|npm registry/i.test(text)) {
+    return 'O servidor não conseguiu baixar um componente necessário. Tente novamente em alguns minutos.';
+  }
+  if (/configuração do cliente não existe/i.test(text)) {
+    return 'A personalização deste cliente não foi encontrada. Salve os dados do aplicativo e tente novamente.';
+  }
+  void code;
+  return 'O aplicativo anterior continua disponível. Tente gerar novamente; se o problema continuar, consulte o suporte.';
 }
 
 function processQueue() {

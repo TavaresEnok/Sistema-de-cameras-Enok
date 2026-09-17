@@ -23,6 +23,11 @@ test('o arquivo oficial é o redesign de produção, sem o simulador da prévia'
   assert.doesNotMatch(PANEL, /mockFetch|mockInstallations|PREVIEW NÃO SUBIR/i);
 });
 
+test('falha de geração do aplicativo é explicada sem mensagem robótica', () => {
+  assert.match(PANEL, /Não foi possível concluir a geração/);
+  assert.doesNotMatch(PANEL, /Falha ao gerar: \$\{buildError\}/);
+});
+
 test('a instalação conserva as seis áreas administrativas do redesign', () => {
   for (const tab of ['visao', 'contrato', 'ia', 'nuvem', 'escala', 'manutencao']) {
     assert.match(PANEL, new RegExp(`data-tab="${tab}"`), `botão da aba ${tab}`);

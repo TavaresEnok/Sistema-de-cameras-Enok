@@ -78,6 +78,14 @@ const GRID_LIVE_MAX_HEIGHT = 720;
 const GRID_LIVE_TARGET_FPS = 20;
 
 type CommandState = 'idle' | 'sending' | 'ok' | 'error';
+const PTZ_DIRECTION_LABEL: Record<PTZDirection, string> = {
+  Up: 'cima',
+  Down: 'baixo',
+  Left: 'esquerda',
+  Right: 'direita',
+  ZoomIn: 'aproximar',
+  ZoomOut: 'afastar',
+};
 type LiveSourceMode = 'original' | 'economical' | 'advanced';
 
 type CameraConfig = {
@@ -575,6 +583,7 @@ export default function CameraDetailPage() {
   const [commandState, setCommandState] = useState<CommandState>('idle');
   const [lastCommand, setLastCommand] = useState('Nenhum comando PTZ enviado');
   const [lastError, setLastError] = useState<string | null>(null);
+  const [ptzAngleDegrees, setPtzAngleDegrees] = useState(3);
 
   const [videoMuted, setVideoMuted] = useState(true);
   const [videoZoom, setVideoZoom] = useState(1);
@@ -729,14 +738,16 @@ export default function CameraDetailPage() {
     setActiveDirection(direction);
     setCommandState('sending');
     setLastError(null);
-    setLastCommand(`Enviando ${direction} para ${cam.name}`);
+    setLastCommand(`Movendo para ${PTZ_DIRECTION_LABEL[direction]} em ${cam.name}`);
 
     try {
-      movement.startPromise = sendPtzCommand(cam.id, { action: 'step', direction, speed: 5, durationMs: 160 });
+      movement.startPromise = sendPtzCommand(cam.id, { action: 'step', direction, angleDegrees: ptzAngleDegrees });
       await movement.startPromise;
       if (activeMovementRef.current === movement) {
+        activeMovementRef.current = null;
+        setActiveDirection(null);
         setCommandState('ok');
-        setLastCommand(`Ajuste ${direction} aplicado em ${cam.name}`);
+        setLastCommand(`Ajuste para ${PTZ_DIRECTION_LABEL[direction]} aplicado em ${cam.name}`);
       }
     } catch (error) {
       const message = getRequestErrorMessage(error, 'Falha ao iniciar PTZ.');
@@ -746,14 +757,14 @@ export default function CameraDetailPage() {
       }
       setCommandState('error');
       setLastError(message);
-      setLastCommand(`Falha em ${direction} para ${cam.name}`);
+      setLastCommand(`Não foi possível mover para ${PTZ_DIRECTION_LABEL[direction]} em ${cam.name}`);
       toast({
         title: 'Falha no PTZ',
         description: message,
         variant: 'destructive',
       });
     }
-  }, [cam, controlsDisabled]);
+  }, [cam, controlsDisabled, ptzAngleDegrees]);
 
   const stopMove = useCallback(async () => {
     const movement = activeMovementRef.current;
@@ -768,12 +779,12 @@ export default function CameraDetailPage() {
       await sendPtzCommand(movement.cameraId, { action: 'stop', direction });
       setCommandState('ok');
       setLastError(null);
-      setLastCommand(`Movimento ${direction} finalizado em ${movement.cameraName}`);
+      setLastCommand(`Movimento para ${PTZ_DIRECTION_LABEL[direction]} finalizado em ${movement.cameraName}`);
     } catch (error) {
       const message = getRequestErrorMessage(error, 'Falha ao parar PTZ.');
       setCommandState('error');
       setLastError(message);
-      setLastCommand(`Falha ao parar ${direction} em ${movement.cameraName}`);
+      setLastCommand(`Não foi possível parar o movimento para ${PTZ_DIRECTION_LABEL[direction]} em ${movement.cameraName}`);
       toast({
         title: 'Falha ao parar PTZ',
         description: message,
@@ -1612,7 +1623,7 @@ export default function CameraDetailPage() {
                       className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] hover:bg-[hsl(var(--accent))] disabled:opacity-50"
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
-                      Stop
+                      Parar
                     </button>
                   </div>
                   <div className="mx-auto grid w-fit grid-cols-3 gap-2">
@@ -1638,8 +1649,31 @@ export default function CameraDetailPage() {
                     <PtzButton icon={ZoomIn} label="Zoom In" active={activeDirection === 'ZoomIn'} disabled={controlsDisabled} onStart={() => void startMove('ZoomIn')} onStop={() => undefined} />
                     <PtzButton icon={ZoomOut} label="Zoom Out" active={activeDirection === 'ZoomOut'} disabled={controlsDisabled} onStart={() => void startMove('ZoomOut')} onStop={() => undefined} />
                   </div>
+                  <div className="rounded-md border border-border bg-background/55 px-2.5 py-2">
+                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      Movimento por toque
+                    </div>
+                    <div className="grid grid-cols-4 gap-1" role="group" aria-label="Deslocamento aproximado por toque">
+                      {[1, 3, 5, 10].map((degrees) => (
+                        <button
+                          key={degrees}
+                          type="button"
+                          onClick={() => setPtzAngleDegrees(degrees)}
+                          aria-pressed={ptzAngleDegrees === degrees}
+                          className={cn(
+                            'h-7 rounded-md border text-[11px] font-medium transition-colors',
+                            ptzAngleDegrees === degrees
+                              ? 'border-[hsl(var(--primary)_/_0.55)] bg-[hsl(var(--primary)_/_0.16)] text-[hsl(var(--primary))]'
+                              : 'border-border text-muted-foreground hover:bg-[hsl(var(--accent))]',
+                          )}
+                        >
+                          {degrees}°
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div className="rounded-md border border-border bg-background/55 px-2.5 py-2 text-[11px] text-muted-foreground">
-                    {commandState === 'error' ? 'Erro operacional' : commandState === 'sending' ? 'Enviando comando...' : 'Pronto'}
+                    {commandState === 'error' ? 'Não foi possível concluir o movimento' : commandState === 'sending' ? 'Movendo a câmera...' : 'Pronto'}
                     <div className="mt-1 font-mono text-[10px]">{lastCommand}</div>
                     {lastError ? <div className="mt-1 text-[hsl(var(--destructive))]">{lastError}</div> : null}
                   </div>
@@ -1655,8 +1689,8 @@ export default function CameraDetailPage() {
                   {ptzDiagnostics ? (
                     <div className="rounded-md border border-border bg-background/55 px-2.5 py-2 text-[11px] text-muted-foreground">
                       {ptzDiagnostics.ptzLikelyWorking
-                        ? 'Controle PTZ disponivel.'
-                        : 'Controle PTZ ainda sem validacao.'}
+                        ? 'Controle PTZ disponível.'
+                        : 'Controle PTZ ainda não confirmado.'}
                     </div>
                   ) : null}
                   <button

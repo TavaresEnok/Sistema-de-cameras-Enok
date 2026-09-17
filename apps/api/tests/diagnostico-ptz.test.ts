@@ -20,7 +20,7 @@ test('câmera fixa: todas as tentativas recusadas → aponta modelo sem PTZ e a 
 
   assert.equal(d.causa, 'sem-suporte');
   assert.match(d.mensagem, /fixa|sem PTZ/i);
-  assert.match(d.mensagem, /editor avançado/i, 'diz ao operador o que fazer se discordar');
+  assert.match(d.mensagem, /porta ONVIF\/HTTP/i, 'diz ao operador o que conferir se discordar');
   assert.equal(d.detalhesTecnicos.length, 4, 'o rastro técnico NÃO é jogado fora');
 });
 
