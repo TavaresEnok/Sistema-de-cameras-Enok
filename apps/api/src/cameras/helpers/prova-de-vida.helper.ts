@@ -30,7 +30,7 @@
  * sessões — e as baratas, que é o que mais se instala, costumam ter.
  */
 
-export type CameraStatusSimples = 'ONLINE' | 'OFFLINE';
+export type CameraStatusSimples = 'ONLINE' | 'OFFLINE' | 'UNKNOWN';
 
 export type ProvasDeVida = {
   /** O servidor de mídia está recebendo quadros desta câmera AGORA. */
@@ -41,6 +41,8 @@ export type ProvasDeVida = {
   onvifAlcancavel?: boolean;
   /** A câmera aceitou a credencial na sonda RTSP. */
   autenticacaoRtspOk?: boolean;
+  /** Houve uma recusa explícita (401/403), não só timeout/erro de capacidade. */
+  autenticacaoRtspRecusada?: boolean;
   /** Há usuário cadastrado? Sem credencial não há o que autenticar. */
   temCredencial?: boolean;
 };
@@ -53,7 +55,8 @@ export type VeredictoDeVida = {
     | 'sondas-ok'
     | 'sem-rtsp'
     | 'sem-onvif'
-    | 'credencial-recusada';
+    | 'credencial-recusada'
+    | 'sonda-inconclusiva';
   /** Frase para quem opera, sem jargão. */
   explicacao: string;
 };
@@ -93,6 +96,13 @@ export function decidirEstadoDaCamera(provas: ProvasDeVida): VeredictoDeVida {
   // Credencial recusada é diferente de câmera fora do ar: o equipamento está
   // lá e respondeu. Separado para o operador saber que o conserto é a senha.
   if (provas.temCredencial === true && provas.autenticacaoRtspOk !== true) {
+    if (provas.autenticacaoRtspRecusada !== true) {
+      return {
+        status: 'UNKNOWN',
+        motivo: 'sonda-inconclusiva',
+        explicacao: 'A porta de vídeo respondeu, mas a verificação do stream não terminou. Tentaremos novamente.',
+      };
+    }
     return {
       status: 'OFFLINE',
       motivo: 'credencial-recusada',
@@ -127,7 +137,7 @@ export function decidirEstadoDaCamera(provas: ProvasDeVida): VeredictoDeVida {
  * e vira OFFLINE normalmente. Porta RTSP fechada também nunca ganha tolerância.
  */
 export function deveManterOnlineDuranteFalhaTransitoria(input: ToleranciaFalhaTransitoria): boolean {
-  if (input.motivo !== 'credencial-recusada' || input.statusAnterior !== 'ONLINE') return false;
+  if (!['credencial-recusada', 'sonda-inconclusiva'].includes(input.motivo) || input.statusAnterior !== 'ONLINE') return false;
   const visto = input.lastSeenAt instanceof Date
     ? input.lastSeenAt.getTime()
     : Date.parse(String(input.lastSeenAt ?? ''));

@@ -12,8 +12,9 @@
  * H.265 → H.264) — com vídeo rodando. Resultado: tag "Offline" escura sobre um
  * vídeo que rodava por trás, por ~2 minutos, até a sondagem alcançar.
  *
- * `fallback` É imagem viva. Só `loading` e `error` (ou player sem estado ainda)
- * deixam o aviso aparecer.
+ * `fallback` É imagem viva. `loading` não prova falha: durante o cold start
+ * da fonte sob demanda, "Offline" seria uma afirmação falsa e assustadora.
+ * Só erro confirmado do player pode cobrir a imagem com "Vídeo indisponível".
  */
 export type EstadoDoPlayer = 'loading' | 'playing' | 'fallback' | 'error';
 
@@ -25,6 +26,5 @@ export function mostrarAvisoDeOffline(
   statusDaCamera: string | null | undefined,
   estadoDoPlayer: EstadoDoPlayer | null | undefined,
 ): boolean {
-  const offlinePelaSondagem = statusDaCamera === 'offline' || statusDaCamera === 'no_signal';
-  return offlinePelaSondagem && !playerTemImagemViva(estadoDoPlayer);
+  return statusDaCamera === 'offline' && estadoDoPlayer === 'error';
 }

@@ -2651,6 +2651,7 @@ export class CamerasService implements OnApplicationBootstrap {
       const onvifReachable =
         controlPort == null ? true : await this.portChecker.check(camera.ip, controlPort);
       let rtspAuthOk = false;
+      let rtspAuthExplicitlyDenied = false;
       let detectedRtspPath: string | null = null;
       let detectedStream: ProbedStreamMetadata | null = null;
 
@@ -2690,6 +2691,7 @@ export class CamerasService implements OnApplicationBootstrap {
             paths: rtspPathCandidates,
           });
           rtspAuthOk = probe.ok;
+          rtspAuthExplicitlyDenied = probe.authDenied;
           detectedRtspPath = probe.path;
           detectedStream = probe.metadata;
         } catch (error) {
@@ -2702,6 +2704,7 @@ export class CamerasService implements OnApplicationBootstrap {
         rtspAlcancavel: rtspReachable,
         onvifAlcancavel: onvifReachable,
         autenticacaoRtspOk: rtspAuthOk,
+        autenticacaoRtspRecusada: rtspAuthExplicitlyDenied,
         temCredencial: Boolean(camera.username),
       });
       const provaConfirmouOnline = veredicto.status === 'ONLINE';
@@ -2715,13 +2718,23 @@ export class CamerasService implements OnApplicationBootstrap {
         lastSeenAt: camera.lastSeenAt,
         toleranciaMs: toleranciaAuthMs,
       });
+      // Uma câmera que já entregou vídeo não vira "offline" só porque uma
+      // SEGUNDA sessão de diagnóstico recebeu 401/403: DVRs com limite de
+      // sessões também respondem assim. Sem prova de vídeo, o estado honesto
+      // após a tolerância é "em verificação".
+      const recusaDeCameraAntesSaudavel = veredicto.motivo === 'credencial-recusada'
+        && camera.lastSeenAt != null;
       const status: CameraStatus = provaConfirmouOnline || mantendoDuranteFalhaTransitoria
         ? CameraStatus.ONLINE
-        : CameraStatus.OFFLINE;
+        : veredicto.status === 'UNKNOWN' || recusaDeCameraAntesSaudavel
+          ? CameraStatus.UNKNOWN
+          : CameraStatus.OFFLINE;
       if (mantendoDuranteFalhaTransitoria) {
         this.logger.debug(`${camera.name}: recusa RTSP transitória; mantendo ONLINE até o próximo reteste.`);
-      } else if (veredicto.status === 'OFFLINE' && previousStatus === CameraStatus.ONLINE) {
+      } else if (status === CameraStatus.OFFLINE && previousStatus === CameraStatus.ONLINE) {
         this.logger.warn(`${camera.name}: ONLINE → OFFLINE — ${veredicto.explicacao}`);
+      } else if (status === CameraStatus.UNKNOWN && previousStatus === CameraStatus.ONLINE) {
+        this.logger.warn(`${camera.name}: análise de vídeo inconclusiva; estado em verificação, não offline.`);
       }
 
       await this.prisma.camera.update({

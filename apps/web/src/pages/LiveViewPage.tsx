@@ -509,6 +509,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   }, [cameras, displayCoordination.displays, displayId, setGridSize, setCameraIds]);
 
   const onlineCount = useMemo(() => cameras.filter((c) => c.isOnline).length, [cameras]);
+  const verifyingCount = useMemo(() => cameras.filter((c) => c.status === 'no_signal').length, [cameras]);
   const alarmCount = useMemo(() => cameras.filter((c) => c.status === 'alarm').length, [cameras]);
 
   const filteredList = useMemo(() => {
@@ -1056,8 +1057,9 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
           <div className="live-status-summary ml-auto flex min-w-0 items-center gap-1.5">
             <span className="hdr-chip">
               <span className="hdr-chip-dot status-online" />
-              {onlineCount}/{cameras.length} online
+              {onlineCount} ao vivo
             </span>
+            {verifyingCount > 0 && <span className="hdr-chip" title="Estado do vídeo ainda não confirmado; a grade tenta conectar normalmente."><span className="hdr-chip-dot status-warning" />{verifyingCount} verificando</span>}
             {alarmCount > 0 && (
               <span className="hdr-chip">
                 <span className="hdr-chip-dot status-alarm alarm-glow" />
@@ -1279,7 +1281,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                 const statusClass =
                   cam.status === 'alarm' ? 'status-alarm rec-pulse' :
                   cam.status === 'motion' ? 'status-motion' :
-                  cam.isOnline ? 'status-online' : 'status-offline';
+                  cam.status === 'no_signal' ? 'status-warning' : cam.isOnline ? 'status-online' : 'status-offline';
                 return (
                   <button
                     key={cam.id}

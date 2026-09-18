@@ -28,6 +28,7 @@ export type CameraDoSeletor = {
   name: string;
   code?: string;
   isOnline?: boolean;
+  status?: string;
   /** Grupo operacional. Quando disponível, também entra na busca textual. */
   floor?: string;
 };
@@ -59,11 +60,15 @@ export function SeletorDeCamera({
 }: Props) {
   const [aberto, setAberto] = useState(false);
 
-  const { online, offline } = useMemo(() => {
+  const { online, verifying, offline } = useMemo(() => {
     const online: CameraDoSeletor[] = [];
+    const verifying: CameraDoSeletor[] = [];
     const offline: CameraDoSeletor[] = [];
-    for (const camera of cameras) (camera.isOnline === false ? offline : online).push(camera);
-    return { online, offline };
+    for (const camera of cameras) {
+      if (camera.status === 'no_signal') verifying.push(camera);
+      else (camera.isOnline === false ? offline : online).push(camera);
+    }
+    return { online, verifying, offline };
   }, [cameras]);
 
   const selecionada = cameras.find((camera) => camera.id === value);
@@ -85,7 +90,9 @@ export function SeletorDeCamera({
       onSelect={() => { onChange(camera.id); setAberto(false); }}
       className="gap-2 text-xs"
     >
-      {camera.isOnline === false
+      {camera.status === 'no_signal'
+        ? <Video className="h-3.5 w-3.5 shrink-0 text-amber-400" aria-hidden />
+        : camera.isOnline === false
         ? <VideoOff className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--muted-foreground))]" aria-hidden />
         : <Video className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--status-online))]" aria-hidden />}
       <span className="min-w-0 flex-1 truncate">
@@ -95,7 +102,7 @@ export function SeletorDeCamera({
       </span>
       {camera.floor && camera.floor !== '-' && <span className="shrink-0 text-[9px] text-[hsl(var(--muted-foreground))]">{camera.floor}</span>}
       {camera.isOnline === false && (
-        <span className="shrink-0 text-[10px] uppercase tracking-wide text-[hsl(var(--muted-foreground))]">offline</span>
+        <span className="shrink-0 text-[10px] uppercase tracking-wide text-[hsl(var(--muted-foreground))]">{camera.status === 'no_signal' ? 'verificando' : 'offline'}</span>
       )}
       {value === camera.id && <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />}
     </CommandItem>
@@ -153,8 +160,13 @@ export function SeletorDeCamera({
             )}
 
             {online.length > 0 && (
-              <CommandGroup heading={offline.length > 0 ? `No ar (${online.length})` : undefined}>
+              <CommandGroup heading={offline.length + verifying.length > 0 ? `No ar (${online.length})` : undefined}>
                 {online.map(renderItem)}
+              </CommandGroup>
+            )}
+            {verifying.length > 0 && (
+              <CommandGroup heading={`Verificando vídeo (${verifying.length})`}>
+                {verifying.map(renderItem)}
               </CommandGroup>
             )}
             {offline.length > 0 && (

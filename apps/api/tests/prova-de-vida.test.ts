@@ -73,10 +73,23 @@ test('senha recusada NÃO se confunde com câmera fora do ar', () => {
   // O equipamento está lá e respondeu. O conserto é a senha, e a tela precisa
   // dizer isso — senão alguém vai procurar cabo e energia.
   const v = decidirEstadoDaCamera({
-    transmitindoAgora: false, rtspAlcancavel: true, autenticacaoRtspOk: false, temCredencial: true, onvifAlcancavel: true,
+    transmitindoAgora: false, rtspAlcancavel: true, autenticacaoRtspOk: false, autenticacaoRtspRecusada: true, temCredencial: true, onvifAlcancavel: true,
   });
+  assert.equal(v.status, 'OFFLINE');
   assert.equal(v.motivo, 'credencial-recusada');
   assert.match(v.explicacao, /usuário e a senha/i);
+});
+
+test('timeout ou limite de sessões do DVR NÃO é senha recusada nem prova de offline', () => {
+  const v = decidirEstadoDaCamera({
+    transmitindoAgora: false, rtspAlcancavel: true, autenticacaoRtspOk: false,
+    autenticacaoRtspRecusada: false, temCredencial: true, onvifAlcancavel: true,
+  });
+  assert.equal(v.status, 'UNKNOWN');
+  assert.equal(v.motivo, 'sonda-inconclusiva');
+  assert.equal(deveManterOnlineDuranteFalhaTransitoria({
+    motivo: v.motivo, statusAnterior: 'ONLINE', lastSeenAt: new Date(1_000), agoraMs: 2_000, toleranciaMs: 5_000,
+  }), true);
 });
 
 test('câmera sem credencial cadastrada não é reprovada por autenticação', () => {

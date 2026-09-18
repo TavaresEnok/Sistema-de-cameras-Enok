@@ -112,7 +112,7 @@ export function CameraTile({
         type="button"
         onClick={onClick}
         onDoubleClick={onDoubleClick}
-        aria-label={`${camera.name}, ${showOfflineOverlay ? 'offline' : 'ao vivo'}`}
+        aria-label={`${camera.name}, ${showOfflineOverlay ? 'vídeo indisponível' : 'visualização ao vivo'}`}
         aria-pressed={selected}
         className="absolute inset-0 z-[15] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--primary))]"
       >
@@ -128,7 +128,7 @@ export function CameraTile({
           <div className="text-center">
             <AlertTriangle className="w-4 h-4 text-[hsl(var(--status-offline))] mx-auto mb-1" />
             <div className="font-mono text-[9px] text-[hsl(var(--muted-foreground))] tracking-widest uppercase">
-              {camera.status === 'no_signal' ? 'Sem sinal' : 'Offline'}
+              Vídeo indisponível
             </div>
           </div>
         </div>

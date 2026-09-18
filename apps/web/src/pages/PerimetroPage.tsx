@@ -154,7 +154,9 @@ export default function PerimetroPage() {
     (filter === 'all' || (filter === 'empty' ? !temPerimetro(resumo) : perimeterState(camera.isOnline, resumo.linhas > 0, processors[camera.id], checked).attention)));
   const pageCount = Math.max(1, Math.ceil(visible.length / 30));
   const currentPage = Math.min(page, pageCount - 1);
-  const selectedState = selecionada ? perimeterState(selecionada.camera.isOnline, selecionada.resumo.linhas > 0, processors[selecionada.camera.id], checked) : null;
+  const selectedState = selecionada ? selecionada.camera.status === 'no_signal'
+    ? { label: 'Verificando vídeo', attention: true }
+    : perimeterState(selecionada.camera.isOnline, selecionada.resumo.linhas > 0, processors[selecionada.camera.id], checked) : null;
 
   // ── Sem nenhuma câmera ativa ────────────────────────────────────────────
   if (!lista.length) {
@@ -292,7 +294,7 @@ export default function PerimetroPage() {
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12px] font-medium">{camera.name}</span>
-                    <span className="block text-[10px] text-muted-foreground">{healthError ? 'Análise não verificada' : perimeterState(camera.isOnline, resumo.linhas > 0, processors[camera.id], checked).label}</span>
+                    <span className="block text-[10px] text-muted-foreground">{healthError ? 'Análise não verificada' : camera.status === 'no_signal' ? 'Verificando vídeo' : perimeterState(camera.isOnline, resumo.linhas > 0, processors[camera.id], checked).label}</span>
                     <span className="block text-[10px] text-[hsl(var(--muted-foreground))]">
                       {temPerimetro(resumo) ? <ResumoInline resumo={resumo} /> : 'sem perímetro'}
                     </span>

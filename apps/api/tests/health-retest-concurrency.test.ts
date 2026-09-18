@@ -54,6 +54,10 @@ test('uma câmera que estoura não aborta o lote', () => {
   );
 });
 
+test('reteste inconclusivo não é sobrescrito como offline', () => {
+  assert.match(FONTE, /result\.status === CameraStatus\.UNKNOWN[\s\S]*?return;/);
+});
+
 test('o teto tem limite superior — paralelismo livre derruba o DVR', () => {
   const m = FONTE.match(/envNumber\('HEALTH_RETEST_CONCURRENCY',[^)]*max:\s*(\d+)/s);
   assert.ok(m, 'o teto precisa de um máximo');

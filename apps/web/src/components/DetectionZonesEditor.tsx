@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { CameraOff, Check, Loader2, RefreshCw, Trash2, Undo2, Maximize, Minimize } from 'lucide-react';
+import { CameraOff, Check, Hand, Loader2, RefreshCw, Trash2, Undo2, Maximize, Minimize } from 'lucide-react';
 import { crossingArrow } from '../lib/perimeter-state';
 import { describePerimeterPosition } from '../lib/perimeter-test';
 import { LiveStreamPlayer } from './LiveStreamPlayer';
@@ -71,6 +71,9 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [panMode, setPanMode] = useState(false);
+  const panDrag = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
   const [testMessage, setTestMessage] = useState('Arraste sobre a imagem para simular movimento.');
   const [detections, setDetections] = useState<LiveDetection[]>([]);
   const previousTracks = useRef(new Map<number, { point: number[]; at: number }>());
@@ -119,7 +122,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
     }
   }, []);
   useEffect(() => {
-    setZoom(1); previousTracks.current.clear(); previousSimulation.current = null;
+    setZoom(1); setPan({ x: 0, y: 0 }); setPanMode(false); panDrag.current = null;
+    previousTracks.current.clear(); previousSimulation.current = null;
   }, [cameraId, testing]);
   useEffect(() => {
     if (!testing || !ignoredMotion || Date.now() / 1000 - ignoredMotion.at > 5) return;
@@ -303,7 +307,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   }, []);
 
   const handleClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (!drawing || readOnly || posterStatus !== 'ready') return;
+    if (!drawing || panMode || readOnly || posterStatus !== 'ready') return;
     const point = toNormalized(event.clientX, event.clientY);
     if (!point) return;
     setDrawing((current) => {
@@ -317,7 +321,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
       }
       return [...current, point];
     });
-  }, [drawing, toNormalized, drawKind, readOnly, posterStatus]);
+  }, [drawing, panMode, toNormalized, drawKind, readOnly, posterStatus]);
 
   const finishDrawing = useCallback(() => {
     if (!drawing) return;
@@ -398,6 +402,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
       return;
     }
     setDrawKind(kind);
+    setPanMode(false);
     setDrawing([]);
   };
 
@@ -407,9 +412,10 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
         <span>{testing ? 'Vídeo ao vivo · teste visual' : capturedAt && Number.isFinite(Date.parse(capturedAt)) ? `Imagem capturada em ${new Date(capturedAt).toLocaleString('pt-BR')}` : 'Horário da captura não informado'}</span>
         <div className="flex gap-2">
           {!testing && <button className="btn btn-secondary btn-sm" onClick={() => { posterRetryCountRef.current = 0; setPosterStatus('loading'); void loadPoster(true).then((ok) => { if (!ok) schedulePosterRetry(); }); }}><RefreshCw className="h-4 w-4" /> Atualizar imagem</button>}
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setZoom((value) => Math.max(1, Number((value - 0.5).toFixed(1))))} disabled={zoom === 1} aria-label="Reduzir zoom">−</button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => { const next = Math.max(1, Number((zoom - 0.5).toFixed(1))); setZoom(next); setPanMode(next > 1); setPan({ x: 0, y: 0 }); }} disabled={zoom === 1} aria-label="Reduzir zoom">−</button>
           <span className="self-center tabular-nums">{zoom.toFixed(1)}×</span>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setZoom((value) => Math.min(4, Number((value + 0.5).toFixed(1))))} disabled={zoom === 4} aria-label="Ampliar zoom">+</button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setZoom(Math.min(4, Number((zoom + 0.5).toFixed(1)))); setPan({ x: 0, y: 0 }); setPanMode(true); }} disabled={zoom === 4} aria-label="Ampliar zoom">+</button>
+          {zoom > 1 && <button type="button" className={`btn btn-sm ${panMode ? 'btn-primary' : 'btn-secondary'}`} aria-pressed={panMode} onClick={() => setPanMode((current) => !current)} title={panMode ? 'Arraste a imagem para mover; clique para voltar ao desenho' : 'Clique para mover a imagem ampliada'}><Hand className="h-4 w-4" /> Mover</button>}
           <button className="btn btn-secondary btn-sm" onClick={() => setExpanded(!expanded)}>{expanded ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}{expanded ? 'Reduzir' : 'Ampliar'}</button>
         </div>
       </div>
@@ -502,7 +508,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
         style={{ aspectRatio: proporcao }}
         aria-label={`Editor de zonas de ${cameraName}`}
       >
-        <div ref={sceneRef} className="absolute inset-0" style={{ transform: zoom > 1 ? `scale(${zoom})` : undefined, transformOrigin: 'center center' }}>
+        <div ref={sceneRef} className="absolute inset-0" style={{ transform: zoom > 1 ? `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` : undefined, transformOrigin: 'center center' }}>
         {testing ? <LiveStreamPlayer cameraId={cameraId} cameraName={cameraName} className="h-full w-full" liveViewMode="grid" muted showOverlay={false} aiEnabled={false} /> : posterUrl ? (
           <img
             src={posterUrl}
@@ -571,15 +577,32 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
         <svg
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
-          className={`absolute inset-0 z-10 h-full w-full transition-opacity ${testing || posterStatus === 'ready' ? 'opacity-100' : 'opacity-0'}`}
+          className={`absolute inset-0 z-10 h-full w-full transition-opacity ${testing || posterStatus === 'ready' ? 'opacity-100' : 'opacity-0'} ${zoom > 1 && panMode ? 'cursor-grab active:cursor-grabbing' : ''}`}
           aria-hidden={!testing && posterStatus !== 'ready'}
           style={{ touchAction: 'none' }}
           onPointerDown={(event) => {
+            if (zoom > 1 && panMode) {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              panDrag.current = { x: event.clientX, y: event.clientY, startX: pan.x, startY: pan.y };
+              return;
+            }
             if (!testing) return;
             event.currentTarget.setPointerCapture(event.pointerId);
             previousSimulation.current = null;
           }}
           onPointerMove={(event) => {
+            if (panDrag.current) {
+              const box = containerRef.current;
+              if (!box) return;
+              const limitX = (zoom - 1) * box.clientWidth / 2;
+              const limitY = (zoom - 1) * box.clientHeight / 2;
+              const drag = panDrag.current;
+              setPan({
+                x: Math.max(-limitX, Math.min(limitX, drag.startX + event.clientX - drag.x)),
+                y: Math.max(-limitY, Math.min(limitY, drag.startY + event.clientY - drag.y)),
+              });
+              return;
+            }
             if (testing && event.currentTarget.hasPointerCapture(event.pointerId)) {
               const point = toNormalized(event.clientX, event.clientY);
               if (point) {
@@ -595,8 +618,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             setZones((current) => current.map((z) => z.id === id ? { ...z, points: z.points.map((p, i) => i === index ? point : p) } : z));
             setDirty(true);
           }}
-          onPointerUp={() => { drag.current = null; previousSimulation.current = null; }}
-          onPointerCancel={() => { drag.current = null; previousSimulation.current = null; }}
+          onPointerUp={() => { drag.current = null; panDrag.current = null; previousSimulation.current = null; }}
+          onPointerCancel={() => { drag.current = null; panDrag.current = null; previousSimulation.current = null; }}
         >
           {/* A seta é o que torna o sentido COMPREENSÍVEL: "ab" e "ba" não
               significam nada sozinhos — a ponta na tela mostra qual é qual. */}
@@ -632,7 +655,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
               strokeWidth={selectedZone === zone.id ? 0.7 : 0.3}
             />
           )))}
-          {!drawing && !readOnly && zones.filter((z) => z.id === selectedZone).flatMap((zone) => zone.points.map(([x, y], index) => (
+          {!drawing && !panMode && !readOnly && zones.filter((z) => z.id === selectedZone).flatMap((zone) => zone.points.map(([x, y], index) => (
             <circle key={`${zone.id}-${index}`} cx={x * 100} cy={y * 100} r={1.1} fill="white" stroke={ZONE_COLOR[zone.kind].stroke} strokeWidth={0.3} className="cursor-move"
               onPointerDown={(event) => { if (saving) return; event.stopPropagation(); remember(); drag.current = { id: zone.id, index }; event.currentTarget.setPointerCapture(event.pointerId); }} />
           )))}

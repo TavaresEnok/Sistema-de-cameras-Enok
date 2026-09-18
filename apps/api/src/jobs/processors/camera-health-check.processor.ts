@@ -107,6 +107,10 @@ export class CameraHealthCheckProcessor extends WorkerHost {
             this.logger.debug(`Reteste ativo concluído: ${cam.name} (${cam.id})`);
             return;
           }
+          if (result.status === CameraStatus.UNKNOWN) {
+            this.logger.debug(`Reteste inconclusivo: ${cam.name}; mantendo estado em verificação.`);
+            return;
+          }
         } catch (error) {
           this.logger.warn(`Reteste ativo falhou camera=${cam.id}: ${(error as Error).message}`);
         }

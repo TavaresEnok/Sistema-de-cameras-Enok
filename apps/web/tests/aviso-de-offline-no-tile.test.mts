@@ -15,11 +15,12 @@ test('tocando normalmente também vence a sondagem atrasada', () => {
   assert.equal(mostrarAvisoDeOffline('no_signal', 'playing'), false);
 });
 
-test('offline de verdade: sondagem diz offline e o player não tem imagem → aviso', () => {
-  for (const estado of ['loading', 'error', null, undefined] as const) {
-    assert.equal(mostrarAvisoDeOffline('offline', estado), true, String(estado));
+test('sondagem não cobre o vídeo durante conexão nem quando ainda está verificando', () => {
+  for (const estado of ['loading', null, undefined] as const) {
+    assert.equal(mostrarAvisoDeOffline('offline', estado), false, String(estado));
   }
-  assert.equal(mostrarAvisoDeOffline('no_signal', 'error'), true);
+  assert.equal(mostrarAvisoDeOffline('no_signal', 'error'), false);
+  assert.equal(mostrarAvisoDeOffline('offline', 'error'), true);
 });
 
 test('câmera online pela sondagem nunca recebe o aviso, mesmo com player em erro', () => {
