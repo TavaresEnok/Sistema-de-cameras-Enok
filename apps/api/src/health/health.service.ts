@@ -7,6 +7,7 @@ import { CameraStatus } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { envNumber } from '../common/config/env-number.helper';
+import { avaliarEstadoDaIa } from './helpers/estado-da-ia.helper';
 
 @Injectable()
 export class HealthService {
@@ -259,7 +260,13 @@ export class HealthService {
 
     const checks: Array<{ key: string; label: string; status: 'ok' | 'attention' | 'blocked'; detail: string }> = [];
     const cameraTotal = cameraCounts.total;
-    const aiOptional = launchProfile === 'standard' && String(process.env.AI_AUTO_START_ENABLED ?? 'true') === 'false' && aiEnabledCount === 0;
+    // "Marcada com IA" não é "sendo analisada": ver estado-da-ia.helper.
+    const estadoDaIa = avaliarEstadoDaIa({
+      camerasComIa: aiEnabledCount,
+      totalDeCameras: cameraTotal,
+      sincronizacaoAutomatica: String(process.env.AI_AUTO_START_ENABLED ?? 'true') !== 'false',
+      perfilDeLancamento: launchProfile,
+    });
     const continuousRecordingOptional = launchProfile === 'standard' && recordingStats.continuous === 0 && String(process.env.RECORDING_AUTO_START_ENABLED ?? 'false') !== 'true';
 
     checks.push({
@@ -291,8 +298,8 @@ export class HealthService {
     checks.push({
       key: 'ai',
       label: 'IA',
-      status: aiEnabledCount > 0 || aiOptional ? 'ok' : 'attention',
-      detail: aiOptional ? 'IA desativada por perfil de lancamento standard.' : `${aiEnabledCount}/${cameraTotal} cameras com IA habilitada.`,
+      status: estadoDaIa.status,
+      detail: estadoDaIa.detail,
     });
     checks.push({
       key: 'storage',
