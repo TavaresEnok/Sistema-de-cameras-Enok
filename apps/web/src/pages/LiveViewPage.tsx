@@ -25,6 +25,7 @@ import {
   X,
 } from 'lucide-react';
 import { CameraTile } from '../components/CameraTile';
+import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
 import { Camera, SavedLayout, useVmsDataStore } from '../store/vmsDataStore';
 import { getLiveDisplayId, liveDisplayLabel, useGridStore, GridSize, type LiveDisplayId } from '../store/gridStore';
 import { useLiveDisplays } from '../hooks/use-live-displays';
@@ -73,6 +74,11 @@ const GRID_CELL_WARN = 16; // acima disso, avisa sobre CPU (transcode H.265)
 // Limite operacional deliberado. "Preencher" jamais abre todas as câmeras de
 // uma instalação grande: abre no máximo 36, mesmo que existam centenas.
 const FILL_GRID_MAX_CAMERAS = 36;
+// A câmera única usa o perfil original, separado do perfil leve da grade.
+// Aquecemos SOMENTE a última câmera que o operador selecionou e por uma janela
+// curta: isso elimina a abertura RTSP fria no duplo clique sem transformar toda
+// a grade em dezenas de conexões de máxima resolução.
+const ORIGINAL_PREWARM_MS = 20_000;
 const LIVE_PANEL_AUTO_COLLAPSE_WIDTH = 1100;
 const LIVE_PANEL_WIDTH_STORAGE_KEY = 'drac.live.camera-panel-width.v1';
 const LIVE_PANEL_MIN_WIDTH = 220;
@@ -226,6 +232,8 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   // Selo e botão do mural somem sozinhos depois de 3s parado.
   const muralControles = useAutoHideControls(wallMode);
   const [selectedCam, setSelectedCam] = useState<string | null>(null);
+  const [prewarmCameraId, setPrewarmCameraId] = useState<string | null>(null);
+  const prewarmTimeoutRef = useRef<number | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelWidth, setPanelWidth] = useState(loadLivePanelWidth);
   const [search, setSearch] = useState('');
@@ -392,6 +400,12 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   const selectedCameraObj = useMemo(
     () => (selectedCam ? cameras.find((camera) => camera.id === selectedCam) ?? null : null),
     [cameras, selectedCam],
+  );
+  const prewarmCamera = useMemo(
+    () => (prewarmCameraId && !focusedCameraId
+      ? cameras.find((camera) => camera.id === prewarmCameraId) ?? null
+      : null),
+    [cameras, focusedCameraId, prewarmCameraId],
   );
   const availableLayouts = savedLayouts.length ? savedLayouts : generatedLayouts;
 
@@ -587,14 +601,44 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     }
   }, [API_URL, accessToken, loadData, setLocation, zoomToCamera, toast]);
 
-  const handleCamClick = useCallback((id: string) => {
-    setSelectedCam(s => s === id ? null : id);
+  const stopOriginalPrewarm = useCallback(() => {
+    if (prewarmTimeoutRef.current != null) {
+      window.clearTimeout(prewarmTimeoutRef.current);
+      prewarmTimeoutRef.current = null;
+    }
+    setPrewarmCameraId(null);
   }, []);
+
+  const prewarmOriginal = useCallback((cameraId: string) => {
+    if (focusedCameraId) return;
+    if (prewarmTimeoutRef.current != null) window.clearTimeout(prewarmTimeoutRef.current);
+    setPrewarmCameraId(cameraId);
+    prewarmTimeoutRef.current = window.setTimeout(() => {
+      prewarmTimeoutRef.current = null;
+      setPrewarmCameraId(null);
+    }, ORIGINAL_PREWARM_MS);
+  }, [focusedCameraId]);
+
+  useEffect(() => () => {
+    if (prewarmTimeoutRef.current != null) window.clearTimeout(prewarmTimeoutRef.current);
+  }, []);
+
+  const handleCamClick = useCallback((id: string) => {
+    setSelectedCam((current) => {
+      const next = current === id ? null : id;
+      if (next) prewarmOriginal(id);
+      else stopOriginalPrewarm();
+      return next;
+    });
+  }, [prewarmOriginal, stopOriginalPrewarm]);
 
   const handleCamDoubleClick = useCallback((camera: Camera) => {
     if (focusedCameraId) { restoreLayout(); return; }
+    // O primeiro clique do duplo clique já iniciou o aquecimento. Esta chamada
+    // também cobre teclado/touch e qualquer caminho que amplie sem seleção.
+    prewarmOriginal(camera.id);
     zoomToCamera(camera.id);
-  }, [focusedCameraId, restoreLayout, zoomToCamera]);
+  }, [focusedCameraId, prewarmOriginal, restoreLayout, zoomToCamera]);
 
   const loadLayout = (layoutId: string) => {
     const layout = availableLayouts.find(l => l.id === layoutId);
@@ -815,6 +859,22 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
 
   return (
     <div className={wallMode ? 'fixed inset-0 z-50 flex bg-black' : 'live-workspace relative flex h-full min-h-0'}>
+      {prewarmCamera ? (
+        // Leitor invisível e temporário do perfil original. Não há segundo
+        // player para toda a grade: somente a câmera recém-selecionada recebe
+        // esta antecipação, por no máximo 20 segundos.
+        <div aria-hidden="true" className="pointer-events-none fixed -left-px -top-px h-px w-px overflow-hidden opacity-0">
+          <LiveStreamPlayer
+            cameraId={prewarmCamera.id}
+            cameraName={prewarmCamera.name}
+            liveViewMode="selected"
+            muted
+            showOverlay={false}
+            aiEnabled={false}
+            className="h-px w-px"
+          />
+        </div>
+      ) : null}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <div className={wallMode ? 'hidden' : 'toolbar'}>
           <div className="segment">
