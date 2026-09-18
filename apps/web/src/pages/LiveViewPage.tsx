@@ -25,7 +25,7 @@ import {
   X,
 } from 'lucide-react';
 import { CameraTile } from '../components/CameraTile';
-import { LiveStreamPlayer } from '../components/LiveStreamPlayer';
+import { LiveStreamPlayer, type LivePlayerStatus } from '../components/LiveStreamPlayer';
 import { Camera, SavedLayout, useVmsDataStore } from '../store/vmsDataStore';
 import { getLiveDisplayId, liveDisplayLabel, useGridStore, GridSize, type LiveDisplayId } from '../store/gridStore';
 import { useLiveDisplays } from '../hooks/use-live-displays';
@@ -79,6 +79,10 @@ const FILL_GRID_MAX_CAMERAS = 36;
 // curta: isso elimina a abertura RTSP fria no duplo clique sem transformar toda
 // a grade em dezenas de conexões de máxima resolução.
 const ORIGINAL_PREWARM_MS = 20_000;
+// Se a origem não responder neste prazo, a tela única tenta por conta própria
+// e mostra a falha normal do player. Até lá, o operador continua vendo o vídeo
+// leve, em vez de uma tela vazia.
+const ORIGINAL_PREWARM_MAX_WAIT_MS = 12_000;
 const LIVE_PANEL_AUTO_COLLAPSE_WIDTH = 1100;
 const LIVE_PANEL_WIDTH_STORAGE_KEY = 'drac.live.camera-panel-width.v1';
 const LIVE_PANEL_MIN_WIDTH = 220;
@@ -233,7 +237,9 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   const muralControles = useAutoHideControls(wallMode);
   const [selectedCam, setSelectedCam] = useState<string | null>(null);
   const [prewarmCameraId, setPrewarmCameraId] = useState<string | null>(null);
+  const [originalReadyCameraId, setOriginalReadyCameraId] = useState<string | null>(null);
   const prewarmTimeoutRef = useRef<number | null>(null);
+  const prewarmFallbackTimeoutRef = useRef<number | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelWidth, setPanelWidth] = useState(loadLivePanelWidth);
   const [search, setSearch] = useState('');
@@ -402,10 +408,10 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     [cameras, selectedCam],
   );
   const prewarmCamera = useMemo(
-    () => (prewarmCameraId && !focusedCameraId
+    () => (prewarmCameraId
       ? cameras.find((camera) => camera.id === prewarmCameraId) ?? null
       : null),
-    [cameras, focusedCameraId, prewarmCameraId],
+    [cameras, prewarmCameraId],
   );
   const availableLayouts = savedLayouts.length ? savedLayouts : generatedLayouts;
 
@@ -606,21 +612,32 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       window.clearTimeout(prewarmTimeoutRef.current);
       prewarmTimeoutRef.current = null;
     }
+    if (prewarmFallbackTimeoutRef.current != null) {
+      window.clearTimeout(prewarmFallbackTimeoutRef.current);
+      prewarmFallbackTimeoutRef.current = null;
+    }
     setPrewarmCameraId(null);
+    setOriginalReadyCameraId(null);
   }, []);
 
   const prewarmOriginal = useCallback((cameraId: string) => {
-    if (focusedCameraId) return;
     if (prewarmTimeoutRef.current != null) window.clearTimeout(prewarmTimeoutRef.current);
+    if (prewarmFallbackTimeoutRef.current != null) window.clearTimeout(prewarmFallbackTimeoutRef.current);
     setPrewarmCameraId(cameraId);
+    setOriginalReadyCameraId(null);
     prewarmTimeoutRef.current = window.setTimeout(() => {
       prewarmTimeoutRef.current = null;
       setPrewarmCameraId(null);
     }, ORIGINAL_PREWARM_MS);
-  }, [focusedCameraId]);
+    prewarmFallbackTimeoutRef.current = window.setTimeout(() => {
+      prewarmFallbackTimeoutRef.current = null;
+      setOriginalReadyCameraId(cameraId);
+    }, ORIGINAL_PREWARM_MAX_WAIT_MS);
+  }, []);
 
   useEffect(() => () => {
     if (prewarmTimeoutRef.current != null) window.clearTimeout(prewarmTimeoutRef.current);
+    if (prewarmFallbackTimeoutRef.current != null) window.clearTimeout(prewarmFallbackTimeoutRef.current);
   }, []);
 
   const handleCamClick = useCallback((id: string) => {
@@ -872,6 +889,14 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             showOverlay={false}
             aiEnabled={false}
             className="h-px w-px"
+            onStatusChange={(status: LivePlayerStatus) => {
+              if (status.state !== 'playing') return;
+              setOriginalReadyCameraId((current) => current === prewarmCamera.id ? current : prewarmCamera.id);
+              if (prewarmFallbackTimeoutRef.current != null) {
+                window.clearTimeout(prewarmFallbackTimeoutRef.current);
+                prewarmFallbackTimeoutRef.current = null;
+              }
+            }}
           />
         </div>
       ) : null}
@@ -1090,7 +1115,14 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                     // Full HD só quando há exatamente 1 câmera na tela.
                     // Em grade 2x2 ou maior, até a câmera selecionada permanece
                     // no perfil reduzido para preservar CPU/banda.
-                    liveViewMode={focusedCameraId === cam.id || count === 1 ? 'selected' : 'grid'}
+                    // Ao ampliar, mantém o vídeo leve vivo até o perfil
+                    // original pré-aquecido realmente ter um frame. Assim o
+                    // duplo clique nunca troca imagem por um spinner.
+                    liveViewMode={
+                      (focusedCameraId === cam.id && originalReadyCameraId === cam.id) || count === 1
+                        ? 'selected'
+                        : 'grid'
+                    }
                     wallMode={wallMode}
                     onClick={() => {
                       handleCamClick(cam.id);

@@ -39,7 +39,11 @@ test('todas as telas de câmera única usam o player no modo selected', async ()
     readFile(ptzPagePath, 'utf8'),
   ]);
 
-  assert.match(live, /liveViewMode=\{(?:focusedCameraId === cam\.id \|\| )?count === 1 \? 'selected' : 'grid'\}/);
+  // A página mantém o perfil leve visível durante o pré-aquecimento do
+  // original; assim que há frame, a câmera única entra em `selected`, que é o
+  // perfil original/máxima resolução.
+  assert.match(live, /focusedCameraId === cam\.id && originalReadyCameraId === cam\.id/);
+  assert.match(live, /\? 'selected'\s*:\s*'grid'/);
   assert.match(map, /<LiveStreamPlayer[\s\S]*?liveViewMode="selected"/);
   assert.match(cameraDetail, /<LiveStreamPlayer[\s\S]*?liveViewMode="selected"/);
   assert.match(ptz, /<LiveStreamPlayer[\s\S]*?liveViewMode="selected"/);
