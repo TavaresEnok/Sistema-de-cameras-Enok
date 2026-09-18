@@ -38,7 +38,7 @@ export function PerimeterTest({ cameraId, cameraName, zones }: { cameraId: strin
     <h2 className="font-semibold">Teste visual do perímetro</h2>
     <p className="text-xs text-muted-foreground">Arraste sobre a imagem para simular uma passagem. O teste também acompanha objetos quando a análise já está ativa. As simulações não geram gravações, sirenes ou notificações. As regras reais continuam funcionando normalmente.</p>
     <div ref={frame} className="relative overflow-hidden rounded-lg bg-black" style={{ aspectRatio: ratio }}>
-      <LiveStreamPlayer cameraId={cameraId} cameraName={cameraName} liveViewMode="selected" muted showOverlay={false} aiEnabled={false} />
+      <LiveStreamPlayer cameraId={cameraId} cameraName={cameraName} className="h-full w-full" liveViewMode="selected" muted showOverlay={false} aiEnabled={false} />
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 z-20 h-full w-full touch-none"
         onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); previousSimulation.current = null; }}
         onPointerMove={(e) => {
