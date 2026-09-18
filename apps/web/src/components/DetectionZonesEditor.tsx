@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { CameraOff, Check, Loader2, Plus, RefreshCw, Trash2, Undo2, Maximize, Minimize } from 'lucide-react';
+import { CameraOff, Check, Loader2, RefreshCw, Trash2, Undo2, Maximize, Minimize } from 'lucide-react';
 import { crossingArrow } from '../lib/perimeter-state';
 import { describePerimeterPosition } from '../lib/perimeter-test';
 import { LiveStreamPlayer } from './LiveStreamPlayer';
@@ -388,9 +388,21 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   ), []);
 
   const hasInclude = useMemo(() => zones.some((z) => z.kind === 'include'), [zones]);
+  const startDrawing = (kind: DetectionZone['kind']) => {
+    if (zones.length >= MAX_ZONES) {
+      toast({ title: 'Limite de zonas', description: `Máximo de ${MAX_ZONES} zonas por câmera.`, variant: 'destructive' });
+      return;
+    }
+    if (posterStatus !== 'ready') {
+      toast({ title: 'Aguarde a imagem da câmera', description: 'O desenho estará disponível assim que a imagem carregar.' });
+      return;
+    }
+    setDrawKind(kind);
+    setDrawing([]);
+  };
 
   return (
-    <div className={expanded ? 'fixed inset-0 z-50 overflow-auto bg-background p-5 space-y-3' : 'space-y-3'}>
+    <div className={expanded ? 'fixed inset-0 z-50 overflow-auto bg-background p-5 space-y-3' : 'space-y-3 rounded-xl border border-border bg-card/50 p-3 sm:p-4'}>
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>{testing ? 'Vídeo ao vivo · teste visual' : capturedAt && Number.isFinite(Date.parse(capturedAt)) ? `Imagem capturada em ${new Date(capturedAt).toLocaleString('pt-BR')}` : 'Horário da captura não informado'}</span>
         <div className="flex gap-2">
@@ -402,30 +414,33 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
         </div>
       </div>
       {!testing && <fieldset disabled={readOnly || saving} className="flex min-w-0 flex-wrap items-center gap-2">
-        <div className="segment flex-wrap">
+        <div className="segment flex-wrap" aria-label="Escolha o tipo de regra para desenhar">
           <button
             type="button"
-            onClick={() => setDrawKind('exclude')}
-            className={`seg-btn ${drawKind === 'exclude' ? 'active' : ''}`}
+            disabled={drawing !== null}
+            onClick={() => startDrawing('exclude')}
+            className={`seg-btn ${drawing !== null && drawKind === 'exclude' ? 'active' : ''}`}
             title="Área onde a detecção é DESCARTADA (rua movimentada, galhos, um outdoor)."
           >
-            Área ignorada
+            Ignorar área
           </button>
           <button
             type="button"
-            onClick={() => setDrawKind('include')}
-            className={`seg-btn ${drawKind === 'include' ? 'active' : ''}`}
+            disabled={drawing !== null}
+            onClick={() => startDrawing('include')}
+            className={`seg-btn ${drawing !== null && drawKind === 'include' ? 'active' : ''}`}
             title="A detecção passa a valer SÓ dentro desta área — todo o resto é ignorado."
           >
-            Área monitorada
+            Monitorar área
           </button>
           <button
             type="button"
-            onClick={() => setDrawKind('line')}
-            className={`seg-btn ${drawKind === 'line' ? 'active' : ''}`}
+            disabled={drawing !== null}
+            onClick={() => startDrawing('line')}
+            className={`seg-btn ${drawing !== null && drawKind === 'line' ? 'active' : ''}`}
             title="Limite que não deve ser atravessado: dispara quando um objeto cruza a linha."
           >
-            Linha de passagem
+            Criar linha
           </button>
         </div>
 
@@ -439,23 +454,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
               Cancelar
             </button>
           </>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              if (zones.length >= MAX_ZONES) {
-                toast({ title: 'Limite de zonas', description: `Máximo de ${MAX_ZONES} zonas por câmera.`, variant: 'destructive' });
-                return;
-              }
-              if (posterStatus !== 'ready') { toast({ title: 'Aguarde a imagem para desenhar' }); return; }
-              setDrawing([]);
-            }}
-            className="btn btn-secondary btn-sm"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Nova zona
-          </button>
-        )}
+        ) : null}
 
         <div className="ml-auto flex items-center gap-2">
           {dirty && <span className="text-[10px] text-[hsl(var(--status-warning))]">alterações não salvas</span>}
@@ -469,25 +468,25 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
 
       {/* Ajuda contextual: explica o modo selecionado na própria tela, para o
           operador não precisar adivinhar o que cada botão faz. */}
-      {!testing && <div className="flex items-start gap-2 rounded-md border border-border bg-background/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+      {!testing && <div className="flex items-start gap-2 rounded-md bg-background/50 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
         <span
           className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-sm"
           style={{ background: ZONE_COLOR[drawKind].stroke }}
         />
         <span>
-          {drawKind === 'exclude' && (
+          {drawing === null ? 'Escolha Ignorar área, Monitorar área ou Criar linha para desenhar diretamente sobre a câmera.' : drawKind === 'exclude' && (
             <>
               <strong className="font-medium text-foreground">Área ignorada:</strong>{' '}
-              Exclua árvores, ruas ou outros pontos que geram alertas desnecessários. O restante da imagem continua sendo considerado.
+              O movimento dentro do desenho será ignorado. O restante da imagem continua monitorado.
             </>
           )}
-          {drawKind === 'include' && (
+          {drawing !== null && drawKind === 'include' && (
             <>
               <strong className="font-medium text-foreground">Área monitorada:</strong>{' '}
               Marque o espaço que importa. Com essa regra, a análise considera apenas as áreas marcadas.
             </>
           )}
-          {drawKind === 'line' && (
+          {drawing !== null && drawKind === 'line' && (
             <>
               <strong className="font-medium text-foreground">Linha de perímetro:</strong>{' '}
               Marque o início e o fim do limite. A seta mostra o sentido de passagem entre os lados A e B. Selecione um desenho para arrastar seus pontos.
@@ -499,7 +498,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
       <div
         ref={containerRef}
         onClick={handleClick}
-        className={`relative w-full ${expanded ? 'max-w-none' : 'max-w-[640px]'} overflow-hidden rounded-lg border border-border bg-black ${drawing ? 'cursor-crosshair' : 'cursor-default'}`}
+        className={`relative mx-auto w-full ${expanded ? 'max-w-none' : 'max-w-[640px]'} overflow-hidden rounded-lg border border-border bg-black ${drawing ? 'cursor-crosshair' : 'cursor-default'}`}
         style={{ aspectRatio: proporcao }}
         aria-label={`Editor de zonas de ${cameraName}`}
       >
@@ -665,7 +664,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
         )}
       </div>
 
-      {testing && <div role="status" aria-live="polite" className="max-w-[640px] rounded-lg border border-border bg-card px-3 py-2 text-xs">
+      {testing && <div role="status" aria-live="polite" className="mx-auto max-w-[640px] rounded-lg border border-border bg-card px-3 py-2 text-xs">
         <p className="font-medium">{testMessage}</p>
         <p className="mt-1 text-muted-foreground">Arraste sobre o vídeo para simular movimento. As caixas azuis mostram detecções ao vivo; áreas ignoradas informam quando o detector descarta movimento. A simulação não gera gravação, sirene ou notificação.</p>
       </div>}

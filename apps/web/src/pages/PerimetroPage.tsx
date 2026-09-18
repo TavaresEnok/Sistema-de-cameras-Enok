@@ -5,7 +5,7 @@ import { perimeterState, type PerimeterProcessor } from '../lib/perimeter-state'
 import { CameraEditSheet } from '../components/CameraEditSheet';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from '../components/ui/alert-dialog';
 import { useLocation } from 'wouter';
-import { ShieldAlert, Spline, SquareDashed, EyeOff } from 'lucide-react';
+import { ShieldAlert, EyeOff } from 'lucide-react';
 import { SeletorDeCamera } from '../components/SeletorDeCamera';
 import { IlustracaoPerimetro } from '../components/IlustracaoPerimetro';
 import { DetectionZonesEditor, type DetectionZone } from '../components/DetectionZonesEditor';
@@ -211,17 +211,25 @@ export default function PerimetroPage() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 lg:grid lg:grid-cols-[minmax(0,1fr)_var(--perimeter-sidebar)]" style={{ '--perimeter-sidebar': `${width}px` } as CSSProperties}>
+      <div className="mx-auto flex min-h-0 w-full max-w-[1280px] flex-1 flex-col gap-5 overflow-y-auto p-4 lg:grid lg:grid-cols-[minmax(0,1fr)_var(--perimeter-sidebar)] lg:items-start lg:gap-5" style={{ '--perimeter-sidebar': `${width}px` } as CSSProperties}>
         {/* Editor: DESENHA aqui, sobre o snapshot da câmera */}
-        <div className="min-w-0 shrink-0" ref={editorRef}>
-          {selecionada && <div className="mb-4 rounded-xl border border-border p-4 space-y-2">
-            <div className="flex flex-wrap justify-between gap-2"><h1 className="font-semibold">{selecionada.camera.name}</h1><span className={`text-xs ${selectedState?.attention || healthError ? 'text-amber-500' : 'text-muted-foreground'}`}>{healthError ? 'Não foi possível verificar a análise' : selectedState?.label}</span></div>
-            <p className="text-xs text-muted-foreground">{selecionada.resumo.linhas} linha(s) · {selecionada.resumo.monitorar} área(s) monitorada(s) · {selecionada.resumo.ignorar} área(s) ignorada(s)</p>
-            <p className="text-xs">Gravação: {({ continuous: 'contínua', motion: 'por movimento', object: 'por objeto', schedule: 'conforme programação', manual: 'somente manual' })[selecionada.camera.recordingMode]}. Alertas da câmera: {selecionada.camera.alarmsEnabled ? 'habilitados, conforme regras e permissões de notificação' : 'desligados'}.</p>
-            <p className="text-xs text-muted-foreground">Objetos selecionados: {selecionada.camera.aiObjectClasses.map((c) => ({ person: 'Pessoas', car: 'Carros', motorcycle: 'Motos', bicycle: 'Bicicletas', bus: 'Ônibus', truck: 'Caminhões' } as Record<string, string>)[c] ?? c).join(', ') || 'nenhum'}. O desenho não ativa sozinho gravações ou alertas.</p>
-            <div className="flex flex-wrap gap-2">
-              <button className="btn btn-secondary btn-sm" disabled={dirty || !selecionada.zonas.length} title={dirty ? 'Salve ou descarte o desenho antes de testar' : undefined} onClick={() => setTesting(!testing)}>{testing ? 'Voltar a editar' : 'Testar perímetro'}</button>
-              {userRole !== 'viewer' && <button className="btn btn-secondary btn-sm" onClick={() => guard(() => setEditing(true))}>Configurar detecção e ações</button>}
+        <div className="mx-auto w-full max-w-[760px] min-w-0 shrink-0" ref={editorRef}>
+          {selecionada && <div className="mb-4 rounded-xl border border-border bg-card/70 p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Configuração de perímetro</p>
+                <h1 className="truncate text-base font-semibold">{selecionada.camera.name}</h1>
+              </div>
+              <span className={`rounded-full border px-2.5 py-1 text-[11px] ${selectedState?.attention || healthError ? 'border-amber-500/25 bg-amber-500/10 text-amber-400' : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'}`}>{healthError ? 'Análise indisponível' : selectedState?.label}</span>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+              <span>{selecionada.resumo.linhas + selecionada.resumo.monitorar + selecionada.resumo.ignorar} {selecionada.resumo.linhas + selecionada.resumo.monitorar + selecionada.resumo.ignorar === 1 ? 'regra' : 'regras'}</span>
+              <span>Gravação {({ continuous: 'contínua', motion: 'por movimento', object: 'por objeto', schedule: 'programada', manual: 'manual' })[selecionada.camera.recordingMode]}</span>
+              <span>Alertas {selecionada.camera.alarmsEnabled ? 'ligados' : 'desligados'}</span>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button className="btn btn-primary btn-sm" disabled={dirty || !selecionada.zonas.length} title={dirty ? 'Salve ou descarte o desenho antes de testar' : !selecionada.zonas.length ? 'Crie e salve uma regra para testar' : undefined} onClick={() => setTesting(!testing)}>{testing ? 'Voltar ao desenho' : 'Testar perímetro'}</button>
+              {userRole !== 'viewer' && <button className="btn btn-secondary btn-sm" onClick={() => guard(() => setEditing(true))}>Detecção e ações</button>}
             </div>
           </div>}
           {selecionada && (
@@ -242,8 +250,8 @@ export default function PerimetroPage() {
             />
           )}
           {selecionada && !selecionada.camera.aiEnabled && (
-            <p className="mt-3 rounded-lg border border-[hsl(var(--chart-4)_/_0.3)] bg-[hsl(var(--chart-4)_/_0.08)] px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-              A IA está desligada no cadastro. O desenho salvo não confirma a detecção de travessia. Eventos próprios da câmera dependem do suporte e da configuração do equipamento.
+            <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
+              IA desligada nesta câmera. Para testar linhas de passagem e objetos, ative a análise em <strong>Detecção e ações</strong>.
             </p>
           )}
         </div>
@@ -301,12 +309,6 @@ export default function PerimetroPage() {
           </div>
           <div className="mt-2 flex items-center justify-between text-xs"><button className="btn btn-secondary btn-sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Anterior</button><span>{currentPage + 1} / {pageCount} · {visible.length}</span><button className="btn btn-secondary btn-sm" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>Próxima</button></div>
 
-          {/* Legenda do que cada desenho significa */}
-          <div className="mt-3 shrink-0 space-y-1.5 rounded-lg border border-border bg-background/40 p-3 text-[11px] text-muted-foreground">
-            <div className="flex items-center gap-2"><Spline className="h-3.5 w-3.5" /> Linha — limite que não se atravessa</div>
-            <div className="flex items-center gap-2"><SquareDashed className="h-3.5 w-3.5" /> Monitorar — onde a detecção vale</div>
-            <div className="flex items-center gap-2"><EyeOff className="h-3.5 w-3.5" /> Ignorar — o que a detecção descarta</div>
-          </div>
         </aside>
       </div>
       <CameraEditSheet camera={selecionada?.camera ?? null} open={editing} onClose={() => setEditing(false)} />
