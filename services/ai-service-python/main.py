@@ -13,6 +13,7 @@ from runtime_profiles import exposed_profiles
 from onnxruntime_session import inference_threading_status
 from confirm_motion import run_confirm_motion, capture_and_detect
 from detectors import describe_detector_runtimes
+from detectors.inventario_de_modelos import estado_dos_modelos
 from inference_watchdog import (
     enforcement_enabled,
     inference_degraded_ids,
@@ -110,6 +111,10 @@ def health_check():
         "static_profiles": exposed_profiles(),
         "detector_runtimes": describe_detector_runtimes(),
         "model_registry": registry.status(),
+        # A pasta de modelos é um volume do host: instalar o sistema não
+        # instala os modelos. Sem isto, "detecção de objeto" fica prometida na
+        # tela e impossível na máquina (ver inventario_de_modelos.py).
+        "object_models": estado_dos_modelos(os.getenv("AI_MODELS_DIR", "/app/models")),
         "inference_threading": inference_threading_status(),
         "processors": {
             camera_id: {

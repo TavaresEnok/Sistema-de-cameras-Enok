@@ -247,7 +247,7 @@ export class HealthService {
     const now = new Date();
     const launchProfile = String(process.env.DRAC_LAUNCH_PROFILE || 'standard').trim().toLowerCase() || 'standard';
     const recordingsRoot = process.env.RECORDINGS_ROOT ?? '/storage';
-    const [system, cameraCounts, liveWebrtcCount, liveMainCount, recordingStats, aiEnabledCount, settings, latestBackup] = await Promise.all([
+    const [system, cameraCounts, liveWebrtcCount, liveMainCount, recordingStats, aiEnabledCount, settings, latestBackup, estadoDosModelos] = await Promise.all([
       this.getSystemSummary(),
       this.getCameraCounts(),
       this.prisma.camera.count({ where: { preferredLiveProtocol: 'webrtc' } }),
@@ -256,6 +256,7 @@ export class HealthService {
       this.prisma.camera.count({ where: { aiEnabled: true } }),
       this.getCloudSettings(),
       this.getLatestPostgresBackup(),
+      this.getAiModelState(),
     ]);
 
     const checks: Array<{ key: string; label: string; status: 'ok' | 'attention' | 'blocked'; detail: string }> = [];
@@ -266,6 +267,8 @@ export class HealthService {
       totalDeCameras: cameraTotal,
       sincronizacaoAutomatica: String(process.env.AI_AUTO_START_ENABLED ?? 'true') !== 'false',
       perfilDeLancamento: launchProfile,
+      modeloDeObjetoInstalado: estadoDosModelos.modeloDeObjetoInstalado,
+      modoDeIa: estadoDosModelos.modo,
     });
     const continuousRecordingOptional = launchProfile === 'standard' && recordingStats.continuous === 0 && String(process.env.RECORDING_AUTO_START_ENABLED ?? 'false') !== 'true';
 
@@ -369,6 +372,38 @@ export class HealthService {
       this.prisma.camera.count({ where: { enabled: true, recordingMode: 'continuous' } }),
     ]);
     return { enabled, continuous };
+  }
+
+  /**
+   * O serviço de IA tem o modelo de objeto instalado, e em que modo ele está?
+   *
+   * Leitura FRACA de propósito: timeout curto e qualquer falha devolve `null`,
+   * que o avaliarEstadoDaIa trata como "não sei" e não acusa. O painel de
+   * prontidão não pode ficar vermelho porque uma chamada HTTP demorou.
+   */
+  private async getAiModelState(): Promise<{ modeloDeObjetoInstalado: boolean | null; modo: string | null }> {
+    // O MODO vem do banco (é o que o operador configurou), não do serviço: o
+    // `model_registry.mode` só existe depois que algum detector carregou, e
+    // justamente quando o modelo falta ele nunca carrega.
+    const modo = await this.prisma.aiSettings
+      .findFirst({ select: { mode: true } })
+      .then((row) => row?.mode ?? null)
+      .catch(() => null);
+
+    const base = process.env.AI_BASE_URL ?? 'http://ai-service:8000';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    try {
+      const response = await fetch(`${base}/health`, { signal: controller.signal });
+      if (!response.ok) return { modeloDeObjetoInstalado: null, modo };
+      const body: any = await response.json();
+      const instalado = body?.object_models?.object_model_installed;
+      return { modeloDeObjetoInstalado: typeof instalado === 'boolean' ? instalado : null, modo };
+    } catch {
+      return { modeloDeObjetoInstalado: null, modo };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async getCloudSettings() {

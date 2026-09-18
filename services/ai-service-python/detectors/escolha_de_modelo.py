@@ -20,10 +20,22 @@ não é o número exato, é a ORDEM: qualquer modelo acima do teto vira o teto.
 
 PESO_POR_SUFIXO = {"n": 1, "s": 2, "m": 3, "l": 4, "x": 5}
 
-# Sem placa, este é o maior que a CPU serve com dignidade. Medido em 14/08/2026
-# no i9-10850K: yolo26s a 960 mantém 5 câmeras; yolo26l não fecha a conta nem na
-# GPU antiga (26 inferências/s contra 40 pedidas).
-TETO_DE_CPU_PADRAO = "yolo26s"
+# Sem placa, este é o maior que a CPU serve com dignidade.
+#
+# Era `yolo26s` até 18/09/2026, escolhido no i9-10850K da matriz ("yolo26s a 960
+# mantém 5 câmeras"). O teto estava certo para AQUELA máquina e errado para a
+# frota: um servidor de cliente tem ~10 núcleos e divide tudo com gravação e
+# live. Medido em 18/09/2026 (8 núcleos, INT8 OpenVINO, mediana de 12
+# inferências, TEMPO DE CPU e não de relógio — o modelo usa 7 threads, então o
+# cronômetro engana):
+#
+#   yolo26n @640 →  94 ms de núcleo por quadro → 0,19 núcleo por câmera a 2 fps
+#   yolo26s @960 → 578 ms de núcleo por quadro → 1,16 núcleo por câmera a 2 fps
+#
+# São 6×. Com o nano cabem ~20 câmeras numa máquina de 10 núcleos; com o "s",
+# três. Quem tem máquina sobrando levanta o teto em GENERAL_CPU_MODEL_CEILING —
+# o padrão precisa ser o que roda em TODO cliente, não o que roda na matriz.
+TETO_DE_CPU_PADRAO = "yolo26n"
 
 
 def peso_do_modelo(nome: str) -> int:

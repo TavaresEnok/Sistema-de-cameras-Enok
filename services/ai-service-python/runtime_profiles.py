@@ -188,7 +188,9 @@ GENERAL_PROFILE = {
     "mode": _env_str("GENERAL_MODE", "general"),
     "model": _env_str("GENERAL_MODEL", "yolo26n"),
     # Maior modelo que a CPU serve com dignidade quando não há placa.
-    "cpu_model_ceiling": _env_str("GENERAL_CPU_MODEL_CEILING", "yolo26s"),
+    # `yolo26n` desde 18/09/2026 (era `yolo26s`, 6× mais caro em CPU e cabia
+    # só na matriz). O porquê medido está em detectors/escolha_de_modelo.py.
+    "cpu_model_ceiling": _env_str("GENERAL_CPU_MODEL_CEILING", "yolo26n"),
     # ── Pacote de tracking (15/08/2026) — todas com default SEGURO:
     # `tracker=bytetrack` mantém o comportamento atual; rider e
     # compensação de câmera nascem desligados. Rollback do tracking é
