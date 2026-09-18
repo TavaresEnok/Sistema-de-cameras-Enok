@@ -33,6 +33,8 @@ type LiveStreamPlayerProps = {
   liveViewMode?: 'selected' | 'grid';
   startDelayMs?: number;
   onStatusChange?: (status: LivePlayerStatus) => void;
+  /** A API confirmou que a fonte efetiva da grade já é a fonte original. */
+  onGridSourceIsOriginal?: (isOriginal: boolean) => void;
 };
 
 const API_URL = getApiBaseUrl();
@@ -311,6 +313,7 @@ export function LiveStreamPlayer({
   liveViewMode = 'selected',
   startDelayMs = 0,
   onStatusChange,
+  onGridSourceIsOriginal,
 }: LiveStreamPlayerProps) {
   // "Mostrar quadrado no objeto" (tela de IA). Só afeta o DESENHO — a detecção
   // continua rodando e os eventos seguem sendo registrados.
@@ -460,9 +463,11 @@ export function LiveStreamPlayer({
   // HLS/H.265, quando MSE estiver disponível). A detecção declarativa de codec
   // dos navegadores é incompleta; o teste real de reprodução é autoritativo.
   const [gridUsesH264Fallback, setGridUsesH264Fallback] = useState(false);
+  const [gridSourceIsOriginal, setGridSourceIsOriginal] = useState(false);
   useEffect(() => {
     setQualityMode('max');
     setGridUsesH264Fallback(false);
+    setGridSourceIsOriginal(false);
     setGridAudioRequested(false);
     setAudioSwitchMessage(null);
     retryAttemptRef.current = 0;
@@ -475,8 +480,9 @@ export function LiveStreamPlayer({
   // for confiável, a grade usa o caminho H.264 comprovado ("Instantâneo").
   // Para reativar o HEVC: volte GRID_HEVC_ENABLED para true.
   const GRID_HEVC_ENABLED = false;
+  const reusesGridAtMaximum = liveViewMode === 'selected' && qualityMode === 'max' && gridSourceIsOriginal;
   const deliveryMode: LiveDeliveryMode = liveViewMode === 'selected'
-    ? (qualityMode === 'max' ? 'original' : 'grid-audio')
+    ? (qualityMode === 'max' ? (reusesGridAtMaximum ? 'grid' : 'original') : 'grid-audio')
     : gridAudioRequested
       ? 'grid-audio'
       : (GRID_HEVC_ENABLED && !gridUsesH264Fallback) ? 'grid-hevc' : 'grid';
@@ -1015,6 +1021,11 @@ export function LiveStreamPlayer({
           ?? (data?.protocols?.webrtcUrl ? `${data.protocols.webrtcUrl.replace(/\/+$/, '')}/whep` : null);
         const preferredLiveProtocol = data?.preferredLiveProtocol ?? 'webrtc';
         const sourceCodec = data?.sourceVideoCodec ?? data?.detectedVideoCodec;
+        if (deliveryMode === 'grid') {
+          const isOriginal = data?.deliveryTarget?.sourceIsOriginal === true;
+          setGridSourceIsOriginal(isOriginal);
+          onGridSourceIsOriginal?.(isOriginal);
+        }
         const liveDiagnostics = data?.liveDiagnostics ?? null;
         mediaAuthTokenRef.current = streamToken;
         sourceVideoCodecRef.current = sourceCodec ?? null;

@@ -238,6 +238,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
   const [selectedCam, setSelectedCam] = useState<string | null>(null);
   const [prewarmCameraId, setPrewarmCameraId] = useState<string | null>(null);
   const [originalReadyCameraId, setOriginalReadyCameraId] = useState<string | null>(null);
+  const gridOriginalSourcesRef = useRef<Record<string, boolean>>({});
   const prewarmTimeoutRef = useRef<number | null>(null);
   const prewarmFallbackTimeoutRef = useRef<number | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
@@ -620,7 +621,20 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     setOriginalReadyCameraId(null);
   }, []);
 
+  const markGridSourceIsOriginal = useCallback((cameraId: string, isOriginal: boolean) => {
+    gridOriginalSourcesRef.current = { ...gridOriginalSourcesRef.current, [cameraId]: isOriginal };
+    if (isOriginal) setOriginalReadyCameraId(cameraId);
+  }, []);
+
   const prewarmOriginal = useCallback((cameraId: string) => {
+    // Nesta câmera a grade já confirmou que está no perfil físico principal.
+    // Não há RTSP nem WebRTC para abrir: o próprio player só amplia o stream
+    // existente, mantendo a máxima qualidade verdadeira.
+    if (gridOriginalSourcesRef.current[cameraId]) {
+      stopOriginalPrewarm();
+      setOriginalReadyCameraId(cameraId);
+      return;
+    }
     if (prewarmTimeoutRef.current != null) window.clearTimeout(prewarmTimeoutRef.current);
     if (prewarmFallbackTimeoutRef.current != null) window.clearTimeout(prewarmFallbackTimeoutRef.current);
     setPrewarmCameraId(cameraId);
@@ -633,7 +647,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
       prewarmFallbackTimeoutRef.current = null;
       setOriginalReadyCameraId(cameraId);
     }, ORIGINAL_PREWARM_MAX_WAIT_MS);
-  }, []);
+  }, [stopOriginalPrewarm]);
 
   useEffect(() => () => {
     if (prewarmTimeoutRef.current != null) window.clearTimeout(prewarmTimeoutRef.current);
@@ -1131,6 +1145,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                     onDoubleClick={() => handleCamDoubleClick(cam)}
                     onAction={handleCamAction}
                     streamStartDelayMs={displayIndex * 700 + streamStartDelay(i, count)}
+                    onGridSourceIsOriginal={markGridSourceIsOriginal}
                   />
                   <div // Aparecem também quando o quadro está SELECIONADO: em tela sensível
                     // ao toque não existe hover, e "Trocar"/"Remover" ficavam

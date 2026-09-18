@@ -484,6 +484,7 @@ export class CameraStreamController {
     let mediaBridge = this.mediamtxProxyService.buildPublicUrls(req, null, null);
     let measuredLiveCodec: string | null = null;
     let liveTranscodedForBrowser = false;
+    let gridSourceIsOriginal = false;
     let effectiveDeliveryProfile = resolveDeliveryRtspProfile(camera);
     if (this.mediamtxProxyService.isEnabled()) {
       try {
@@ -497,6 +498,7 @@ export class CameraStreamController {
         const ensured = await this.mediamtxProxyService.ensurePathForCamera(cameraId, viewMode);
         mediaBridge = this.mediamtxProxyService.buildPublicUrls(req, ensured.pathName, ensured.sourceUrl);
         measuredLiveCodec = ensured.sourceVideoCodec;
+        gridSourceIsOriginal = ensured.sourceIsOriginal === true;
         // `transcodedForLive` também cobre AAC→Opus: há um publisher, mas o
         // vídeo H.264 continua em cópia. O selo do painel é exclusivamente
         // sobre H.265→H.264 (o custo de vídeo que chega a ~5×), portanto não
@@ -605,6 +607,7 @@ export class CameraStreamController {
             maxHeight: GRID_LIVE_MAX_HEIGHT,
             targetFps: GRID_LIVE_TARGET_FPS,
             browserCodec: viewMode === 'grid-hevc' ? sourceCodec : 'h264',
+            sourceIsOriginal: gridSourceIsOriginal,
           }
         : {
             originalResolution: true,

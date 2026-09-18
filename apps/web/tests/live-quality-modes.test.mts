@@ -27,7 +27,8 @@ test('duplo clique vindo da grade sempre reinicia em Máxima resolução', async
 
 test('Máxima pede o stream original; limite da grade fica somente no Instantâneo', async () => {
   const source = await readFile(playerPath, 'utf8');
-  assert.match(source, /qualityMode === 'max' \? 'original' : 'grid-audio'/);
+  assert.match(source, /qualityMode === 'max' \? \(reusesGridAtMaximum \? 'grid' : 'original'\) : 'grid-audio'/);
+  assert.match(source, /const reusesGridAtMaximum = liveViewMode === 'selected' && qualityMode === 'max' && gridSourceIsOriginal/);
   assert.doesNotMatch(source, /qualityMode === 'max' \? 'original-audio'/);
 });
 

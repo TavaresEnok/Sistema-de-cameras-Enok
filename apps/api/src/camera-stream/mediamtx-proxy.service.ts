@@ -77,6 +77,8 @@ type EnsuredCameraPath = {
   transcodedForLive: boolean;
   liveProfile: { channel: number; subtype: number } | null;
   deliveryMode: LiveViewMode;
+  /** A fonte efetiva da grade já é o mesmo perfil físico da máxima resolução. */
+  sourceIsOriginal?: boolean;
 };
 
 @Injectable()
@@ -2497,6 +2499,17 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
     const wantsAudio = deliveryMode === 'grid-audio' || deliveryMode === 'original-audio';
     const codecPassthroughMode = deliveryMode === 'original' || deliveryMode === 'grid-hevc';
     const needsPublisher = wantsAudio || (!codecPassthroughMode && (isHevc || sanitizeGridSource));
+    const originalProfile = resolveOriginalRtspProfile(camera);
+    // Só afirmamos equivalência quando a grade NÃO passou por FFmpeg e o perfil
+    // físico escolhido é precisamente o que a máxima resolução pediria. Assim o
+    // navegador pode ampliar o player existente sem uma nova sessão RTSP/WHEP.
+    // Na dúvida (substream, áudio ou conversão), fica false e preserva o caminho
+    // seguro já usado hoje.
+    const sourceIsOriginal =
+      (deliveryMode === 'grid' || deliveryMode === 'grid-hevc')
+      && !needsPublisher
+      && liveProfile?.channel === originalProfile.channel
+      && liveProfile?.subtype === originalProfile.subtype;
 
     // FREIO: passado o teto, recusa o transcode NOVO em vez de degradar todos.
     //
@@ -2748,6 +2761,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           transcodedForLive,
           liveProfile,
           deliveryMode,
+          sourceIsOriginal,
         };
       }
     } catch (error: any) {
@@ -2773,6 +2787,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
           transcodedForLive,
           liveProfile,
           deliveryMode,
+          sourceIsOriginal,
         };
       }
     }
@@ -2794,6 +2809,7 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
       transcodedForLive,
       liveProfile,
       deliveryMode,
+      sourceIsOriginal,
     };
   }
 

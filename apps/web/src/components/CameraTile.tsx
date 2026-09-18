@@ -17,6 +17,7 @@ interface CameraTileProps {
   showDetectionOverlay?: boolean;
   liveViewMode?: 'selected' | 'grid';
   wallMode?: boolean;
+  onGridSourceIsOriginal?: (cameraId: string, isOriginal: boolean) => void;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -40,6 +41,7 @@ export function CameraTile({
   showDetectionOverlay = false,
   liveViewMode = 'grid',
   wallMode: wallModeProp,
+  onGridSourceIsOriginal,
 }: CameraTileProps) {
   const [hovered, setHovered] = useState(false);
   const [playerStatus, setPlayerStatus] = useState<LivePlayerStatus | null>(null);
@@ -101,6 +103,7 @@ export function CameraTile({
             muted
             startDelayMs={streamStartDelayMs}
             onStatusChange={setPlayerStatus}
+            onGridSourceIsOriginal={(isOriginal) => onGridSourceIsOriginal?.(camera.id, isOriginal)}
           />
         </div>
       )}
