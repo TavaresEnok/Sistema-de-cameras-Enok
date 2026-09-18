@@ -35,6 +35,7 @@ function rodaObjetoDe(info: Record<string, unknown>): boolean {
 import { envNumber } from '../common/config/env-number.helper';
 import { modoArmado } from '../cameras/helpers/gatilho-de-gravacao.helper';
 import { isPushSourced } from '../cameras/helpers/rtmp-ingest.helper';
+import { decidirSincronizacaoDeIa } from './helpers/decisao-de-sincronizacao.helper';
 
 const AI_MODES = ['motion', 'face', 'general'] as const;
 type AiMode = typeof AI_MODES[number];
@@ -240,11 +241,30 @@ export class AiManagerService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    if (String(process.env.AI_AUTO_START_ENABLED ?? 'true') === 'false') {
-      this.logger.log('Sincronização automática de IA desativada por AI_AUTO_START_ENABLED=false.');
-      return;
-    }
-    this.logger.log('Sincronizando IA com as câmeras...');
+    // Duas autoridades mandavam na IA e a local vencia calada: a Central libera
+    // movimento por instalação (ai-policy.js nasce com motion: true) e o
+    // `.env` trazia AI_AUTO_START_ENABLED=false herdado do exemplo. O resultado
+    // era retornar AQUI — sem sincronizar e sem sequer ligar o watchdog de
+    // degradados. Ver decisao-de-sincronizacao.helper.
+    //
+    // `?.` e catch: parte da suíte monta este serviço com `Object.create`, sem
+    // prisma nem política — a decisão precisa sobreviver a isso.
+    const camerasMarcadas = await Promise.resolve()
+      .then(() => this.prisma?.camera?.count?.({
+        where: { enabled: true, recordingMode: 'motion', motionTrigger: 'SYSTEM' },
+      }) ?? 0)
+      .catch(() => 0);
+    const movimentoPermitido = await Promise.resolve()
+      .then(() => this.commercialPolicy?.isAllowed?.('aiMotion') ?? true)
+      .catch(() => true);
+    const decisao = decidirSincronizacaoDeIa({
+      flagLocalLigada: String(process.env.AI_AUTO_START_ENABLED ?? 'true') !== 'false',
+      camerasMarcadas: Number(camerasMarcadas) || 0,
+      movimentoPermitidoPelaCentral: movimentoPermitido !== false,
+    });
+    if (decisao.nivel === 'warn') this.logger.warn(decisao.motivo);
+    else this.logger.log(decisao.motivo);
+    if (!decisao.sincronizar) return;
     // Aguarda um pouco para os serviços estarem prontos
     setTimeout(() => void this.syncAll(), 5000);
 
@@ -1183,16 +1203,14 @@ export class AiManagerService implements OnModuleInit {
       : analyticsProfile.subtype;
     const channel = analyticsProfile.channel;
 
-    const rtspUrl = buildRtspUrl({
-      username: cam.username,
-      password,
-      ip: cam.ip,
-      rtspPort: cam.rtspPort || 554,
-      rtspPath: cam.rtspPath,
-      channel,
-      subtype,
-    });
-    const sourceUrlSanitized = sanitizeRtspUrl(rtspUrl);
+    // ORDEM IMPORTA: câmera que EMPURRA vídeo (RTMP) tem ip 0.0.0.0, e montar a
+    // URL dela passa por `assertCameraTargetAllowed`, que recusa 0.0.0.0 como
+    // destino. Enquanto a montagem vinha ANTES do desvio abaixo, toda câmera
+    // RTMP morria em "Destino de câmera bloqueado pela política de rede" e o
+    // trecho que sabe usar o caminho interno do MediaMTX nunca era alcançado.
+    // Medido na Vibe (18/09/2026): as 3 câmeras em gravação por movimento eram
+    // RTMP; 3 de 3 ficavam cegas e a gravação de emergência assumia, com 698
+    // trechos gravados em 24 h numa única câmera.
     const infoBase = {
       recordSubtype: recordingProfile.subtype,
       recordChannel: recordingProfile.channel,
@@ -1249,6 +1267,16 @@ export class AiManagerService implements OnModuleInit {
       };
     }
 
+    const rtspUrl = buildRtspUrl({
+      username: cam.username,
+      password,
+      ip: cam.ip,
+      rtspPort: cam.rtspPort || 554,
+      rtspPath: cam.rtspPath,
+      channel,
+      subtype,
+    });
+    const sourceUrlSanitized = sanitizeRtspUrl(rtspUrl);
     const rtspTransport = cam.preferredRtspTransport || process.env.FFMPEG_RTSP_TRANSPORT || 'tcp';
     const analyticsCodec = await this.mediamtxProxy.probeStreamVideoCodec(rtspUrl, rtspTransport).catch(() => null);
     const analyticsIsHevc = isHevcCodec(analyticsCodec);
