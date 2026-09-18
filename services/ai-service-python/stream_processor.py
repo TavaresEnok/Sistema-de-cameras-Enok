@@ -804,6 +804,11 @@ class StreamProcessor:
             self._cleanup_live_view_sessions_locked(now)
             return bool(self._live_view_sessions)
 
+    def _has_perimeter_test_session(self) -> bool:
+        with self._live_view_lock:
+            self._cleanup_live_view_sessions_locked(time.time())
+            return any(session_id.startswith("perimeter-test-") for session_id in self._live_view_sessions)
+
     def touch_live_view_session(self, session_id: str, ttl_seconds: int = 20, view_mode: str = "grid") -> dict:
         normalized_session = (session_id or "").strip()
         if not normalized_session:
@@ -1060,7 +1065,7 @@ class StreamProcessor:
                 self._frame_age_sum_ms += frame_age_ms
                 self._frame_age_samples += 1
                 self.processed_frames += 1
-                detections = self.motion_detector.infer(frame)
+                detections = self.motion_detector.infer(frame, perimeter_test=self._has_perimeter_test_session())
                 # Movimento acusado → confirma semanticamente no recorte (só no
                 # modo 'motion'; nos modos general/face o detector já roda no
                 # frame inteiro e a confirmação seria trabalho duplicado).

@@ -3,6 +3,7 @@ export type PerimeterProcessor = {
   last_seen?: number;
   readiness?: { ready?: boolean; frame_age_seconds?: number | null };
   inference?: { status?: string };
+  motion_detector?: { perimeter_ignored_motion?: { zone: string; at: number } | null };
 };
 
 export function perimeterState(online: boolean, hasLines: boolean, processor: PerimeterProcessor | undefined, checked: boolean, now = Date.now()) {

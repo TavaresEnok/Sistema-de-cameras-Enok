@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { perimeterState, crossingArrow } from '../src/lib/perimeter-state.ts';
-import { testTrajectory } from '../src/lib/perimeter-test.ts';
+import { testTrajectory, describePerimeterPosition } from '../src/lib/perimeter-test.ts';
 
 test('monitorando exige captura recente e inferência confirmada para linhas', () => {
   const now = 100000;
@@ -12,6 +12,11 @@ test('monitorando exige captura recente e inferência confirmada para linhas', (
   assert.equal(perimeterState(true, false, { ...healthy, last_seen: 60 }, true, now).attention, true);
   assert.notEqual(perimeterState(true, true, healthy, false, now).label, 'Monitorando');
   assert.equal(perimeterState(false, true, healthy, true, now).label, 'Câmera desconectada');
+});
+test('o teste explica movimento simulado e objeto ignorado sem confundir com alarme real', () => {
+  const ignored = { id: 'i', name: 'Rua', kind: 'exclude', points: [[0, 0], [1, 0], [1, 1], [0, 1]] };
+  assert.equal(describePerimeterPosition(null, [0.5, 0.5], [ignored], 'simulação'), 'Movimento simulado ignorado em Rua');
+  assert.equal(describePerimeterPosition(null, [0.5, 0.5], [ignored], 'objeto'), 'Objeto ignorado em Rua');
 });
 test('seta atravessa a linha do lado negativo para positivo', () => {
   const arrow = crossingArrow([[0, 0.5], [1, 0.5]])!;

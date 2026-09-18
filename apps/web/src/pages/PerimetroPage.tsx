@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import axios from 'axios';
 import { getApiBaseUrl } from '../lib/api-base';
 import { perimeterState, type PerimeterProcessor } from '../lib/perimeter-state';
-import { PerimeterTest } from '../components/PerimeterTest';
 import { CameraEditSheet } from '../components/CameraEditSheet';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from '../components/ui/alert-dialog';
 import { useLocation } from 'wouter';
@@ -39,6 +38,8 @@ function resumir(zones: Array<{ kind: string }> | undefined): ResumoPerimetro {
 }
 
 const temPerimetro = (r: ResumoPerimetro) => r.linhas + r.monitorar + r.ignorar > 0;
+const podeConfigurarPerimetro = (camera: { aiEnabled: boolean; recordingMode: string }) =>
+  camera.aiEnabled || camera.recordingMode === 'motion' || camera.recordingMode === 'object';
 
 export default function PerimetroPage() {
   const [location, setLocation] = useLocation();
@@ -73,11 +74,11 @@ export default function PerimetroPage() {
         const { data } = await axios.get(`${getApiBaseUrl()}/ai/health`, { headers: { Authorization: `Bearer ${token}` }, timeout: 8000, signal: controller.signal });
         if (!cancelled) { setProcessors(data?.processors ?? {}); setChecked(true); setHealthError(false); }
       } catch { if (!cancelled) { setHealthError(true); setChecked(false); } }
-      if (!cancelled) timer = setTimeout(poll, 10000);
+      if (!cancelled) timer = setTimeout(poll, testing ? 2000 : 10000);
     };
     void poll();
     return () => { cancelled = true; clearTimeout(timer); controller.abort(); };
-  }, [token, userRole]);
+  }, [token, userRole, testing]);
   useEffect(() => {
     if (!dirty) return;
     const intercept = (event: MouseEvent) => {
@@ -99,7 +100,7 @@ export default function PerimetroPage() {
 
   const lista = useMemo(
     () => cameras
-      .filter((camera) => camera.enabled)
+      .filter((camera) => camera.enabled && podeConfigurarPerimetro(camera))
       .map((camera) => {
         const zonas = zonasPorCamera[camera.id]
           ?? (camera.detectionZones as DetectionZone[] | undefined)
@@ -164,8 +165,8 @@ export default function PerimetroPage() {
             <ShieldAlert className="mx-auto mb-3 h-8 w-8 text-[hsl(var(--muted-foreground))]" />
             <h1 className="text-[17px] font-semibold">Nenhuma câmera ativa</h1>
             <p className="mx-auto mt-2 max-w-md text-[12px] leading-relaxed text-muted-foreground">
-              O perímetro (linha e zona) é configurado por câmera, desenhado sobre
-              a imagem dela. Cadastre ou ative uma câmera para começar.
+              Nenhuma câmera ativa tem detecção de movimento ou objetos habilitada.
+              Ative a análise ou a gravação por movimento em uma câmera para configurar o perímetro.
             </p>
             {/* Sem câmera, o lugar da imagem ficava vazio e ninguém entendia o
                 que iria desenhar ali. O exemplo mostra o resultado antes de
@@ -219,11 +220,10 @@ export default function PerimetroPage() {
             <p className="text-xs">Gravação: {({ continuous: 'contínua', motion: 'por movimento', object: 'por objeto', schedule: 'conforme programação', manual: 'somente manual' })[selecionada.camera.recordingMode]}. Alertas da câmera: {selecionada.camera.alarmsEnabled ? 'habilitados, conforme regras e permissões de notificação' : 'desligados'}.</p>
             <p className="text-xs text-muted-foreground">Objetos selecionados: {selecionada.camera.aiObjectClasses.map((c) => ({ person: 'Pessoas', car: 'Carros', motorcycle: 'Motos', bicycle: 'Bicicletas', bus: 'Ônibus', truck: 'Caminhões' } as Record<string, string>)[c] ?? c).join(', ') || 'nenhum'}. O desenho não ativa sozinho gravações ou alertas.</p>
             <div className="flex flex-wrap gap-2">
-              <button className="btn btn-secondary btn-sm" disabled={dirty || !selecionada.zonas.length} title={dirty ? 'Salve ou descarte o desenho antes de testar' : undefined} onClick={() => setTesting(!testing)}>{testing ? 'Encerrar teste' : 'Testar perímetro'}</button>
+              <button className="btn btn-secondary btn-sm" disabled={dirty || !selecionada.zonas.length} title={dirty ? 'Salve ou descarte o desenho antes de testar' : undefined} onClick={() => setTesting(!testing)}>{testing ? 'Voltar a editar' : 'Testar perímetro'}</button>
               {userRole !== 'viewer' && <button className="btn btn-secondary btn-sm" onClick={() => guard(() => setEditing(true))}>Configurar detecção e ações</button>}
             </div>
           </div>}
-          {selecionada && testing && <PerimeterTest key={selecionada.camera.id} cameraId={selecionada.camera.id} cameraName={selecionada.camera.name} zones={selecionada.zonas} />}
           {selecionada && (
             <DetectionZonesEditor
               key={selecionada.camera.id}
@@ -232,6 +232,8 @@ export default function PerimetroPage() {
               initialZones={selecionada.zonas}
               onDirtyChange={setDirty}
               readOnly={userRole === 'viewer' || testing}
+              testing={testing}
+              ignoredMotion={processors[selecionada.camera.id]?.motion_detector?.perimeter_ignored_motion}
               onSaved={(zones) => {
                 setZonasPorCamera((prev) => ({ ...prev, [selecionada.camera.id]: zones }));
                 setDirty(false);

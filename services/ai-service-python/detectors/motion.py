@@ -79,6 +79,9 @@ class MotionDetector(Detector):
         self.min_component_pixels = max(
             12, int(frame_area * float(MOTION_PROFILE["motion_min_component_ratio"]))
         )
+        self._test_excluded_masks = self._build_test_excluded_masks(self._zones)
+        self._test_ignored_hits = 0
+        self._test_ignored_motion = None
         # Acima desta fração da tela mudada de uma vez = alteração global (não é movimento).
         self.global_change_pixels = int(
             frame_area * float(MOTION_PROFILE["motion_global_change_ratio"])
@@ -258,9 +261,47 @@ class MotionDetector(Detector):
         self._zones = zones or []
         self._zone_mask = self._build_zone_mask(self._zones)
         self._zone_factor_map = self._build_zone_factor_map(self._zones)
+        self._test_excluded_masks = self._build_test_excluded_masks(self._zones)
+        self._test_ignored_hits = 0
+        self._test_ignored_motion = None
         # A referencia fotometrica foi aprendida sob outra area monitorada.
         # Recriar evita que uma troca de zona pareca uma mudanca de luz.
         self._illumination = None
+
+    def _build_test_excluded_masks(self, zones):
+        masks = []
+        for zone in zones or []:
+            if zone.get("kind") != "exclude":
+                continue
+            polygon = self._zona_para_poligono(zone)
+            if polygon is None:
+                continue
+            mask = np.zeros((self.frame_height, self.frame_width), dtype=np.uint8)
+            cv2.fillPoly(mask, [polygon], 255)
+            area = int(np.count_nonzero(mask))
+            if area >= self.min_component_pixels:
+                masks.append((str(zone.get("name") or "área ignorada"), mask, area))
+        return masks
+
+    def _observe_ignored_motion(self, raw_mask) -> None:
+        # Diagnóstico temporário, só enquanto o operador testa o perímetro.
+        # Não altera a máscara nem os alarmes reais do detector.
+        if not self._test_excluded_masks:
+            return
+        cleaned = cv2.morphologyEx(raw_mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+        global_limit = int(self.frame_width * self.frame_height * 0.65)
+        if int(np.count_nonzero(cleaned)) >= global_limit:
+            self._test_ignored_hits = 0
+            return
+        hit = None
+        for name, mask, area in self._test_excluded_masks:
+            count = int(cv2.countNonZero(cv2.bitwise_and(cleaned, mask)))
+            if count >= max(self.min_component_pixels, int(area * 0.01)):
+                hit = name
+                break
+        self._test_ignored_hits = self._test_ignored_hits + 1 if hit else 0
+        if hit and self._test_ignored_hits >= 2 and self._warmup_frames >= self._warmup_total_current:
+            self._test_ignored_motion = {"zone": hit, "at": time.time()}
 
     def _effective_global_change_pixels(self) -> int:
         if self._zone_mask is None:
@@ -380,6 +421,8 @@ class MotionDetector(Detector):
 
         # Sombra (127) não é movimento; só primeiro plano pleno (255) conta.
         fgmask = np.where(fgmask == 255, np.uint8(255), np.uint8(0))
+        if kwargs.get("perimeter_test"):
+            self._observe_ignored_motion(fgmask)
 
         # Zonas: zera o que está fora da área monitorada ANTES de medir. Assim
         # árvore/rua excluídas não contam para movimento nem para a rejeição
@@ -562,6 +605,7 @@ class MotionDetector(Detector):
                 round(self._chronic.fracao_cronica(), 6) if self._chronic is not None else 0.0
             ),
             "noise_floor_samples": len(self._noise_window),
+            "perimeter_ignored_motion": self._test_ignored_motion,
             "counters": dict(self._stats),
         }
 

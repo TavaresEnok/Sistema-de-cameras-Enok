@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { CameraOff, Check, Loader2, Plus, RefreshCw, Trash2, Undo2, Maximize, Minimize } from 'lucide-react';
 import { crossingArrow } from '../lib/perimeter-state';
+import { describePerimeterPosition } from '../lib/perimeter-test';
+import { LiveStreamPlayer } from './LiveStreamPlayer';
+import { liveDetectionsPoller, type LiveDetection } from '../lib/live-detections-poller';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
@@ -30,6 +33,8 @@ type Props = {
   onSaved?: (zones: DetectionZone[]) => void;
   onDirtyChange?: (dirty: boolean) => void;
   readOnly?: boolean;
+  testing?: boolean;
+  ignoredMotion?: { zone: string; at: number } | null;
 };
 
 const API_URL = getApiBaseUrl();
@@ -55,7 +60,7 @@ const ZONE_COLOR = {
  * - Excluir: o movimento ali é ignorado (árvore, rua pública, céu).
  * - Incluir: havendo ao menos uma, só o interior delas é monitorado.
  */
-export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSaved, onDirtyChange, readOnly = false }: Props) {
+export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSaved, onDirtyChange, readOnly = false, testing = false, ignoredMotion }: Props) {
   // BASE do "Desfazer alterações": o último estado CONFIRMADO pelo servidor.
   // Antes o botão revertia para `initialZones`, que vem do pai e não é
   // recarregado após salvar — desenhar 3 zonas, salvar e clicar em "Desfazer"
@@ -64,6 +69,14 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   const baseRef = useRef<DetectionZone[]>(initialZones ?? []);
   const accessToken = useAuthStore((state) => state.accessToken);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const sceneRef = useRef<HTMLDivElement | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [testMessage, setTestMessage] = useState('Arraste sobre a imagem para simular movimento.');
+  const [detections, setDetections] = useState<LiveDetection[]>([]);
+  const previousTracks = useRef(new Map<number, { point: number[]; at: number }>());
+  const previousSimulation = useRef<number[] | null>(null);
+  const lastMessage = useRef('');
+  const lastMessageAt = useRef(0);
   const [zones, setZones] = useState<DetectionZone[]>(initialZones ?? []);
   const [drawing, setDrawing] = useState<number[][] | null>(null);
   // A ferramenta abre no MODO DAS ZONAS JÁ SALVAS. Antes ela nascia sempre em
@@ -98,6 +111,58 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   // corte, sem tarja, e 0–100% da caixa passa a ser 0–100% da imagem.
   const [proporcao, setProporcao] = useState('16 / 9');
   const [dirty, setDirty] = useState(false);
+  const announce = useCallback((message: string) => {
+    if (message !== lastMessage.current || Date.now() - lastMessageAt.current > 2500) {
+      setTestMessage(message);
+      lastMessage.current = message;
+      lastMessageAt.current = Date.now();
+    }
+  }, []);
+  useEffect(() => {
+    setZoom(1); previousTracks.current.clear(); previousSimulation.current = null;
+  }, [cameraId, testing]);
+  useEffect(() => {
+    if (!testing || !ignoredMotion || Date.now() / 1000 - ignoredMotion.at > 5) return;
+    announce(`Movimento ignorado em ${ignoredMotion.zone}`);
+  }, [testing, ignoredMotion?.at, ignoredMotion?.zone, announce]);
+  useEffect(() => {
+    if (!testing) return;
+    const timer = window.setInterval(() => {
+      const video = sceneRef.current?.querySelector('video');
+      if (video?.videoWidth && video.videoHeight) setProporcao(`${video.videoWidth} / ${video.videoHeight}`);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [testing]);
+  useEffect(() => {
+    if (!testing) { setDetections([]); return; }
+    return liveDetectionsPoller.subscribe(cameraId, (items) => {
+      setDetections(items);
+      const now = Date.now();
+      for (const [id, value] of previousTracks.current) if (now - value.at > 2000) previousTracks.current.delete(id);
+      for (const item of items) {
+        if (!item.frameWidth || !item.frameHeight) continue;
+        const point = [(item.bbox[0] + item.bbox[2]) / (2 * item.frameWidth), Math.max(item.bbox[1], item.bbox[3]) / item.frameHeight];
+        const previous = item.trackId == null ? null : previousTracks.current.get(item.trackId)?.point ?? null;
+        const message = describePerimeterPosition(previous, point, zones, item.type === 'MOTION_DETECTED' ? 'movimento' : 'objeto');
+        announce(message);
+        if (item.trackId != null) previousTracks.current.set(item.trackId, { point, at: now });
+      }
+    });
+  }, [testing, cameraId, zones, announce]);
+  useEffect(() => {
+    if (!testing || !accessToken) return;
+    const sessionId = `perimeter-test-${crypto.randomUUID()}`;
+    const send = (action: 'start' | 'heartbeat' | 'stop') => axios.post(
+      `${API_URL}/ai/live-view/${action}/${cameraId}`,
+      { sessionId, ttlSeconds: 20, viewMode: 'selected' },
+      { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 8000 },
+    ).catch(() => {
+      if (action !== 'stop') announce('Não foi possível confirmar a análise ao vivo. A simulação continua disponível.');
+    });
+    void send('start');
+    const timer = window.setInterval(() => { void send('heartbeat'); }, 7000);
+    return () => { window.clearInterval(timer); void send('stop'); };
+  }, [testing, accessToken, cameraId, announce]);
   const userId = useAuthStore((state) => state.user?.id);
   const draftKey = `perimeter-draft:${userId}:${cameraId}`;
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
@@ -229,7 +294,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   }, [posterUrl, posterStatus, schedulePosterRetry]);
 
   const toNormalized = useCallback((clientX: number, clientY: number) => {
-    const el = containerRef.current;
+    const el = sceneRef.current;
     if (!el) return null;
     const rect = el.getBoundingClientRect();
     const x = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
@@ -327,13 +392,16 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   return (
     <div className={expanded ? 'fixed inset-0 z-50 overflow-auto bg-background p-5 space-y-3' : 'space-y-3'}>
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>{capturedAt && Number.isFinite(Date.parse(capturedAt)) ? `Imagem capturada em ${new Date(capturedAt).toLocaleString('pt-BR')}` : 'Horário da captura não informado'}</span>
+        <span>{testing ? 'Vídeo ao vivo · teste visual' : capturedAt && Number.isFinite(Date.parse(capturedAt)) ? `Imagem capturada em ${new Date(capturedAt).toLocaleString('pt-BR')}` : 'Horário da captura não informado'}</span>
         <div className="flex gap-2">
-          <button className="btn btn-secondary btn-sm" onClick={() => { posterRetryCountRef.current = 0; setPosterStatus('loading'); void loadPoster(true).then((ok) => { if (!ok) schedulePosterRetry(); }); }}><RefreshCw className="h-4 w-4" /> Atualizar imagem</button>
+          {!testing && <button className="btn btn-secondary btn-sm" onClick={() => { posterRetryCountRef.current = 0; setPosterStatus('loading'); void loadPoster(true).then((ok) => { if (!ok) schedulePosterRetry(); }); }}><RefreshCw className="h-4 w-4" /> Atualizar imagem</button>}
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setZoom((value) => Math.max(1, Number((value - 0.5).toFixed(1))))} disabled={zoom === 1} aria-label="Reduzir zoom">−</button>
+          <span className="self-center tabular-nums">{zoom.toFixed(1)}×</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setZoom((value) => Math.min(4, Number((value + 0.5).toFixed(1))))} disabled={zoom === 4} aria-label="Ampliar zoom">+</button>
           <button className="btn btn-secondary btn-sm" onClick={() => setExpanded(!expanded)}>{expanded ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}{expanded ? 'Reduzir' : 'Ampliar'}</button>
         </div>
       </div>
-      <fieldset disabled={readOnly || saving} className="flex min-w-0 flex-wrap items-center gap-2">
+      {!testing && <fieldset disabled={readOnly || saving} className="flex min-w-0 flex-wrap items-center gap-2">
         <div className="segment flex-wrap">
           <button
             type="button"
@@ -397,11 +465,11 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             Salvar zonas
           </button>
         </div>
-      </fieldset>
+      </fieldset>}
 
       {/* Ajuda contextual: explica o modo selecionado na própria tela, para o
           operador não precisar adivinhar o que cada botão faz. */}
-      <div className="flex items-start gap-2 rounded-md border border-border bg-background/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+      {!testing && <div className="flex items-start gap-2 rounded-md border border-border bg-background/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
         <span
           className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-sm"
           style={{ background: ZONE_COLOR[drawKind].stroke }}
@@ -426,16 +494,17 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             </>
           )}
         </span>
-      </div>
+      </div>}
 
       <div
         ref={containerRef}
         onClick={handleClick}
-        className={`relative w-full overflow-hidden rounded-lg border border-border bg-black ${drawing ? 'cursor-crosshair' : 'cursor-default'}`}
+        className={`relative w-full ${expanded ? 'max-w-none' : 'max-w-[640px]'} overflow-hidden rounded-lg border border-border bg-black ${drawing ? 'cursor-crosshair' : 'cursor-default'}`}
         style={{ aspectRatio: proporcao }}
         aria-label={`Editor de zonas de ${cameraName}`}
       >
-        {posterUrl ? (
+        <div ref={sceneRef} className="absolute inset-0" style={{ transform: zoom > 1 ? `scale(${zoom})` : undefined, transformOrigin: 'center center' }}>
+        {testing ? <LiveStreamPlayer cameraId={cameraId} cameraName={cameraName} className="h-full w-full" liveViewMode="grid" muted showOverlay={false} aiEnabled={false} /> : posterUrl ? (
           <img
             src={posterUrl}
             alt=""
@@ -492,7 +561,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
           </div>
         )}
 
-        {posterUrl && posterStatus !== 'ready' && (
+        {!testing && posterUrl && posterStatus !== 'ready' && (
           <div className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/25">
             <span className="inline-flex items-center gap-2 rounded-md bg-black/65 px-3 py-1.5 text-xs text-white/80">
               <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Carregando imagem da câmera…
@@ -503,10 +572,23 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
         <svg
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
-          className={`absolute inset-0 h-full w-full transition-opacity ${posterStatus === 'ready' ? 'opacity-100' : 'opacity-0'}`}
-          aria-hidden={posterStatus !== 'ready'}
+          className={`absolute inset-0 z-10 h-full w-full transition-opacity ${testing || posterStatus === 'ready' ? 'opacity-100' : 'opacity-0'}`}
+          aria-hidden={!testing && posterStatus !== 'ready'}
           style={{ touchAction: 'none' }}
+          onPointerDown={(event) => {
+            if (!testing) return;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            previousSimulation.current = null;
+          }}
           onPointerMove={(event) => {
+            if (testing && event.currentTarget.hasPointerCapture(event.pointerId)) {
+              const point = toNormalized(event.clientX, event.clientY);
+              if (point) {
+                announce(describePerimeterPosition(previousSimulation.current, point, zones, 'simulação'));
+                previousSimulation.current = point;
+              }
+              return;
+            }
             if (!drag.current || readOnly || saving) return;
             const point = toNormalized(event.clientX, event.clientY);
             if (!point) return;
@@ -514,8 +596,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             setZones((current) => current.map((z) => z.id === id ? { ...z, points: z.points.map((p, i) => i === index ? point : p) } : z));
             setDirty(true);
           }}
-          onPointerUp={() => { drag.current = null; }}
-          onPointerCancel={() => { drag.current = null; }}
+          onPointerUp={() => { drag.current = null; previousSimulation.current = null; }}
+          onPointerCancel={() => { drag.current = null; previousSimulation.current = null; }}
         >
           {/* A seta é o que torna o sentido COMPREENSÍVEL: "ab" e "ba" não
               significam nada sozinhos — a ponta na tela mostra qual é qual. */}
@@ -570,7 +652,9 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
               ))}
             </>
           )}
+          {testing && detections.filter((d) => d.frameWidth && d.frameHeight).map((d) => <rect key={d.id} x={d.bbox[0] / d.frameWidth! * 100} y={d.bbox[1] / d.frameHeight! * 100} width={(d.bbox[2] - d.bbox[0]) / d.frameWidth! * 100} height={(d.bbox[3] - d.bbox[1]) / d.frameHeight! * 100} fill="none" stroke="#38bdf8" strokeWidth=".4" pointerEvents="none" />)}
         </svg>
+        </div>
 
         {drawing && (
           <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-black/70 px-2 py-1 text-[10px] text-white/80">
@@ -581,7 +665,12 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
         )}
       </div>
 
-      {zones.length || dirty || drawing !== null ? (
+      {testing && <div role="status" aria-live="polite" className="max-w-[640px] rounded-lg border border-border bg-card px-3 py-2 text-xs">
+        <p className="font-medium">{testMessage}</p>
+        <p className="mt-1 text-muted-foreground">Arraste sobre o vídeo para simular movimento. As caixas azuis mostram detecções ao vivo; áreas ignoradas informam quando o detector descarta movimento. A simulação não gera gravação, sirene ou notificação.</p>
+      </div>}
+
+      {!testing && (zones.length || dirty || drawing !== null) ? (
         <fieldset disabled={readOnly || saving} className="space-y-1.5">
           {zones.map((zone) => (
             <div key={zone.id} onClick={() => setSelectedZone(zone.id)} className={`flex flex-wrap items-center gap-2 rounded-md border bg-card px-2.5 py-1.5 ${selectedZone === zone.id ? 'border-primary' : 'border-border'}`}>
@@ -674,12 +763,12 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             Desfazer alterações
           </button>
         </fieldset>
-      ) : (
+      ) : !testing ? (
         <p className="text-xs text-[hsl(var(--muted-foreground))]">
           Sem zonas: a câmera inteira é monitorada. Use <strong>Ignorar área</strong> para excluir rua, árvores ou céu —
           áreas que costumam gerar alarme falso.
         </p>
-      )}
+      ) : null}
 
       {hasInclude && (
         <p className="rounded-md border border-[hsl(var(--status-warning)_/_0.3)] bg-[hsl(var(--status-warning)_/_0.08)] px-2.5 py-1.5 text-[11px] text-[hsl(var(--status-warning))]">
