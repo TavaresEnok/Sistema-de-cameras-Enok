@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { CameraOff, Check, Loader2, Plus, RefreshCw, Trash2, Undo2 } from 'lucide-react';
+import { CameraOff, Check, Loader2, Plus, RefreshCw, Trash2, Undo2, Maximize, Minimize } from 'lucide-react';
+import { crossingArrow } from '../lib/perimeter-state';
 import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/use-toast';
@@ -27,6 +28,8 @@ type Props = {
   cameraName: string;
   initialZones?: DetectionZone[] | null;
   onSaved?: (zones: DetectionZone[]) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  readOnly?: boolean;
 };
 
 const API_URL = getApiBaseUrl();
@@ -52,7 +55,7 @@ const ZONE_COLOR = {
  * - Excluir: o movimento ali é ignorado (árvore, rua pública, céu).
  * - Incluir: havendo ao menos uma, só o interior delas é monitorado.
  */
-export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSaved }: Props) {
+export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSaved, onDirtyChange, readOnly = false }: Props) {
   // BASE do "Desfazer alterações": o último estado CONFIRMADO pelo servidor.
   // Antes o botão revertia para `initialZones`, que vem do pai e não é
   // recarregado após salvar — desenhar 3 zonas, salvar e clicar em "Desfazer"
@@ -95,8 +98,29 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   // corte, sem tarja, e 0–100% da caixa passa a ser 0–100% da imagem.
   const [proporcao, setProporcao] = useState('16 / 9');
   const [dirty, setDirty] = useState(false);
+  const userId = useAuthStore((state) => state.user?.id);
+  const draftKey = `perimeter-draft:${userId}:${cameraId}`;
+  const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [capturedAt, setCapturedAt] = useState<string | null>(null);
+  const history = useRef<DetectionZone[][]>([]);
+  const drag = useRef<{ id: string; index: number } | null>(null);
+  const posterObjectUrl = useRef<string | null>(null);
+  const posterAbort = useRef<AbortController | null>(null);
+  const remember = () => { history.current = [...history.current.slice(-29), structuredClone(zones)]; };
+  useEffect(() => { onDirtyChange?.(dirty || drawing !== null); }, [dirty, drawing, onDirtyChange]);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (dirty || drawing !== null) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty, drawing]);
+  useEffect(() => () => {
+    posterAbort.current?.abort();
+    if (posterObjectUrl.current) URL.revokeObjectURL(posterObjectUrl.current);
+  }, []);
 
   useEffect(() => {
+    if (dirty || drawing !== null) return;
     setZones(initialZones ?? []);
     baseRef.current = initialZones ?? [];
     setDirty(false);
@@ -106,6 +130,22 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialZones, cameraId]);
 
+  useEffect(() => {
+    if (readOnly) return;
+    try {
+      const draft = JSON.parse(sessionStorage.getItem(draftKey) ?? 'null');
+      if (draft && Array.isArray(draft.zones) && Date.now() - draft.at < 86400000) {
+        setZones(draft.zones); setDrawing(draft.drawing ?? null); setDirty(true);
+        if (['line', 'include', 'exclude'].includes(draft.kind)) setDrawKind(draft.kind);
+        toast({ title: 'Desenho recuperado', description: 'Suas alterações ainda não foram salvas. Confira antes de aplicar.' });
+      }
+    } catch { /* Armazenamento indisponível não impede a edição. */ }
+  }, [draftKey]);
+  useEffect(() => {
+    if (readOnly || (!dirty && drawing === null)) return;
+    try { sessionStorage.setItem(draftKey, JSON.stringify({ zones, drawing, kind: drawKind, at: Date.now() })); } catch { /* Sem espaço: a proteção ao sair continua ativa. */ }
+  }, [draftKey, zones, drawing, dirty, drawKind, readOnly]);
+
   // Snapshot da câmera como pano de fundo (mesmo poster usado no live).
   // O servidor devolve o último frame salvo em disco quando o RTSP recente
   // falha. Ainda assim a rede pode cair entre receber a URL e carregar a
@@ -113,16 +153,27 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   // tentamos novamente com backoff, sem obrigar o operador a sair e voltar.
   const loadPoster = useCallback(async (fresh = false): Promise<boolean> => {
     if (!accessToken) return false;
+    posterAbort.current?.abort();
+    const controller = new AbortController();
+    posterAbort.current = controller;
     try {
       const { data } = await axios.post<{ streamToken: string }>(`${API_URL}/camera-stream/${cameraId}/token`, {}, {
         headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 8000, signal: controller.signal,
       });
       if (!data?.streamToken) throw new Error('Token de imagem ausente');
       const params = new URLSearchParams({ token: data.streamToken, v: String(Date.now()) });
       if (fresh) params.set('fresh', '1');
-      setPosterUrl(`${API_URL}/camera-stream/${cameraId}/poster?${params.toString()}`);
+      const response = await axios.get(`${API_URL}/camera-stream/${cameraId}/poster?${params.toString()}`, { responseType: 'blob', timeout: 10000, signal: controller.signal });
+      if (controller.signal.aborted) return true;
+      const url = URL.createObjectURL(response.data);
+      if (posterObjectUrl.current) URL.revokeObjectURL(posterObjectUrl.current);
+      posterObjectUrl.current = url;
+      setCapturedAt(response.headers['x-poster-generated-at'] ?? null);
+      setPosterUrl(url);
       return true;
     } catch {
+      if (controller.signal.aborted) return true;
       return false;
     }
   }, [accessToken, cameraId]);
@@ -187,7 +238,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   }, []);
 
   const handleClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (!drawing) return;
+    if (!drawing || readOnly || posterStatus !== 'ready') return;
     const point = toNormalized(event.clientX, event.clientY);
     if (!point) return;
     setDrawing((current) => {
@@ -201,7 +252,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
       }
       return [...current, point];
     });
-  }, [drawing, toNormalized]);
+  }, [drawing, toNormalized, drawKind, readOnly, posterStatus]);
 
   const finishDrawing = useCallback(() => {
     if (!drawing) return;
@@ -217,6 +268,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
     }
     const kindLabel = drawKind === 'exclude' ? 'Ignorar' : drawKind === 'include' ? 'Monitorar' : 'Linha';
     const sameKind = zones.filter((z) => z.kind === drawKind).length + 1;
+    remember();
     setZones((current) => [
       ...current,
       {
@@ -232,39 +284,39 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   }, [drawing, drawKind, zones]);
 
   const save = useCallback(async () => {
-    if (!accessToken) return;
+    if (!accessToken || readOnly) return;
+    if (zones.some((z) => z.kind === 'line' && !crossingArrow(z.points))) {
+      toast({ title: 'Ajuste a linha', description: 'Os dois pontos da linha precisam estar separados.' });
+      return;
+    }
     setSaving(true);
     try {
       await axios.patch(`${API_URL}/cameras/${cameraId}`, { detectionZones: zones }, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       setDirty(false);
+      try { sessionStorage.removeItem(draftKey); } catch { /* Sem armazenamento local. */ }
       // O que acabou de ser gravado passa a ser a base do desfazer.
       baseRef.current = zones;
+      history.current = [];
       onSaved?.(zones);
       const temArea = zones.some((z) => z.kind === 'include' || z.kind === 'exclude');
       toast({
         title: 'Zonas salvas',
         description: zones.length
-          ? temArea
-            // Verdade importante: zona de área migra o gatilho de gravação da
-            // detecção da CÂMERA (que não conhece zonas) para o detector do
-            // DRAC, que respeita a máscara. Sem contar isso, o operador não
-            // entende por que o comportamento da gravação mudou.
-            ? `${zones.length} zona(s) ativas. A gravação por movimento passa a disparar pelo detector do S2Cam, que respeita as áreas desenhadas.`
-            : `${zones.length} zona(s) ativas. A detecção já está usando as novas áreas.`
-          : 'Sem zonas: a câmera inteira volta a ser monitorada.',
+          ? `${zones.length} regra(s) salvas. Confira o estado da análise para confirmar o monitoramento.${temArea ? ' As áreas passam a orientar a detecção de movimento do sistema.' : ''}`
+          : 'Desenhos removidos. A análise, quando ativa, considera a imagem inteira.',
       });
     } catch (error) {
       toast({
         title: 'Falha ao salvar zonas',
-        description: error instanceof Error ? error.message : 'Não foi possível salvar as zonas.',
+        description: 'Não foi possível guardar as alterações. Seu desenho foi preservado; tente novamente.',
         variant: 'destructive',
       });
     } finally {
       setSaving(false);
     }
-  }, [accessToken, cameraId, onSaved, zones]);
+  }, [accessToken, cameraId, onSaved, zones, readOnly, draftKey]);
 
   const polygonPoints = useCallback((points: number[][]) => (
     points.map(([x, y]) => `${(x * 100).toFixed(2)},${(y * 100).toFixed(2)}`).join(' ')
@@ -273,16 +325,23 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
   const hasInclude = useMemo(() => zones.some((z) => z.kind === 'include'), [zones]);
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="segment">
+    <div className={expanded ? 'fixed inset-0 z-50 overflow-auto bg-background p-5 space-y-3' : 'space-y-3'}>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>{capturedAt && Number.isFinite(Date.parse(capturedAt)) ? `Imagem capturada em ${new Date(capturedAt).toLocaleString('pt-BR')}` : 'Horário da captura não informado'}</span>
+        <div className="flex gap-2">
+          <button className="btn btn-secondary btn-sm" onClick={() => { posterRetryCountRef.current = 0; setPosterStatus('loading'); void loadPoster(true).then((ok) => { if (!ok) schedulePosterRetry(); }); }}><RefreshCw className="h-4 w-4" /> Atualizar imagem</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => setExpanded(!expanded)}>{expanded ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}{expanded ? 'Reduzir' : 'Ampliar'}</button>
+        </div>
+      </div>
+      <fieldset disabled={readOnly || saving} className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="segment flex-wrap">
           <button
             type="button"
             onClick={() => setDrawKind('exclude')}
             className={`seg-btn ${drawKind === 'exclude' ? 'active' : ''}`}
             title="Área onde a detecção é DESCARTADA (rua movimentada, galhos, um outdoor)."
           >
-            Ignorar área
+            Área ignorada
           </button>
           <button
             type="button"
@@ -290,7 +349,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             className={`seg-btn ${drawKind === 'include' ? 'active' : ''}`}
             title="A detecção passa a valer SÓ dentro desta área — todo o resto é ignorado."
           >
-            Monitorar só aqui
+            Área monitorada
           </button>
           <button
             type="button"
@@ -298,7 +357,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             className={`seg-btn ${drawKind === 'line' ? 'active' : ''}`}
             title="Limite que não deve ser atravessado: dispara quando um objeto cruza a linha."
           >
-            Linha de perímetro
+            Linha de passagem
           </button>
         </div>
 
@@ -320,6 +379,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
                 toast({ title: 'Limite de zonas', description: `Máximo de ${MAX_ZONES} zonas por câmera.`, variant: 'destructive' });
                 return;
               }
+              if (posterStatus !== 'ready') { toast({ title: 'Aguarde a imagem para desenhar' }); return; }
               setDrawing([]);
             }}
             className="btn btn-secondary btn-sm"
@@ -331,12 +391,13 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
 
         <div className="ml-auto flex items-center gap-2">
           {dirty && <span className="text-[10px] text-[hsl(var(--status-warning))]">alterações não salvas</span>}
-          <button type="button" onClick={() => void save()} disabled={saving || !dirty} className="btn btn-primary btn-sm disabled:opacity-45">
+          <button type="button" onClick={() => { if (drawing?.length) setDrawing(drawing.slice(0, -1)); else { const previous = history.current.pop(); if (previous) { setZones(previous); setDirty(true); } } }} className="btn btn-secondary btn-sm"><Undo2 className="h-4 w-4" /> Desfazer ação</button>
+          <button type="button" data-perimeter-save onClick={() => void save()} disabled={saving || !dirty || drawing !== null} className="btn btn-primary btn-sm disabled:opacity-45">
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
             Salvar zonas
           </button>
         </div>
-      </div>
+      </fieldset>
 
       {/* Ajuda contextual: explica o modo selecionado na própria tela, para o
           operador não precisar adivinhar o que cada botão faz. */}
@@ -348,26 +409,20 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
         <span>
           {drawKind === 'exclude' && (
             <>
-              <strong className="font-medium text-foreground">Ignorar área:</strong>{' '}
-              tudo que acontecer DENTRO desta área é descartado. Use para o que gera alarme
-              à toa — rua movimentada, galhos ao vento, um outdoor, o céu. A detecção
-              continua valendo no resto da cena.
+              <strong className="font-medium text-foreground">Área ignorada:</strong>{' '}
+              Exclua árvores, ruas ou outros pontos que geram alertas desnecessários. O restante da imagem continua sendo considerado.
             </>
           )}
           {drawKind === 'include' && (
             <>
-              <strong className="font-medium text-foreground">Monitorar só aqui:</strong>{' '}
-              a detecção passa a valer SÓ dentro da(s) área(s) que você desenhar — todo o
-              resto da imagem é ignorado. Use quando apenas um pedaço da cena interessa
-              (um portão, um corredor). {hasInclude ? 'Já há área de monitorar: fora dela, nada é detectado.' : ''}
+              <strong className="font-medium text-foreground">Área monitorada:</strong>{' '}
+              Marque o espaço que importa. Com essa regra, a análise considera apenas as áreas marcadas.
             </>
           )}
           {drawKind === 'line' && (
             <>
               <strong className="font-medium text-foreground">Linha de perímetro:</strong>{' '}
-              um limite que não deve ser atravessado (2 pontos). Dispara quando um objeto
-              CRUZA a linha, no sentido que você definir — a seta na tela mostra a direção.
-              É sobre atravessar, não sobre ficar parado.
+              Marque o início e o fim do limite. A seta mostra o sentido de passagem entre os lados A e B. Selecione um desenho para arrastar seus pontos.
             </>
           )}
         </span>
@@ -450,6 +505,17 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
           preserveAspectRatio="none"
           className={`absolute inset-0 h-full w-full transition-opacity ${posterStatus === 'ready' ? 'opacity-100' : 'opacity-0'}`}
           aria-hidden={posterStatus !== 'ready'}
+          style={{ touchAction: 'none' }}
+          onPointerMove={(event) => {
+            if (!drag.current || readOnly || saving) return;
+            const point = toNormalized(event.clientX, event.clientY);
+            if (!point) return;
+            const { id, index } = drag.current;
+            setZones((current) => current.map((z) => z.id === id ? { ...z, points: z.points.map((p, i) => i === index ? point : p) } : z));
+            setDirty(true);
+          }}
+          onPointerUp={() => { drag.current = null; }}
+          onPointerCancel={() => { drag.current = null; }}
         >
           {/* A seta é o que torna o sentido COMPREENSÍVEL: "ab" e "ba" não
               significam nada sozinhos — a ponta na tela mostra qual é qual. */}
@@ -460,16 +526,17 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             </marker>
           </defs>
           {zones.map((zone) => (zone.kind === 'line' ? (
-            <g key={zone.id}>
+            <g key={zone.id} onClick={() => { if (!drawing) setSelectedZone(zone.id); }}>
               <line
                 x1={zone.points[0][0] * 100} y1={zone.points[0][1] * 100}
                 x2={zone.points[1][0] * 100} y2={zone.points[1][1] * 100}
                 stroke={ZONE_COLOR.line.stroke}
-                strokeWidth={0.6}
-                vectorEffect="non-scaling-stroke"
-                markerEnd={zone.sentido === 'ab' ? 'url(#seta-linha)' : undefined}
-                markerStart={zone.sentido === 'ba' ? 'url(#seta-linha)' : undefined}
+                strokeWidth={selectedZone === zone.id ? 0.8 : 0.5}
               />
+              {(() => { const arrow = crossingArrow(zone.points); return arrow ? <g pointerEvents="none">
+                <line {...arrow} stroke={ZONE_COLOR.line.stroke} strokeWidth={0.4} markerEnd={zone.sentido !== 'ba' ? 'url(#seta-linha)' : undefined} markerStart={zone.sentido !== 'ab' ? 'url(#seta-linha)' : undefined} />
+                <text x={arrow.x1} y={arrow.y1 - 1.5} fontSize="2.5" fill="white">A</text><text x={arrow.x2} y={arrow.y2 + 3} fontSize="2.5" fill="white">B</text>
+              </g> : null; })()}
               {zone.points.map(([x, y], i) => (
                 <circle key={i} cx={x * 100} cy={y * 100} r={0.9} fill={ZONE_COLOR.line.stroke} />
               ))}
@@ -477,12 +544,16 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
           ) : (
             <polygon
               key={zone.id}
+              onClick={() => { if (!drawing) setSelectedZone(zone.id); }}
               points={polygonPoints(zone.points)}
               fill={ZONE_COLOR[zone.kind].fill}
               stroke={ZONE_COLOR[zone.kind].stroke}
-              strokeWidth={0.4}
-              vectorEffect="non-scaling-stroke"
+              strokeWidth={selectedZone === zone.id ? 0.7 : 0.3}
             />
+          )))}
+          {!drawing && !readOnly && zones.filter((z) => z.id === selectedZone).flatMap((zone) => zone.points.map(([x, y], index) => (
+            <circle key={`${zone.id}-${index}`} cx={x * 100} cy={y * 100} r={1.1} fill="white" stroke={ZONE_COLOR[zone.kind].stroke} strokeWidth={0.3} className="cursor-move"
+              onPointerDown={(event) => { if (saving) return; event.stopPropagation(); remember(); drag.current = { id: zone.id, index }; event.currentTarget.setPointerCapture(event.pointerId); }} />
           )))}
           {drawing && drawing.length > 0 && (
             <>
@@ -510,13 +581,15 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
         )}
       </div>
 
-      {zones.length ? (
-        <div className="space-y-1.5">
+      {zones.length || dirty || drawing !== null ? (
+        <fieldset disabled={readOnly || saving} className="space-y-1.5">
           {zones.map((zone) => (
-            <div key={zone.id} className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5">
+            <div key={zone.id} onClick={() => setSelectedZone(zone.id)} className={`flex flex-wrap items-center gap-2 rounded-md border bg-card px-2.5 py-1.5 ${selectedZone === zone.id ? 'border-primary' : 'border-border'}`}>
               <span className="h-2.5 w-2.5 rounded-sm" style={{ background: ZONE_COLOR[zone.kind].stroke }} />
               <input
                 value={zone.name}
+                aria-label="Nome da regra"
+                onFocus={remember}
                 onChange={(event) => {
                   const name = event.target.value.slice(0, 64);
                   setZones((current) => current.map((z) => (z.id === zone.id ? { ...z, name } : z)));
@@ -532,6 +605,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
                 <select
                   value={zone.sentido ?? 'ambos'}
                   onChange={(event) => {
+                    remember();
                     const sentido = event.target.value as 'ambos' | 'ab' | 'ba';
                     setZones((current) => current.map((z) => (z.id === zone.id ? { ...z, sentido } : z)));
                     setDirty(true);
@@ -540,8 +614,8 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
                   aria-label={`Sentido proibido da linha ${zone.name}`}
                 >
                   <option value="ambos">Qualquer sentido</option>
-                  <option value="ab">Só do início para o fim →</option>
-                  <option value="ba">Só do fim para o início ←</option>
+                  <option value="ab">Do lado A para B →</option>
+                  <option value="ba">Do lado B para A ←</option>
                 </select>
               ) : (
                 <div className="flex items-center gap-2">
@@ -554,6 +628,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
                   <select
                     value={zone.sensitivity ?? 'media'}
                     onChange={(e) => {
+                      remember();
                       const valor = e.target.value as 'alta' | 'media' | 'baixa';
                       setZones((current) =>
                         current.map((z) => (z.id === zone.id ? { ...z, sensitivity: valor } : z)),
@@ -572,6 +647,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
               <button
                 type="button"
                 onClick={() => {
+                  remember();
                   setZones((current) => current.filter((z) => z.id !== zone.id));
                   setDirty(true);
                 }}
@@ -584,9 +660,11 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
           ))}
           <button
             type="button"
+            data-perimeter-discard
             onClick={() => {
-              setZones(initialZones ?? []);
-    baseRef.current = initialZones ?? [];
+              setZones(baseRef.current);
+              history.current = [];
+              try { sessionStorage.removeItem(draftKey); } catch { /* Sem armazenamento local. */ }
               setDrawing(null);
               setDirty(false);
             }}
@@ -595,7 +673,7 @@ export function DetectionZonesEditor({ cameraId, cameraName, initialZones, onSav
             <Undo2 className="h-3 w-3" />
             Desfazer alterações
           </button>
-        </div>
+        </fieldset>
       ) : (
         <p className="text-xs text-[hsl(var(--muted-foreground))]">
           Sem zonas: a câmera inteira é monitorada. Use <strong>Ignorar área</strong> para excluir rua, árvores ou céu —
