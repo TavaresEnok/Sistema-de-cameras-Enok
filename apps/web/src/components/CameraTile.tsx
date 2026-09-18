@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { PlaySquare, Crosshair, Maximize2, Info, AlertTriangle, Circle, Lock } from 'lucide-react';
 import { Camera } from '../store/vmsDataStore';
 import { LiveStreamPlayer, type LivePlayerStatus } from './LiveStreamPlayer';
+import { mostrarAvisoDeOffline } from '../lib/aviso-de-offline-no-tile';
 
 import { useGridStore } from '../store/gridStore';
 
@@ -53,11 +54,10 @@ export function CameraTile({
   // no lugar. O backend já bloqueia o conteúdo; aqui é só a UX respeitosa.
   const contentLocked = camera.isPrivate === true && camera.canViewContent === false;
 
-  const isOffline  = camera.status === 'offline' || camera.status === 'no_signal';
-  // Overlay "Offline" do tile só quando o player também não tem imagem viva; e
-  // enquanto ele estiver visível, o chrome do player (spinner/erro) fica oculto
-  // para não empilhar mensagens técnicas sobre o aviso limpo de offline.
-  const showOfflineOverlay = isOffline && playerStatus?.state !== 'playing';
+  // Overlay "Offline" do tile só quando o player também não tem imagem viva —
+  // e tocar por contingência (`fallback`) CONTA como imagem viva. Ver
+  // lib/aviso-de-offline-no-tile.ts (tag sobre vídeo rodando, IBTelecom 18/09).
+  const showOfflineOverlay = mostrarAvisoDeOffline(camera.status, playerStatus?.state);
   const isAlarm    = camera.status === 'alarm';
   const isMotion   = camera.status === 'motion';
   // Regras de movimento/objeto podem estar gravando automaticamente; elas não
@@ -112,7 +112,7 @@ export function CameraTile({
         type="button"
         onClick={onClick}
         onDoubleClick={onDoubleClick}
-        aria-label={`${camera.name}, ${isOffline ? 'offline' : 'ao vivo'}`}
+        aria-label={`${camera.name}, ${showOfflineOverlay ? 'offline' : 'ao vivo'}`}
         aria-pressed={selected}
         className="absolute inset-0 z-[15] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--primary))]"
       >
@@ -170,7 +170,7 @@ export function CameraTile({
 
       {/* Hover action bar */}
       <AnimatePresence>
-        {(hovered || selected) && !isOffline && !wallMode && (
+        {(hovered || selected) && !showOfflineOverlay && !wallMode && (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}

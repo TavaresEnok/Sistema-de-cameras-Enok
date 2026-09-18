@@ -44,6 +44,7 @@ import {
   gridFollowsCameraProfile,
   parseGridSourcePolicy,
   streamDiffersInAspect,
+  gradeDeveUsarPrincipalPorFormato,
 } from './helpers/live-delivery-profile.helper';
 import { liveViewModeToSourceProfile } from './helpers/source-profile.helper';
 import { decidirCopiaDeVideo } from './helpers/copia-em-vez-de-reencode.helper';
@@ -2445,7 +2446,11 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
             deliveryMode === 'original' || deliveryMode === 'original-audio',
           );
     // Stream 2 com formato diferente do principal (4:3 contra 16:9) vira tarja
-    // preta no tile. Na GRADE usamos o principal; o Instantâneo segue no stream 2.
+    // preta no tile. Na GRADE usamos o principal — MAS SÓ SE ele for H.264, que
+    // passa sem conversão. Principal H.265 fica de fora: conversão cara e, em
+    // câmera barata, H.265 sujo que não monta quadro nenhum (tela preta a 0 fps
+    // medida na IBTelecom, 18/09/2026). Ver gradeDeveUsarPrincipalPorFormato.
+    // O Instantâneo segue no stream 2.
     if (
       !pushSourced
       && (deliveryMode === 'grid' || deliveryMode === 'grid-hevc')
@@ -2455,14 +2460,24 @@ export class MediamtxProxyService implements OnApplicationBootstrap, OnModuleDes
         { width: camera.detectedWidth, height: camera.detectedHeight },
       )
     ) {
+      const principal = await this.chooseLiveSource(cameraId, camera, password, rtspTransport);
+      const trocar = gradeDeveUsarPrincipalPorFormato({
+        subDiffersInAspect: true,
+        mainCodec: 'codec' in principal ? String(principal.codec ?? '') : null,
+        mainIsHevc: principal.isHevc,
+      });
       if (!this.gridAspectMismatchLogged.has(cameraId)) {
         this.gridAspectMismatchLogged.add(cameraId);
+        const sub = `${'width' in selected ? selected.width : '?'}x${'height' in selected ? selected.height : '?'}`;
+        const main = `${camera.detectedWidth}x${camera.detectedHeight}`;
         this.logger.log(
-          `Grade de ${cameraId}: stream 2 ${'width' in selected ? selected.width : '?'}x${'height' in selected ? selected.height : '?'} ` +
-          `tem formato diferente do principal ${camera.detectedWidth}x${camera.detectedHeight} — usando o principal para não mostrar tarja.`,
+          trocar
+            ? `Grade de ${cameraId}: stream 2 ${sub} tem formato diferente do principal ${main} (H.264) — usando o principal para não mostrar tarja.`
+            : `Grade de ${cameraId}: stream 2 ${sub} tem formato diferente do principal ${main}, mas o principal é H.265 — `
+              + 'mantendo o stream 2 (tarja preta é melhor que converter/arriscar tela preta).',
         );
       }
-      selected = await this.chooseLiveSource(cameraId, camera, password, rtspTransport);
+      if (trocar) selected = principal;
     }
     const liveProfile = selected.profile;
     const sourceUrl = selected.sourceUrl;

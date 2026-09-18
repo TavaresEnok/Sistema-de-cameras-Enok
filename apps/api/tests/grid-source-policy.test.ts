@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  gradeDeveUsarPrincipalPorFormato,
   gridFollowsCameraProfile,
   parseGridSourcePolicy,
 } from '../src/camera-stream/helpers/live-delivery-profile.helper';
@@ -38,4 +39,45 @@ test('stream 2 fora do formato do principal é detectado (tarja na grade)', asyn
   assert.equal(streamDiffersInAspect({ width: 640, height: 352 }, { width: 640, height: 352 }), false);
   assert.equal(streamDiffersInAspect({ width: 640, height: 480 }, { width: null, height: 1080 }), false, 'sem medida do principal: não muda nada');
   assert.equal(streamDiffersInAspect(null, principal), false);
+});
+
+// ── Formato diferente NÃO justifica trocar imagem boa por nenhuma ───────────
+// 18/09/2026, IBTelecom, Grupo Flash Cam-05 (Dahua): stream 2 H.264 704×480
+// funcionando; a regra da tarja trocou para o principal H.265 1920×1080, que
+// chegava corrompido ("Error constructing the frame RPS"). Tile preto a 0 fps.
+
+test('o caso real: principal H.265 NUNCA substitui o stream 2 por causa de tarja', () => {
+  assert.equal(
+    gradeDeveUsarPrincipalPorFormato({ subDiffersInAspect: true, mainCodec: 'h265', mainIsHevc: true }),
+    false,
+  );
+  // Mesmo se o rótulo de codec vier vazio, a flag isHevc manda.
+  assert.equal(
+    gradeDeveUsarPrincipalPorFormato({ subDiffersInAspect: true, mainCodec: null, mainIsHevc: true }),
+    false,
+  );
+});
+
+test('principal H.264 com formato diferente: troca (é o caso que a regra existe para resolver)', () => {
+  for (const codec of ['h264', 'H264', 'avc', 'avc1']) {
+    assert.equal(
+      gradeDeveUsarPrincipalPorFormato({ subDiffersInAspect: true, mainCodec: codec, mainIsHevc: false }),
+      true,
+      codec,
+    );
+  }
+});
+
+test('codec do principal desconhecido: na dúvida, fica no stream 2 que funciona', () => {
+  assert.equal(
+    gradeDeveUsarPrincipalPorFormato({ subDiffersInAspect: true, mainCodec: null, mainIsHevc: null }),
+    false,
+  );
+});
+
+test('mesmo formato: nunca troca, qualquer que seja o codec', () => {
+  assert.equal(
+    gradeDeveUsarPrincipalPorFormato({ subDiffersInAspect: false, mainCodec: 'h264', mainIsHevc: false }),
+    false,
+  );
 });

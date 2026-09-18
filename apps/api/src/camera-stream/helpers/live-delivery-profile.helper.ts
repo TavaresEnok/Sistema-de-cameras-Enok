@@ -176,3 +176,32 @@ export function streamDiffersInAspect(
   const [sw, sh, mw, mh] = values;
   return Math.abs((sw / sh) / (mw / mh) - 1) > tolerance;
 }
+
+/**
+ * Trocar a GRADE do stream 2 para o principal por causa do formato vale a pena?
+ *
+ * Só quando o principal é H.264 — aí a grade o repassa sem conversão, custo
+ * zero, e a tarja some. Se o principal é H.265, NÃO troca:
+ *
+ *   · o navegador não toca H.265, então a grade teria de CONVERTER o principal
+ *     inteiro (1080p ou mais) para cada câmera: caro;
+ *   · e o H.265 de câmera barata vem sujo com frequência. Medido em 18/09/2026
+ *     na IBTelecom (Grupo Flash Cam-05, Dahua): o principal H.265 chegava com
+ *     "Error constructing the frame RPS", o conversor não montava nenhum quadro,
+ *     o MediaMTX desistia a cada ~18 s e o tile ficava PRETO a 0 fps — enquanto
+ *     o stream 2 (H.264 704×480) funcionava perfeitamente. Esta regra, na
+ *     primeira versão, trocou uma imagem boa por nenhuma para evitar uma tarja.
+ *
+ * Tarja preta é um defeito estético; tela preta é perda de monitoramento. Na
+ * dúvida (codec do principal desconhecido), também não troca.
+ */
+export function gradeDeveUsarPrincipalPorFormato(input: {
+  subDiffersInAspect: boolean;
+  mainCodec: string | null | undefined;
+  mainIsHevc: boolean | null | undefined;
+}): boolean {
+  if (!input.subDiffersInAspect) return false;
+  if (input.mainIsHevc === true) return false;
+  const codec = String(input.mainCodec ?? '').trim().toLowerCase();
+  return codec === 'h264' || codec === 'avc' || codec === 'avc1';
+}
