@@ -55,6 +55,7 @@ import { getApiBaseUrl } from '../lib/api-base';
 import { useAuthStore } from '../store/authStore';
 import { useToast } from '../hooks/use-toast';
 import { useAutoHideControls } from '../hooks/use-auto-hide-controls';
+import { countVisibleGridCameras } from '../lib/live-grid-count';
 import { ToastAction } from '@/components/ui/toast';
 
 // Grades aprovadas para operação. Manter os formatos previsíveis evita layouts
@@ -508,7 +509,10 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
     setCameraIds(ordered.slice(0, Math.min(cols * rows, FILL_GRID_MAX_CAMERAS)).map((c) => c.id));
   }, [cameras, displayCoordination.displays, displayId, setGridSize, setCameraIds]);
 
-  const onlineCount = useMemo(() => cameras.filter((c) => c.isOnline).length, [cameras]);
+  const gridCameraCount = useMemo(
+    () => countVisibleGridCameras(displayedCams, focusedCameraId),
+    [displayedCams, focusedCameraId],
+  );
   const alarmCount = useMemo(() => cameras.filter((c) => c.status === 'alarm').length, [cameras]);
 
   const filteredList = useMemo(() => {
@@ -1056,7 +1060,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
           <div className="live-status-summary ml-auto flex min-w-0 items-center gap-1.5">
             <span className="hdr-chip">
               <span className="hdr-chip-dot status-online" />
-              {onlineCount}/{cameras.length} ao vivo
+              {gridCameraCount.online}/{gridCameraCount.total} ao vivo
             </span>
             {alarmCount > 0 && (
               <span className="hdr-chip">
