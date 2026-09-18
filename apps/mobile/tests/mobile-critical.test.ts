@@ -108,7 +108,7 @@ test('ao vivo recupera WebRTC congelado e abre câmera única em máxima qualida
   const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
   assert(whep.includes('pc.getStats()'), 'sessão ICE conectada precisa vigiar avanço real de mídia');
   assert(whep.includes('MEDIA_STALL_TIMEOUT_MS'), 'WebRTC congelado precisa de limite explícito');
-  assert(player.includes('setWebrtcFailed(false)') && player.includes('30_000'), 'fallback HLS deve voltar a testar WebRTC');
+  assert(!player.includes('30_000'), 'HLS estável não pode ser interrompido por sondagem WebRTC periódica');
   assert(live.includes('useState(true)') && redesign.includes('useState(true)'), 'tela única deve começar em máxima qualidade');
   assert(app.includes('setHdWhepUrl(whep)'), 'HD+ deve priorizar o WebRTC original em vez de forçar HLS');
   assert(app.includes("'X-S2Cam-Native-WebRTC': 'hevc'"), 'app nativo deve declarar a tentativa HEVC/WHEP ao servidor');
@@ -163,6 +163,23 @@ test('barra ao vivo deixa PTZ fechado e mantém as cinco ações na ordem operac
     previous = current;
   }
   assert(!row.includes('label="PTZ"'), 'PTZ não deve ficar marcado como ação principal da barra');
+});
+
+test('PTZ respeita a permissão também em tela cheia, fecha ao sair e não desloca o pad', () => {
+  const app = readFileSync('App.tsx', 'utf8');
+  const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
+  assert(app.includes('canPtz={capabilities.ptzControl && live.canControl !== false}'), 'a permissão efetiva precisa chegar à tela ao vivo');
+  assert(redesign.includes('if (!canPtz || isPlaying) setPtzOpen(false);'), 'perder permissão ou abrir playback deve fechar PTZ');
+  assert(redesign.includes('setPtzOpen(false); setFullscreen(false);'), 'sair da tela cheia não pode vazar o pad para a tela normal');
+  assert(redesign.includes('ptzOpen && canPtz && !isPlaying'), 'o pad em tela cheia precisa exigir permissão');
+  assert(redesign.includes('ptzOpen && canPtz ? ('), 'o pad normal precisa exigir permissão');
+  assert(redesign.includes('ptzFeedbackSlot: { height: 43'), 'o aviso deve reservar espaço fixo para não fazer o pad saltar');
+});
+
+test('erro de PTZ usa o diagnóstico da API, inclusive para câmera sem suporte', () => {
+  const app = readFileSync('App.tsx', 'utf8');
+  assert(app.includes("if (data?.status === 'error') { ptzFail(data.message); return; }"), 'a mensagem classificada pela API não pode ser descartada');
+  assert(app.includes("'Controle PTZ indisponível'"), 'o título deve orientar sem atribuir culpa a credenciais');
 });
 
 test('release mobile: iOS tem identidade e builds de loja incrementam versão', () => {

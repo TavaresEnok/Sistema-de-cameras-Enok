@@ -125,7 +125,7 @@ function tokensFor(glass: boolean, theme: Theme): ControlTokens {
 }
 
 export function LiveScreen({
-  camera, topInset = 0, streamUrl, whepUrl, posterUrl, hdUrl, hdWhepUrl, onRequestHd, onExitHd, detections, ptzActive, ptzFeedback,
+  camera, topInset = 0, streamUrl, whepUrl, posterUrl, hdWhepUrl, onRequestHd, onExitHd, detections, ptzActive, ptzFeedback,
   recordings, recordingsTotal, recordingsLoading, recordingsLoadingMore, recordingsError,
   myRecordings, onPlayLocal, onDeleteLocal, recordingDate, activePlayback, recordingActive, recordingBusy,
   onBack, onSendPtz, onToggleRecording, onSnapshot,
@@ -142,25 +142,28 @@ export function LiveScreen({
   useEffect(() => { setMuted(!audioLigado); }, [audioLigado]);
   // null = ainda não sabemos (conectando/HLS); false = stream sem faixa de áudio.
   const [audioAvailable, setAudioAvailable] = useState<boolean | null>(null);
-  // HD+ tenta o WebRTC original e só cai para HLS se necessário.
+  // Diagnóstico: HD+ usa exclusivamente WebRTC/WHEP.
   const [hdMode, setHdMode] = useState(true);
-  const hdAvailable = !!hdUrl || !!hdWhepUrl;
-  const hdActive = hdMode && hdAvailable;
+  const [hdRequestFailed, setHdRequestFailed] = useState(false);
+  const hdAvailable = !!hdWhepUrl;
+  const hdActive = hdMode;
   const requestHdRef = useRef(onRequestHd);
   requestHdRef.current = onRequestHd;
   useEffect(() => {
     setHdMode(true);
+    setHdRequestFailed(false);
     setLiveStatus('connecting');
     void requestHdRef.current().then((opened) => {
-      if (!opened) setHdMode(false);
+      if (!opened) { setHdRequestFailed(true); setLiveStatus('offline'); }
     });
   }, [camera.id]);
   const toggleHd = () => {
     if (hdMode) { setHdMode(false); onExitHd(); }
     else {
       setHdMode(true);
+      setHdRequestFailed(false);
       void onRequestHd().then((opened) => {
-        if (!opened) setHdMode(false);
+        if (!opened) { setHdRequestFailed(true); setLiveStatus('offline'); }
       });
     }
   };
@@ -223,14 +226,24 @@ export function LiveScreen({
         <PlaybackVideo uri={activePlayback!.url} posterUri={activePlayback!.recording.thumbnailUrl} onRetry={onRetryPlayback} onNaoDecodificou={onNaoDecodificou} onProgresso={onProgressoPlayback} initialPositionSeconds={activePlayback!.retomarEm ?? null} style={StyleSheet.absoluteFill} />
       ) : hdMode && !hdAvailable ? (
         <View style={[StyleSheet.absoluteFill, styles.qualityLoading]}>
-          <ActivityIndicator color="#ffffff" />
-          <Text style={styles.qualityLoadingText}>Abrindo em máxima resolução…</Text>
+          {hdRequestFailed ? (
+            <>
+              <Text style={styles.qualityLoadingText}>HD+ indisponível: não foi possível obter a conexão WebRTC/WHEP.</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Tentar HD+ novamente" onPress={() => {
+                setHdRequestFailed(false);
+                void onRequestHd().then((opened) => { if (!opened) setHdRequestFailed(true); });
+              }}><Text style={styles.qualityLoadingText}>Tentar novamente</Text></Pressable>
+            </>
+          ) : (
+            <><ActivityIndicator color="#ffffff" /><Text style={styles.qualityLoadingText}>Conectando HD+ por WebRTC…</Text></>
+          )}
         </View>
       ) : hdActive ? (
-        // Máxima qualidade com a mesma baixa latência do modo Economia.
+        // Sem fallback para HLS: a falha WebRTC deve permanecer visível no teste.
         <LiveVideo
-          uri={hdUrl}
+          uri={null}
           whepUri={hdWhepUrl}
+          webrtcOnly
           posterUri={posterUrl}
           videoStyle={styles.videoFill}
           muted={muted}
@@ -279,7 +292,7 @@ export function LiveScreen({
   ) : (
     <View style={[styles.liveBadge, !isLive && styles.liveBadgeIdle]}>
       <View style={[styles.liveDot, !isLive && { backgroundColor: 'rgba(255,255,255,0.6)' }]} />
-      <Text style={styles.liveText}>{STATUS_LABEL[liveStatus]}</Text>
+      <Text style={styles.liveText}>{hdMode && liveStatus === 'offline' ? 'WEBRTC INDISPONÍVEL' : STATUS_LABEL[liveStatus]}</Text>
     </View>
   );
 

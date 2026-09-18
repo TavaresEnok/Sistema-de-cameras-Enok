@@ -19,6 +19,7 @@ import { toast } from '../hooks/use-toast';
 
 const API_URL = getApiBaseUrl();
 type PermissionLevel = 'VIEW' | 'CONTROL' | 'RECORD' | 'ADMIN';
+type RolePermissionMatrix = Record<string, Record<string, boolean>>;
 
 /** Estado comercial do grupo — como o dono da instalação cobra o cliente final. */
 type GroupAccessStatus = 'ACTIVE' | 'RESTRICTED' | 'SUSPENDED';
@@ -61,6 +62,30 @@ const LEVEL_LABEL: Record<PermissionLevel, string> = {
   ADMIN:   'Administrar câmeras do grupo',
 };
 
+// O grupo delimita o conjunto de câmeras; capacidades funcionais pertencem à
+// função do usuário e vêm sempre da mesma matriz exibida em /roles.
+const FUNCTIONAL_PERMISSIONS = [
+  { key: 'liveView', label: 'Acesso ao ao vivo' },
+  { key: 'playback', label: 'Reprodução' },
+  { key: 'ptzControl', label: 'Controle PTZ' },
+  { key: 'alarmAck', label: 'Reconhecer alarmes' },
+  { key: 'exportEvidence', label: 'Exportar evidências' },
+  { key: 'cameraConfig', label: 'Configurar câmeras' },
+  { key: 'userManage', label: 'Gerenciar usuários' },
+  { key: 'auditLogs', label: 'Ver registros do sistema' },
+  { key: 'serverConfig', label: 'Configurações globais do sistema' },
+  { key: 'roleManage', label: 'Gerenciar funções e permissões' },
+  { key: 'reportGenerate', label: 'Gerar relatórios' },
+] as const;
+
+const ROLE_ORDER = ['VIEWER', 'OPERATOR', 'ADMIN', 'SUPER_ADMIN'];
+const ROLE_LABELS: Record<string, string> = {
+  VIEWER: 'Visualizador',
+  OPERATOR: 'Operador',
+  ADMIN: 'Administrador',
+  SUPER_ADMIN: 'Super Admin',
+};
+
 function apiClient(token: string | null) {
   return axios.create({
     baseURL: API_URL,
@@ -78,6 +103,8 @@ export default function GroupsPage() {
 
   const [groups, setGroups] = useState<AccessGroup[]>([]);
   const [permissions, setPermissions] = useState<UserPermission[]>([]);
+  const [roleMatrix, setRoleMatrix] = useState<RolePermissionMatrix>({});
+  const [roleMatrixUnavailable, setRoleMatrixUnavailable] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selGroupId, setSelGroupId] = useState<string | null>(null);
@@ -127,13 +154,19 @@ export default function GroupsPage() {
     setLoading(true);
     try {
       const client = apiClient(accessToken);
-      const [gr, pr] = await Promise.all([
+      const [gr, pr, rp] = await Promise.all([
         client.get('/camera-groups'),
         client.get('/camera-permissions'),
+        // Ler a matriz não pode impedir que a tela de grupos abra. Se a API
+        // estiver momentaneamente indisponível, a aba declara a limitação em
+        // vez de inventar permissões "Permitido".
+        client.get<{ roles?: RolePermissionMatrix }>('/role-permissions').catch(() => null),
       ]);
       const loadedGroups: AccessGroup[] = Array.isArray(gr.data) ? gr.data : [];
       setGroups(loadedGroups);
       setPermissions(Array.isArray(pr.data) ? pr.data : []);
+      setRoleMatrix(rp?.data?.roles ?? {});
+      setRoleMatrixUnavailable(!rp);
       if (!selGroupId && loadedGroups[0]) setSelGroupId(loadedGroups[0].id);
     } finally {
       setLoading(false);
@@ -551,45 +584,36 @@ export default function GroupsPage() {
             {tab === 'permissions' && (
               <div className="max-w-xl space-y-3">
                 <p className="text-[12px] text-muted-foreground leading-relaxed">
-                  Permissões aplicadas a <strong>todos os usuários</strong> deste grupo.
-                  Itens com cadeado são impostos pelo sistema e garantem isolamento entre clientes.
+                  Este grupo define <strong>quais câmeras</strong> o usuário pode acessar. A função do usuário,
+                  definida em <Link href="/roles" className="underline underline-offset-2 hover:text-foreground">Funções e Permissões</Link>,
+                  define <strong>o que ele pode fazer</strong> nessas câmeras. O acesso efetivo exige as duas regras.
                 </p>
-                {/* ── SOMENTE LEITURA, E AGORA DECLARADO ────────────────────
-                    Estes itens eram `<Switch>` SEM `onCheckedChange`, sobre uma
-                    lista fixa no código: pareciam editáveis, não mudavam nem
-                    visualmente ao clicar, e nada era salvo. O admin configurava
-                    "Controle PTZ" e saía convencido de que tinha aplicado.
-                    Não existe endpoint de capacidades por grupo — o que existe
-                    é a matriz por FUNÇÃO, em /roles. Então a tela passa a
-                    descrever o que vale, e aponta onde se muda. */}
                 <div className="bg-card border border-border rounded-xl overflow-hidden">
-                  {[
-                    { label: 'Acesso ao ao vivo',                 allowed: true },
-                    { label: 'Reprodução das câmeras do grupo',   allowed: true },
-                    { label: 'Controle PTZ',                      allowed: true },
-                    { label: 'Reconhecer alarmes',                allowed: true },
-                    { label: 'Exportar evidências',               allowed: true },
-                    { label: 'Criar usuários no próprio grupo',   allowed: false },
-                    { label: 'Ver câmeras de outros grupos',      allowed: false },
-                    { label: 'Configurações globais do sistema',  allowed: false },
-                    { label: 'Ver registros do sistema',          allowed: false },
-                    { label: 'Ver usuários de outros grupos',     allowed: false },
-                  ].map((p, i, arr) => (
-                    <div key={p.label}
-                      className={cn(
-                        'flex items-center gap-4 px-4 py-3',
-                        i < arr.length - 1 && 'border-b border-border/60'
-                      )}>
-                      <div className="flex-1 text-[12px] text-foreground">{p.label}</div>
-                      <div className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
-                        {p.allowed ? 'Permitido' : 'Não permitido'}
-                      </div>
+                  {roleMatrixUnavailable ? (
+                    <div className="px-4 py-4 text-[12px] text-muted-foreground">
+                      Não foi possível consultar a matriz de funções agora. Nenhuma permissão é presumida:
+                      consulte <Link href="/roles" className="underline underline-offset-2 hover:text-foreground">Funções e Permissões</Link> antes de liberar um usuário.
                     </div>
-                  ))}
+                  ) : FUNCTIONAL_PERMISSIONS.map((permission, i) => {
+                    const roles = ROLE_ORDER.filter((role) => roleMatrix[role]?.[permission.key]);
+                    return (
+                      <div key={permission.key}
+                        className={cn(
+                          'flex items-center gap-4 px-4 py-3',
+                          i < FUNCTIONAL_PERMISSIONS.length - 1 && 'border-b border-border/60',
+                        )}>
+                        <div className="flex-1 text-[12px] text-foreground">{permission.label}</div>
+                        <div className="max-w-[55%] text-right font-mono text-[10px] text-muted-foreground">
+                          {roles.length ? `Permitido para: ${roles.map((role) => ROLE_LABELS[role] ?? role).join(', ')}` : 'Não permitido para nenhuma função'}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
                 <p className="mt-2 text-[11px] text-muted-foreground">
-                  Esta lista é informativa: descreve o que um acesso de grupo permite. Para mudar o que
-                  cada função pode fazer, use <Link href="/roles" className="underline underline-offset-2 hover:text-foreground">Funções e Permissões</Link>.
+                  Isolamento entre grupos é obrigatório: uma função liberada não permite ver câmeras fora deste
+                  grupo. O nível de acesso concedido ao usuário (Ver, Controlar, Gravar ou Administrar) também pode
+                  restringir uma ação que a função permitiria.
                 </p>
               </div>
             )}

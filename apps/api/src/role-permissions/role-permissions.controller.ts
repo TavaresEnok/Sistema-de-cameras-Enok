@@ -16,7 +16,6 @@ export class RolePermissionsController {
   ) {}
 
   @Roles(UserRole.ADMIN)
-  @RequirePermission('roleManage')
   @Get()
   async getMatrix() {
     return {

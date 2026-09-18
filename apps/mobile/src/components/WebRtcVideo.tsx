@@ -3,8 +3,9 @@ import { ActivityIndicator, AppState, Image, type ImageStyle, StyleSheet, type S
 import { RTCPeerConnection, RTCSessionDescription, RTCView } from 'react-native-webrtc';
 import type { LiveStatus } from './VideoPlayers';
 import { discoverWhepIceServers } from '../services/whep-ice-servers';
+import { webRtcSessionIdentity } from '../utils/webrtc-recovery';
 
-const CONNECT_TIMEOUT_MS = 12_000;
+const CONNECT_TIMEOUT_MS = 30_000;
 const ICE_GATHER_TIMEOUT_MS = 2_000;
 const MEDIA_STALL_TIMEOUT_MS = 15_000;
 const MEDIA_WATCHDOG_INTERVAL_MS = 3_000;
@@ -27,7 +28,7 @@ type WebRtcVideoProps = {
   posterStyle: StyleProp<ImageStyle>;
   emptyTextStyle: StyleProp<TextStyle>;
   onStatusChange?: (status: LiveStatus) => void;
-  onFailover: () => void;
+  onFailover: (reason?: string) => void;
   muted?: boolean;
   contentFit?: 'contain' | 'cover';
   /** Informa se o stream recebido tem faixa de áudio (câmeras sem microfone → false). */
@@ -82,6 +83,7 @@ export function WebRtcVideo({
   const streamRef = useRef<RtcMediaStream | null>(null);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  const sessionIdentity = webRtcSessionIdentity(whepUrl);
 
   // Aplica o estado de mudo à trilha de áudio recebida (botão "Áudio").
   const applyMuted = (stream: RtcMediaStream | null) => {
@@ -112,6 +114,7 @@ export function WebRtcVideo({
 
   useEffect(() => {
     let cancelled = false;
+    const abort = new AbortController();
     let pc: RTCPeerConnection | null = null;
     let sessionUrl: string | null = null;
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -124,21 +127,25 @@ export function WebRtcVideo({
     let mediaToken: string | null = null;
     try { mediaToken = new URL(whepUrl).searchParams.get('token'); } catch { /* URL inválida cairá no failover */ }
 
-    const failover = () => {
+    const failover = (reason?: string) => {
       if (cancelled) return;
       cancelled = true;
+      apply('offline');
       onNeedRefreshRef.current?.();
-      onFailoverRef.current?.();
+      onFailoverRef.current?.(reason);
     };
 
     const start = async () => {
       apply('connecting');
+      timeout = setTimeout(() => {
+        if (!cancelled && !liveRef.current) failover('Tempo esgotado sem receber vídeo por WebRTC (30 s).');
+      }, CONNECT_TIMEOUT_MS);
       try {
         // MediaMTX anuncia as credenciais TURN temporárias no Link do OPTIONS
         // WHEP. Sem lê-lo, o app só enxerga o candidato privado 10.10.0.x e
         // falha em toda instalação atrás da Gateway/NAT.
         const authorization = mediaToken ? `Bearer ${mediaToken}` : null;
-        const iceServers = await discoverWhepIceServers(whepUrl, authorization);
+        const iceServers = await discoverWhepIceServers(whepUrl, authorization, abort.signal);
         if (cancelled) return;
         pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
         pc.addTransceiver('video', { direction: 'recvonly' });
@@ -146,34 +153,33 @@ export function WebRtcVideo({
 
         // ICE "connected" não garante vídeo avançando. Algumas quedas de NAT,
         // encoder ou relay deixam a sessão viva com a última imagem congelada.
-        // O contador RTP detecta isso e aciona o HLS/autorreconexão.
+        // Só frames decodificados confirmam vídeo e sustentam a sessão.
         let lastMediaProgressAt = Date.now();
         let lastFrames = -1;
-        let lastBytes = -1;
-        let hasInboundVideoStats = false;
         mediaWatchdog = setInterval(() => {
-          if (cancelled || !pc || !connectionReady || !mediaReady || !appActive) return;
+          if (cancelled || !pc || !connectionReady || !appActive) return;
           void pc.getStats().then((stats: any) => {
             if (cancelled) return;
             let frames = 0;
-            let bytes = 0;
             let found = false;
             stats?.forEach?.((report: any) => {
               if (report?.type === 'inbound-rtp' && report?.kind === 'video' && !report?.isRemote) {
                 found = true;
-                frames += Number(report.framesDecoded || report.framesReceived || 0);
-                bytes += Number(report.bytesReceived || 0);
+                frames += Number(report.framesDecoded || 0);
               }
             });
             if (!found) return;
-            hasInboundVideoStats = true;
-            if (frames > lastFrames || bytes > lastBytes) {
+            if (frames > 0 && mediaReady && !liveRef.current) {
+              if (timeout) clearTimeout(timeout);
+              apply('live');
+              onAudioRef.current?.((streamRef.current?.getAudioTracks?.().length ?? 0) > 0);
+            }
+            if (frames > lastFrames) {
               lastFrames = frames;
-              lastBytes = bytes;
               lastMediaProgressAt = Date.now();
               return;
             }
-            if (hasInboundVideoStats && Date.now() - lastMediaProgressAt >= MEDIA_STALL_TIMEOUT_MS) failover();
+            if (liveRef.current && Date.now() - lastMediaProgressAt >= MEDIA_STALL_TIMEOUT_MS) failover('O vídeo parou de chegar pela conexão WebRTC.');
           }).catch(() => undefined);
         }, MEDIA_WATCHDOG_INTERVAL_MS);
 
@@ -185,13 +191,6 @@ export function WebRtcVideo({
             applyMuted(stream);
             setStreamUrl(stream.toURL());
             mediaReady = true;
-            if (connectionReady) {
-              if (timeout) clearTimeout(timeout);
-              apply('live');
-              try {
-                onAudioRef.current?.((stream.getAudioTracks?.().length ?? 0) > 0);
-              } catch { /* ignore */ }
-            }
           }
         });
         ev.addEventListener('connectionstatechange', () => {
@@ -201,31 +200,20 @@ export function WebRtcVideo({
             connectionReady = true;
             connectionLost = false;
             if (disconnectedTimer) clearTimeout(disconnectedTimer);
-            // Só considera AO VIVO depois de receber mídia. Uma conexão ICE pode
-            // ficar "connected" sem entregar qualquer track/frame.
-            if (mediaReady) {
-              if (timeout) clearTimeout(timeout);
-              apply('live');
-              try {
-                onAudioRef.current?.((streamRef.current?.getAudioTracks?.().length ?? 0) > 0);
-              } catch { /* ignore */ }
-            }
+            disconnectedTimer = undefined;
+            // Só o avanço de framesDecoded confirma vídeo, não o evento track.
           } else if (state === 'disconnected') {
             connectionReady = false;
             connectionLost = true;
             if (!disconnectedTimer) disconnectedTimer = setTimeout(() => {
               disconnectedTimer = undefined;
-              if (appActive && !cancelled) failover();
+              if (appActive && !cancelled) failover('A conexão WebRTC foi interrompida.');
             }, 4_000);
           } else if (state === 'failed' || state === 'closed') {
             connectionReady = false;
-            failover();
+            failover('A conexão WebRTC falhou.');
           }
         });
-
-        timeout = setTimeout(() => {
-          if (!cancelled && !liveRef.current) failover();
-        }, CONNECT_TIMEOUT_MS);
 
         const offer = await pc.createOffer({});
         await pc.setLocalDescription(offer);
@@ -234,6 +222,7 @@ export function WebRtcVideo({
 
         const response = await fetch(whepUrl, {
           method: 'POST',
+          signal: abort.signal,
           headers: {
             'Content-Type': 'application/sdp',
             ...(mediaToken ? { Authorization: `Bearer ${mediaToken}` } : {}),
@@ -257,19 +246,22 @@ export function WebRtcVideo({
         const answer = await response.text();
         if (cancelled) return;
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answer }));
-      } catch {
-        failover();
+      } catch (error) {
+        // Só exibe o status HTTP conhecido; nunca mostra URL, resposta ou token.
+        const status = error instanceof Error ? /^WHEP (\d{3})$/.exec(error.message)?.[1] : null;
+        failover(status ? `Servidor recusou WHEP (HTTP ${status}).` : 'Falha na negociação WHEP/WebRTC.');
       }
     };
 
     void start();
     const appSub = AppState.addEventListener('change', (next) => {
       appActive = next === 'active';
-      if (appActive && (connectionLost || !liveRef.current) && !cancelled) failover();
+      if (appActive && (connectionLost || !liveRef.current) && !cancelled) failover('A conexão WebRTC foi interrompida.');
     });
 
     return () => {
       cancelled = true;
+      abort.abort();
       if (timeout) clearTimeout(timeout);
       if (disconnectedTimer) clearTimeout(disconnectedTimer);
       if (mediaWatchdog) clearInterval(mediaWatchdog);
@@ -288,7 +280,7 @@ export function WebRtcVideo({
         }
       }
     };
-  }, [whepUrl]);
+  }, [sessionIdentity]);
 
   const showPoster = status !== 'live' && Boolean(posterUri);
 

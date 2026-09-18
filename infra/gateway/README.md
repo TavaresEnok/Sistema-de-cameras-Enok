@@ -5,6 +5,7 @@ Proxmox/firewall e faz DNAT para os serviços da Gateway.
 
 Rotas administrativas:
 
+- site público: `https://s2cam.com.br/`, landing entregue em `docs/S2Cam Landing.html`;
 - Central por hostname: `central.s2cam.com.br` para `10.10.0.11:8080`;
 - instalação principal: `principal.s2cam.com.br` para o HTTPS legado;
 - tenants atuais: `ibtelecom.s2cam.com.br`, `cortex.s2cam.com.br`,
@@ -15,6 +16,27 @@ Rotas administrativas:
 O arquivo `nginx/conf.d/central.conf` deve ser instalado em
 `/opt/ajustcam-gateway/nginx/conf.d/central.conf`. Antes da recarga, sempre
 execute `nginx -t` dentro do container da Gateway.
+
+## Landing S2Cam
+
+Gere o artefato com `node scripts/build-landing.mjs` na raiz do repositório.
+O resultado fica em `infra/gateway/landing/dist/index.html`; o HTML original
+permanece intacto. O build ajusta título, idioma e links “Acessar Central”.
+
+Na Gateway, o artefato é instalado em
+`/opt/ajustcam-gateway/certbot/www/s2cam-landing/index.html`, aproveitando o
+volume estático já montado em `/var/www/certbot` (não exige recriar o container).
+`nginx/conf.d/site.conf` atende a raiz de `s2cam.com.br`; retire esse hostname
+do bloco antigo compartilhado com a Central antes da recarga. Na Gateway
+atual, esse bloco se chama `s2cam-central.conf`. Não substitua `central.conf`
+remoto: ele mantém os domínios históricos da Central.
+
+Preserve backup do bloco anterior, execute `nginx -t` e então `nginx -s reload`
+no container `ajustcam-gateway-nginx`. Verifique os dois sites e `/api/health`
+nos dois domínios. As demais rotas do domínio principal permanecem no upstream
+antigo para compatibilidade com agentes, instaladores e APKs já distribuídos.
+Rollback: restaure o bloco anterior e retire `site.conf` da extensão `.conf`,
+valide novamente e recarregue. Não altere volumes nem reinicie os serviços.
 
 O `gateway.conf` rejeita domínios desconhecidos com conexão fechada, em vez de
 tentar resolver um falso backend. Cada novo tenant precisa de um `server_name`

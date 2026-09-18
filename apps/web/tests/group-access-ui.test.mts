@@ -55,3 +55,14 @@ test('a lista mostra selo de SUSPENSO/RESTRITO (visível sem abrir o grupo)', ()
   assert.match(PAGE, /g\.accessStatus === 'SUSPENDED'/);
   assert.match(PAGE, /g\.accessStatus === 'RESTRICTED'/);
 });
+
+test('grupo nunca inventa permissões: a matriz de Funções e Permissões é a fonte', () => {
+  assert.match(PAGE, /client\.get<\{ roles\?: RolePermissionMatrix \}>\('\/role-permissions'\)/,
+    'a aba precisa ler a matriz efetiva, não uma lista fixa');
+  assert.match(PAGE, /FUNCTIONAL_PERMISSIONS\.map/, 'as permissões exibidas devem ser calculadas pela matriz');
+  assert.match(PAGE, /roleMatrix\[role\]\?\.\[permission\.key\]/, 'cada linha precisa refletir cada função');
+  assert.doesNotMatch(PAGE, /label: 'Controle PTZ',\s+allowed: true/,
+    'PTZ não pode aparecer permitido por valor fixo do grupo');
+  assert.match(PAGE, /quais câmeras/, 'a tela deve explicar que grupo delimita escopo');
+  assert.match(PAGE, /o que ele pode fazer/, 'a tela deve explicar que função define capacidade');
+});

@@ -484,12 +484,11 @@ function AppInner() {
         modoMaxima(),
       );
       if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return false;
-      const hls = authenticatedMediaUrl(data.protocols?.hlsUrl, session.apiUrl, data.streamToken);
       const whepRaw = data.protocols?.whepUrl
         ?? (data.protocols?.webrtcUrl ? `${data.protocols.webrtcUrl.replace(/\/+$/, '')}/whep` : null);
       const whep = authenticatedMediaUrl(whepRaw, session.apiUrl, data.streamToken);
-      if (!hls && !whep) throw new Error('sem fonte ao vivo');
-      setHdUrl(hls);
+      if (!whep) throw new Error('sem URL WHEP para HD+');
+      setHdUrl(null);
       setHdWhepUrl(whep);
       void loadStream(cameraId, 'grid');
       return true;
@@ -497,8 +496,7 @@ function AppInner() {
       if (sessionTokenRef.current !== token || hdRequestRef.current !== generation || liveCameraIdRef.current !== cameraId) return false;
       setHdUrl(null);
       setHdWhepUrl(null);
-      // Sem alerta modal: se a fonte grande estiver temporariamente indisponível,
-      // abre Economia e uma nova entrada tentará a Máxima novamente.
+      // O modo HD+ exibe a falha WHEP; Economia só abre por escolha do usuário.
       void loadStream(cameraId, 'grid', true);
       return false;
     }
@@ -1002,9 +1000,13 @@ function AppInner() {
     // Mensagem SEMPRE limpa (nunca o erro técnico cru): o PTZ falha tanto com
     // HTTP 200 { status:'error' } (câmera recusa) quanto lançando exceção
     // (ONVIF indisponível). Nos dois casos o usuário só precisa saber isto:
-    const ptzFail = () => {
+    const ptzFail = (message?: string) => {
       setPtzFeedback(null);
-      showAppNotice('Não foi possível movimentar', 'Confira a porta ONVIF/HTTP e as credenciais da câmera.', 'error');
+      showAppNotice(
+        'Controle PTZ indisponível',
+        message || 'Não foi possível enviar o comando para a câmera. Tente novamente em alguns segundos.',
+        'warning',
+      );
     };
     try {
       const data = await request<{ status?: string; message?: string }>(
@@ -1013,7 +1015,9 @@ function AppInner() {
         session.token,
         { method: 'POST', body: JSON.stringify({ action: 'step', direction, angleDegrees: 3 }) },
       );
-      if (data?.status === 'error') { ptzFail(); return; }
+      // A API já distingue equipamento fixo, credencial, perfil e rede. Não
+      // descarte essa resposta e culpe senha/ONVIF quando a câmera não tem zoom.
+      if (data?.status === 'error') { ptzFail(data.message); return; }
       setTimeout(() => setPtzFeedback(null), 650);
     } catch {
       ptzFail();
@@ -1227,7 +1231,7 @@ function AppInner() {
     const cameraId = liveCameraIdRef.current;
     if (!cameraId) return;
     void loadStream(cameraId, ligado ? 'grid-audio' : 'grid', true);
-    if (hdUrl) void loadHdStream(cameraId);
+    if (hdWhepUrl) void loadHdStream(cameraId);
   };
 
   /** Estado da gravação da câmera NO SISTEMA (a que vai para o acervo). */
@@ -1621,6 +1625,7 @@ function AppInner() {
             recordingBusy={recordingBusy}
             ptzActive={ptzActive}
             ptzFeedback={ptzFeedback}
+            canPtz={capabilities.ptzControl && live.canControl !== false}
             detections={liveDetections}
             canPlayback={capabilities.playback}
             canDownload={capabilities.exportEvidence}

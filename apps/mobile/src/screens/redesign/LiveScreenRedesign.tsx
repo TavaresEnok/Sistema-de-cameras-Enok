@@ -45,6 +45,8 @@ interface Props {
   recordingBusy: boolean;
   ptzActive: Direction | null;
   ptzFeedback: string | null;
+  /** Permissão efetiva: perfil do usuário E acesso à câmera já avaliados pelo App. */
+  canPtz: boolean;
   /** Caixas da IA sobre o vivo (desenhadas na tela cheia, onde o fit é exato). */
   detections: LiveDetection[];
   canPlayback: boolean;
@@ -91,8 +93,8 @@ function ClockBadge({ style, textStyle }: { style: any; textStyle: any }) {
 }
 
 export function LiveScreenRedesign(props: Props) {
-  const { camera, topInset, streamUrl, whepUrl, posterUrl, hdUrl, hdWhepUrl, onRequestHd, onExitHd, detections,
-    recordings, recordingsLoading, recordingDate, activePlayback, recordingActive, ptzActive, ptzFeedback,
+  const { camera, topInset, streamUrl, whepUrl, posterUrl, hdWhepUrl, onRequestHd, onExitHd, detections,
+    recordings, recordingsLoading, recordingDate, activePlayback, recordingActive, ptzActive, ptzFeedback, canPtz,
     canPlayback, canDownload, myRecordings, notificationsMuted, onToggleNotifications, onBack, onSendPtz, onToggleRecording,
     audioLigado = false, onAudioLigadoChange,
     onSnapshot, onOpenPlayback, onClosePlayback, onSelectDate, onDownloadRecording, onPlayLocal, onDeleteLocal } = props;
@@ -122,31 +124,38 @@ export function LiveScreenRedesign(props: Props) {
       void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
     };
   }, [fullscreen]);
-  // HD+ tenta o WebRTC original; HLS é somente o fallback.
+  // Diagnóstico: HD+ usa exclusivamente WebRTC/WHEP; Economia mantém seu fallback.
   const [hdMode, setHdMode] = useState(true);
-  const hdAvailable = !!hdUrl || !!hdWhepUrl;
-  const hdActive = hdMode && hdAvailable;
+  const [hdRequestFailed, setHdRequestFailed] = useState(false);
+  const hdAvailable = !!hdWhepUrl;
+  const hdActive = hdMode;
   const requestHdRef = useRef(onRequestHd);
   requestHdRef.current = onRequestHd;
   useEffect(() => {
     setHdMode(true);
+    setHdRequestFailed(false);
     setStatus('connecting');
     void requestHdRef.current().then((opened) => {
-      if (!opened) setHdMode(false);
+      if (!opened) { setHdRequestFailed(true); setStatus('offline'); }
     });
   }, [camera.id]);
   const toggleHd = () => {
     if (hdMode) { setHdMode(false); onExitHd(); }
     else {
       setHdMode(true);
+      setHdRequestFailed(false);
       void onRequestHd().then((opened) => {
-        if (!opened) setHdMode(false);
+        if (!opened) { setHdRequestFailed(true); setStatus('offline'); }
       });
     }
   };
-  // Uma sonda ONVIF antiga pode marcar falso mesmo quando a câmera possui PTZ.
-  // Tentamos o comando sempre; somente a permissão do usuário bloqueia antes.
-  const canPtz = camera.canControl !== false;
+  // A capacidade do equipamento é diagnosticada pela API no momento do comando.
+  // Aqui a regra é de AUTORIZAÇÃO: sem a permissão efetiva, não pode existir um
+  // caminho visual para abrir ou operar o PTZ, nem na tela normal nem na cheia.
+  const isPlaying = !!activePlayback;
+  useEffect(() => {
+    if (!canPtz || isPlaying) setPtzOpen(false);
+  }, [canPtz, isPlaying]);
 
   // Aspecto REAL da câmera (igual ao app antigo): o container do vídeo tem a
   // MESMA proporção do stream, então `contain` preenche sem cortar e sem tarjas.
@@ -156,7 +165,6 @@ export function LiveScreenRedesign(props: Props) {
     ? camera.detectedWidth / camera.detectedHeight
     : 16 / 9;
 
-  const isPlaying = !!activePlayback;
   const resLabel = camera.detectedHeight ? `${camera.detectedHeight}p` : '1080p';
   const fpsLabel = camera.detectedFps ? `${Math.round(camera.detectedFps)} fps` : '30 fps';
 
@@ -167,13 +175,23 @@ export function LiveScreenRedesign(props: Props) {
     <PlaybackVideo uri={activePlayback!.url} posterUri={activePlayback!.recording.thumbnailUrl} onRetry={props.onRetryPlayback} onNaoDecodificou={props.onNaoDecodificou} onProgresso={props.onProgressoPlayback} initialPositionSeconds={activePlayback!.retomarEm ?? null} style={s.videoFill} />
   ) : hdMode && !hdAvailable ? (
     <View style={s.qualityLoading}>
-      <ActivityIndicator color="#ffffff" />
-      <Text style={s.qualityLoadingText}>Abrindo em máxima resolução…</Text>
+      {hdRequestFailed ? (
+        <>
+          <Text style={s.qualityLoadingText}>HD+ indisponível: não foi possível obter a conexão WebRTC/WHEP.</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Tentar HD+ novamente" onPress={() => {
+            setHdRequestFailed(false);
+            void onRequestHd().then((opened) => { if (!opened) setHdRequestFailed(true); });
+          }}><Text style={s.qualityLoadingText}>Tentar novamente</Text></TouchableOpacity>
+        </>
+      ) : (
+        <><ActivityIndicator color="#ffffff" /><Text style={s.qualityLoadingText}>Conectando HD+ por WebRTC…</Text></>
+      )}
     </View>
   ) : (
     <LiveVideo
-      uri={hdActive ? hdUrl : streamUrl}
+      uri={hdActive ? null : streamUrl}
       whepUri={hdActive ? hdWhepUrl : whepUrl}
+      webrtcOnly={hdActive}
       posterUri={posterUrl}
       // IGUAL AO APP ANTIGO (LiveScreen): videoStyle = flex:1 (NÃO absoluteFill).
       // O wrapper interno do player força position:relative; com absoluteFill os
@@ -215,7 +233,7 @@ export function LiveScreenRedesign(props: Props) {
             <Text style={s.fsName} numberOfLines={1}>{camera.name}</Text>
           </View>
           <ClockBadge style={s.fsClock} textStyle={s.clockText} />
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Sair da tela cheia" style={s.fsClose} onPress={() => setFullscreen(false)} activeOpacity={0.8}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Sair da tela cheia" style={s.fsClose} onPress={() => { setPtzOpen(false); setFullscreen(false); }} activeOpacity={0.8}>
             <Icon name="close" size={18} color="#fff" />
           </TouchableOpacity>
         </View>
@@ -287,7 +305,7 @@ export function LiveScreenRedesign(props: Props) {
             ) : null}
             <View style={[s.hdBadge, recordingActive && s.hdBadgeWithRecording]}><Text style={s.hdBadgeText}>{hdMode ? 'HD+' : 'Economia'}</Text></View>
             {status !== 'live' ? (
-              <View style={s.statusPill}><Text style={s.statusText}>{status === 'connecting' ? 'Conectando…' : status === 'reconnecting' ? 'Reconectando…' : status === 'offline' ? 'Offline' : ''}</Text></View>
+              <View style={s.statusPill}><Text style={s.statusText}>{status === 'connecting' ? 'Conectando…' : status === 'reconnecting' ? 'Reconectando…' : status === 'offline' ? (hdMode ? 'WebRTC indisponível' : 'Offline') : ''}</Text></View>
             ) : null}
           </>
         ) : null}
@@ -315,32 +333,34 @@ export function LiveScreenRedesign(props: Props) {
             <ActionBtn s={s} theme={theme} icon="expand" label="Tela" onPress={() => setFullscreen(true)} />
           </ScrollView>
 
-          {/* Feedback do PTZ (ex.: "Movendo para a direita…") */}
-          {ptzFeedback ? (
-            <View style={s.ptzFeedback}>
-              <Icon name="crosshair" size={14} color={theme.accent} />
-              <Text style={s.ptzFeedbackText}>{ptzLabel(ptzFeedback)}</Text>
-            </View>
-          ) : null}
-
           {/* Pad PTZ */}
-          {ptzOpen ? (
-            <View style={s.ptzPanel}>
-              <View style={s.joystick}>
-                <PtzBtn s={s} theme={theme} icon="arrowUp" dir="Up" pos={{ top: 6, alignSelf: 'center' }} active={ptzActive === 'Up'} onPress={onSendPtz} disabled={!canPtz} />
-                <PtzBtn s={s} theme={theme} icon="arrowDown" dir="Down" pos={{ bottom: 6, alignSelf: 'center' }} active={ptzActive === 'Down'} onPress={onSendPtz} disabled={!canPtz} />
-                <PtzBtn s={s} theme={theme} icon="arrowLeft" dir="Left" pos={{ left: 6, top: '50%', marginTop: -21 }} active={ptzActive === 'Left'} onPress={onSendPtz} disabled={!canPtz} />
-                <PtzBtn s={s} theme={theme} icon="arrowRight" dir="Right" pos={{ right: 6, top: '50%', marginTop: -21 }} active={ptzActive === 'Right'} onPress={onSendPtz} disabled={!canPtz} />
-                <View style={s.joyHome}><Icon name="aperture" size={18} color={theme.accent} /></View>
+          {ptzOpen && canPtz ? (
+            <>
+              {/* Reserva sempre a mesma altura: o texto não pode deslocar o pad enquanto o comando está em curso. */}
+              <View style={s.ptzFeedbackSlot}>
+                {ptzFeedback ? (
+                  <View style={s.ptzFeedback}>
+                    <Icon name="crosshair" size={14} color={theme.accent} />
+                    <Text style={s.ptzFeedbackText}>{ptzLabel(ptzFeedback)}</Text>
+                  </View>
+                ) : null}
               </View>
-              <View style={s.zoomCol}>
-                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Aumentar zoom" accessibilityState={{ disabled: !canPtz }} style={s.zoomBtn} disabled={!canPtz} onPress={() => onSendPtz('ZoomIn')}><Icon name="plus" size={20} color={theme.text} /></TouchableOpacity>
-                <Text style={s.zoomLabel}>Zoom</Text>
-                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Diminuir zoom" accessibilityState={{ disabled: !canPtz }} style={s.zoomBtn} disabled={!canPtz} onPress={() => onSendPtz('ZoomOut')}><Icon name="minus" size={20} color={theme.text} /></TouchableOpacity>
+              <View style={s.ptzPanel}>
+                <View style={s.joystick}>
+                  <PtzBtn s={s} theme={theme} icon="arrowUp" dir="Up" pos={{ top: 6, alignSelf: 'center' }} active={ptzActive === 'Up'} onPress={onSendPtz} />
+                  <PtzBtn s={s} theme={theme} icon="arrowDown" dir="Down" pos={{ bottom: 6, alignSelf: 'center' }} active={ptzActive === 'Down'} onPress={onSendPtz} />
+                  <PtzBtn s={s} theme={theme} icon="arrowLeft" dir="Left" pos={{ left: 6, top: '50%', marginTop: -21 }} active={ptzActive === 'Left'} onPress={onSendPtz} />
+                  <PtzBtn s={s} theme={theme} icon="arrowRight" dir="Right" pos={{ right: 6, top: '50%', marginTop: -21 }} active={ptzActive === 'Right'} onPress={onSendPtz} />
+                  <View style={s.joyHome}><Icon name="aperture" size={18} color={theme.accent} /></View>
+                </View>
+                <View style={s.zoomCol}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Aumentar zoom" style={s.zoomBtn} onPress={() => onSendPtz('ZoomIn')}><Icon name="plus" size={20} color={theme.text} /></TouchableOpacity>
+                  <Text style={s.zoomLabel}>Zoom</Text>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Diminuir zoom" style={s.zoomBtn} onPress={() => onSendPtz('ZoomOut')}><Icon name="minus" size={20} color={theme.text} /></TouchableOpacity>
+                </View>
               </View>
-            </View>
+            </>
           ) : null}
-          {ptzOpen && !canPtz ? <Text style={s.ptzNote}>Seu usuário não tem permissão para controlar esta câmera.</Text> : null}
 
           {/* Espaço restante preenchido com CONTEÚDO ÚTIL (como o painel inferior
               do app antigo): as gravações do dia desta câmera, prontas p/ tocar.
@@ -701,7 +721,8 @@ function makeStyles(t: any) {
     liveRecsTitle: { fontFamily: TITLE, fontSize: 15, fontWeight: '700', color: t.text },
     liveRecsLink: { fontFamily: UI, fontSize: 13, fontWeight: '600', color: t.accent },
     liveRecsEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 7, paddingBottom: 20 },
-    ptzFeedback: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, alignSelf: 'center', marginTop: 12, backgroundColor: t.accentBg, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 7 },
+    ptzFeedbackSlot: { height: 43, marginTop: 12, alignItems: 'center', justifyContent: 'center' },
+    ptzFeedback: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, alignSelf: 'center', backgroundColor: t.accentBg, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 7 },
     ptzFeedbackText: { fontFamily: UI, fontSize: 12.5, fontWeight: '600', color: t.accent },
 
     segmented: { flexDirection: 'row', backgroundColor: t.surfaceAlt, borderRadius: 13, padding: 4, marginVertical: 12, marginHorizontal: 14 },
@@ -717,14 +738,13 @@ function makeStyles(t: any) {
     actionBtn: { width: 66, height: 62, borderRadius: 19, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border, alignItems: 'center', justifyContent: 'center', gap: 5 },
     actionLabel: { fontFamily: MONO, fontSize: 9, fontWeight: '500' },
 
-    ptzPanel: { flexDirection: 'row', gap: 16, marginTop: 16, alignItems: 'center', justifyContent: 'center' },
+    ptzPanel: { flexDirection: 'row', gap: 16, alignItems: 'center', justifyContent: 'center' },
     joystick: { width: 150, height: 150, borderRadius: 75, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border, position: 'relative' },
     joyBtn: { position: 'absolute', width: 42, height: 42, borderRadius: 21, backgroundColor: t.surfaceAlt, alignItems: 'center', justifyContent: 'center' },
     joyHome: { position: 'absolute', top: '50%', left: '50%', width: 44, height: 44, borderRadius: 22, marginLeft: -22, marginTop: -22, backgroundColor: t.accentBg, alignItems: 'center', justifyContent: 'center' },
     zoomCol: { alignItems: 'center', gap: 8 },
     zoomBtn: { width: 52, height: 52, borderRadius: 16, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border, alignItems: 'center', justifyContent: 'center' },
     zoomLabel: { fontFamily: MONO, fontSize: 10, color: t.textSub },
-    ptzNote: { fontFamily: UI, fontSize: 11.5, color: t.textMuted, textAlign: 'center', marginTop: 8, paddingHorizontal: 20 },
 
     // Fonte Servidor / Neste aparelho
     srcToggle: { flexDirection: 'row', gap: 4, backgroundColor: t.surfaceAlt, borderWidth: 1, borderColor: t.border, borderRadius: 14, padding: 4, marginBottom: 16 },

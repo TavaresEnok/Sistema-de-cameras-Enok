@@ -65,11 +65,13 @@ export function parseWhepIceServers(linkHeader?: string | null): WhepIceServer[]
 export async function discoverWhepIceServers(
   whepUrl: string,
   authorization: string | null,
+  signal?: AbortSignal,
 ): Promise<WhepIceServer[]> {
   try {
     const response = await fetch(whepUrl, {
       method: 'OPTIONS',
       redirect: 'error',
+      signal,
       headers: authorization ? { Authorization: authorization } : undefined,
     });
     if (!response.ok) return [];

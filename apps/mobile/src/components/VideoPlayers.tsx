@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { ehPreparoEmAndamento, esperaAteRetentar } from '../utils/playback-source';
 import { useVideoPlayer, VideoView, type VideoSource } from 'expo-video';
 import { WebRtcVideo } from './WebRtcVideo';
+import { webRtcRetryDelay } from '../utils/webrtc-recovery';
 import { Icon } from './Icon';
 import { useTheme } from '../theme/ThemeProvider';
 
@@ -39,6 +40,8 @@ const RECONNECT_MAX_MS = 8_000;
 type LiveVideoProps = {
   uri: string | null;
   whepUri?: string | null;
+  /** Diagnóstico HD+: nunca reproduz HLS nem troca de perfil após falha WHEP. */
+  webrtcOnly?: boolean;
   posterUri?: string | null;
   videoStyle: StyleProp<ViewStyle>;
   emptyStyle: StyleProp<ViewStyle>;
@@ -55,13 +58,15 @@ type LiveVideoProps = {
 };
 
 /**
- * Player ao vivo: tenta WebRTC (WHEP, baixa latência) primeiro e, se não conectar,
- * cai automaticamente para HLS — mesma estratégia do web. A falha do WebRTC marca
- * `webrtcFailed` e re-renderiza no caminho HLS (reseta ao trocar de câmera).
+ * Prioriza WHEP e recupera falhas transitórias sem alternar protocolos.
+ * HLS exige escolha explícita e nunca é interrompido por uma sondagem WHEP.
  */
 export function LiveVideo(props: LiveVideoProps) {
   const { whepUri } = props;
   const [webrtcFailed, setWebrtcFailed] = useState(false);
+  const [webrtcFailureReason, setWebrtcFailureReason] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
+  const [manualHls, setManualHls] = useState(false);
   let whepIdentity = whepUri;
   try {
     if (whepUri) {
@@ -74,21 +79,27 @@ export function LiveVideo(props: LiveVideoProps) {
 
   useEffect(() => {
     setWebrtcFailed(false);
+    setWebrtcFailureReason(null);
+    setFailures(0);
+    setManualHls(false);
   // Renovar apenas o token/query não deve reiniciar um WHEP que já falhou; isso
   // criaria um loop WHEP→token novo→WHEP e impediria o HLS de permanecer ativo.
   // Uma câmera/path realmente diferente ainda ganha uma nova tentativa WebRTC.
   }, [whepIdentity]);
 
-  // HLS é a continuidade segura, mas não deve virar destino permanente após
-  // uma oscilação curta. Revalida WebRTC depois de 30 s e renova a URL antes.
+  // Falha transitória pede outra tentativa WHEP, nunca uma troca de protocolo.
   useEffect(() => {
-    if (!webrtcFailed || !whepUri) return;
+    if (!webrtcFailed || !whepUri || manualHls) return;
+    const delay = webRtcRetryDelay(failures);
+    if (delay === null) return;
     const timer = setTimeout(() => {
       props.onNeedRefresh?.();
       setWebrtcFailed(false);
-    }, 30_000);
+    }, delay);
     return () => clearTimeout(timer);
-  }, [webrtcFailed, whepIdentity]);
+  }, [webrtcFailed, whepIdentity, failures, manualHls]);
+
+  if (manualHls && !props.webrtcOnly) return <HlsLiveVideo {...props} />;
 
   if (whepUri && !webrtcFailed) {
     return (
@@ -98,17 +109,49 @@ export function LiveVideo(props: LiveVideoProps) {
         videoStyle={props.videoStyle}
         posterStyle={props.posterStyle}
         emptyTextStyle={props.emptyTextStyle}
-        onStatusChange={props.onStatusChange}
+        onStatusChange={(status) => {
+          if (status === 'live') setFailures(0);
+          props.onStatusChange?.(status);
+        }}
         muted={props.muted}
         contentFit={props.contentFit}
         onAudioAvailable={props.onAudioAvailable}
         onNeedRefresh={props.onNeedRefresh}
-        onFailover={() => setWebrtcFailed(true)}
+        onFailover={(reason) => {
+          setWebrtcFailureReason(reason ?? 'A conexão WebRTC não entregou vídeo.');
+          setFailures((count) => count + 1);
+          setWebrtcFailed(true);
+        }}
       />
     );
   }
 
-  return <HlsLiveVideo {...props} />;
+  {
+    return (
+      <View style={[props.videoStyle, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b0f16', paddingHorizontal: 20 }]}>
+        <Text style={[props.emptyTitleStyle, { textAlign: 'center' }]}>{webrtcFailed && webRtcRetryDelay(failures) !== null ? 'Reconectando por WebRTC…' : 'WebRTC indisponível'}</Text>
+        <Text style={props.emptyTextStyle}>
+          {whepUri ? webrtcFailureReason ?? 'A conexão WebRTC não entregou vídeo.' : 'O servidor não forneceu uma URL WHEP para esta câmera.'}
+        </Text>
+        {whepUri ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Tentar WebRTC novamente" onPress={() => {
+            props.onNeedRefresh?.();
+            setWebrtcFailureReason(null);
+            setFailures(0);
+            setWebrtcFailed(false);
+          }} style={{ marginTop: 16, padding: 10 }}>
+            <Text style={[props.emptyTitleStyle, { textAlign: 'center' }]}>Tentar novamente</Text>
+          </Pressable>
+        ) : null}
+        {!props.webrtcOnly && props.uri && (!whepUri || webRtcRetryDelay(failures) === null) ? (
+          <Pressable accessibilityRole="button" onPress={() => setManualHls(true)} style={{ marginTop: 12, padding: 10 }}>
+            <Text style={props.emptyTitleStyle}>Usar modo compatível (HLS)</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  }
+
 }
 
 function HlsLiveVideo({
