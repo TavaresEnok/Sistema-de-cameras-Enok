@@ -5,7 +5,7 @@ import { OnvifPtzService } from '../src/ptz/onvif-ptz.service';
 const service = () => new OnvifPtzService(
   { decrypt: () => 'secret' } as never,
   { check: async () => true } as never,
-  { getCamera: () => ({}) } as never,
+  { getCamera: () => ({}), patchCamera: () => ({}) } as never,
 );
 
 test('PTZ por toque usa o ângulo solicitado e velocidade interna fixa', () => {
@@ -60,9 +60,24 @@ test('Intelbras/Dahua não confia em RelativeMove falso-positivo e usa pulso mí
 
   assert.equal(result.ok, true);
   assert.equal(result.mode, 'step');
-  assert.equal(result.durationMs, 40);
+  assert.equal(result.durationMs, 50);
   assert.equal(result.angleDegrees, 3);
   assert.deepEqual(called, ['start', 'stop']);
+});
+
+test('ângulos do PTZ proprietário geram quatro pulsos realmente diferentes', async () => {
+  const ptz = service() as any;
+  ptz.move = async () => ({ ok: true, message: 'ok' });
+  ptz.stop = async () => ({ ok: true, message: 'ok' });
+  const durations: number[] = [];
+  for (const angle of [2, 5, 10, 20]) {
+    const result = await ptz.step({
+      id: `camera-${angle}`,
+      rtspPath: '/cam/realmonitor?channel=1&subtype=0',
+    } as never, 'Left', angle);
+    durations.push(result.durationMs);
+  }
+  assert.deepEqual(durations, [40, 70, 120, 220]);
 });
 
 test('Intelbras/Dahua tenta CGI antes da rota ONVIF que pode mentir sucesso', async () => {
@@ -92,7 +107,7 @@ test('CGI PTZ tenta primeiro a porta cadastrada sem varrer portas TCP', async ()
   const ptz = new OnvifPtzService(
     { decrypt: () => 'secret' } as never,
     { check: async () => { portChecks += 1; return true; } } as never,
-    { getCamera: () => ({}) } as never,
+    { getCamera: () => ({}), patchCamera: () => ({}) } as never,
   ) as any;
   const calls: Array<{ port: number; path: string }> = [];
   ptz.digestSoapRequest = async (input: { port: number; path: string }) => {

@@ -51,6 +51,12 @@ type LearnedPtzRoute = {
   learnedAt: number;
 };
 
+type LearnedProprietaryRoute = {
+  cameraIp: string;
+  port: number;
+  channel: number;
+};
+
 @Injectable()
 export class OnvifPtzService {
   private readonly fixedOperatorSpeed = 5;
@@ -65,6 +71,7 @@ export class OnvifPtzService {
   // Guardamos somente a rota que JÁ aceitou um comando e a descartamos se ela
   // falhar; mudar porta/caminho no cadastro também invalida o cache.
   private readonly learnedPtzRoutes = new Map<string, LearnedPtzRoute>();
+  private readonly learnedProprietaryRoutes = new Map<string, LearnedProprietaryRoute>();
   private readonly learnedPtzRouteTtlMs = 12 * 60 * 60 * 1000;
 
   constructor(
@@ -902,6 +909,31 @@ export class OnvifPtzService {
     return Array.from(new Set([1, camera.channel].filter((value): value is number => Number.isFinite(value) && value > 0)));
   }
 
+  private knownProprietaryRoute(camera: Camera) {
+    const memory = this.learnedProprietaryRoutes.get(camera.id);
+    if (memory?.cameraIp === camera.ip) return memory;
+    const stored = this.ptzStateStore.getCamera(camera.id).proprietaryRoute;
+    if (stored?.cameraIp === camera.ip && Number.isFinite(stored.port) && Number.isFinite(stored.channel)) {
+      this.learnedProprietaryRoutes.set(camera.id, stored);
+      return stored;
+    }
+    return null;
+  }
+
+  private rememberProprietaryRoute(camera: Camera, port: number, channel: number) {
+    const route = { cameraIp: camera.ip, port, channel };
+    const previous = this.knownProprietaryRoute(camera);
+    this.learnedProprietaryRoutes.set(camera.id, route);
+    if (!previous || previous.port !== port || previous.channel !== channel || previous.cameraIp !== camera.ip) {
+      this.ptzStateStore.patchCamera(camera.id, { proprietaryRoute: route });
+    }
+  }
+
+  private forgetProprietaryRoute(camera: Camera) {
+    this.learnedProprietaryRoutes.delete(camera.id);
+    this.ptzStateStore.patchCamera(camera.id, { proprietaryRoute: undefined });
+  }
+
   private extractVendorAlarmOutputs(responseBody?: string) {
     if (!responseBody) return [];
     const relays: Array<{ token: string; protocol: 'cgi'; output: number; mode?: string }> = [];
@@ -1055,8 +1087,9 @@ export class OnvifPtzService {
     direction?: NonNullable<PtzCommandDto['direction']>,
   ) {
     const auth = this.resolveOnvifCredentials(camera);
-    const ports = this.proprietaryPorts(camera);
-    const channels = this.proprietaryChannels(camera);
+    const learned = this.knownProprietaryRoute(camera);
+    const ports = Array.from(new Set([learned?.port, ...this.proprietaryPorts(camera)].filter((value): value is number => Number.isFinite(value))));
+    const channels = Array.from(new Set([learned?.channel, ...this.proprietaryChannels(camera)].filter((value): value is number => Number.isFinite(value))));
 
     // Não faça uma varredura TCP de TODAS as portas antes de enviar o comando.
     // Em câmera remota/CGNAT cada porta fechada pode consumir segundos; no caso
@@ -1076,16 +1109,18 @@ export class OnvifPtzService {
                 path: `/cgi-bin/ptz.cgi?action=stop&channel=${channel}&code=${code}&arg1=0&arg2=1&arg3=0`,
                 username: auth.username,
                 password: auth.password,
-                timeout: 3500,
+                timeout: learned?.port === port && learned.channel === channel ? 900 : 1200,
                 contentType: 'text/plain',
               });
               if (result.ok && !this.isCgiErrorResponse(result.responseBody)) {
+                this.rememberProprietaryRoute(camera, port, channel);
                 return { ok: true, message: 'ok', protocol: 'cgi', channel, port, code };
               }
             }
           }
         }
       }
+      if (learned) this.forgetProprietaryRoute(camera);
       return { ok: false, message: 'Falha ao parar PTZ no endpoint proprietário.' };
     }
 
@@ -1102,15 +1137,17 @@ export class OnvifPtzService {
             path: `/cgi-bin/ptz.cgi?action=start&channel=${channel}&code=${code}&arg1=0&arg2=1&arg3=0`,
             username: auth.username,
             password: auth.password,
-            timeout: 3500,
+            timeout: learned?.port === port && learned.channel === channel ? 900 : 1200,
             contentType: 'text/plain',
           });
           if (result.ok && !this.isCgiErrorResponse(result.responseBody)) {
+            this.rememberProprietaryRoute(camera, port, channel);
             return { ok: true, message: 'ok', protocol: 'cgi', channel, port, code };
           }
         }
       }
     }
+    if (learned) this.forgetProprietaryRoute(camera);
     return { ok: false, message: 'Nenhum endpoint proprietário aceitou o comando.' };
   }
 
@@ -1144,7 +1181,7 @@ export class OnvifPtzService {
   }
 
   async step(camera: Camera, direction: NonNullable<PtzCommandDto['direction']>, angleDegrees?: number, durationMs?: number) {
-    const safeAngle = Math.max(1, Math.min(30, Number(angleDegrees ?? 3)));
+    const safeAngle = Math.max(2, Math.min(20, Number(angleDegrees ?? 5)));
     // Intelbras/Dahua e vários OEMs respondem HTTP 200 ao RelativeMove, mas
     // simplesmente não se mexem. Neles usamos o CGI nativo em pulso curto.
     // Para ONVIF comum, RelativeMove continua sendo a opção mais precisa.
@@ -1159,14 +1196,15 @@ export class OnvifPtzService {
     // É só contingência; a interface nunca pede mais o antigo padrão de 420ms.
     // No CGI o controle de velocidade do equipamento já está no mínimo
     // (arg2=1). O pulso anterior de 160 ms ainda era longo para domes rápidas;
-    // usamos metade, com faixa estreita. ONVIF legado mantém a faixa anterior.
+    // Cada opção da interface precisa gerar um pulso distinto. O teto antigo
+    // de 120 ms fazia 10° e 20° moverem exatamente a mesma distância.
     const stepDuration = Number.isFinite(durationMs)
       ? (this.shouldPreferProprietaryPtz(camera)
-        ? Math.max(40, Math.min(120, Math.round(Number(durationMs) / 2)))
+        ? Math.max(40, Math.min(240, Math.round(Number(durationMs) / 2)))
         : Math.max(80, Math.min(600, Number(durationMs))))
       : (this.shouldPreferProprietaryPtz(camera)
-        ? Math.max(40, Math.min(120, Math.round(safeAngle * 12)))
-        : Math.max(80, Math.min(450, Math.round(safeAngle * 30))));
+        ? Math.max(40, Math.min(240, Math.round((safeAngle * 10) + 20)))
+        : Math.max(60, Math.min(600, Math.round(safeAngle * 20))));
     const start = await this.move(camera, direction, this.fixedOperatorSpeed);
     if (!start.ok) return start;
     await new Promise((resolve) => setTimeout(resolve, stepDuration));

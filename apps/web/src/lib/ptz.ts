@@ -31,28 +31,35 @@ export async function sendPtzCommand(cameraId: string, payload: PtzAction) {
   try {
     const { data } = await client().post<PtzResponse>(`/ptz/${cameraId}/move`, payload);
     if (data.status !== 'ok') {
-      throw new Error(friendlyPtzError(data.message));
+      throw new Error(friendlyPtzError(data.message, 'direction' in payload ? payload.direction : undefined));
     }
     return data;
   } catch (error) {
     const responseMessage = axios.isAxiosError(error)
       ? (error.response?.data as { message?: string } | undefined)?.message
       : error instanceof Error ? error.message : undefined;
-    throw new Error(friendlyPtzError(responseMessage));
+    throw new Error(friendlyPtzError(responseMessage, 'direction' in payload ? payload.direction : undefined));
   }
 }
 
 /** Nunca mostra protocolo, código HTTP ou nome interno para o operador. */
-export function friendlyPtzError(message?: string) {
+export function friendlyPtzError(message?: string, direction?: PTZDirection) {
   const raw = String(message ?? '').trim();
+  const isZoom = direction === 'ZoomIn' || direction === 'ZoomOut';
   if (/usu[aá]rio|senha|credencial|unauthorized|\b401\b/i.test(raw)) {
     return 'A câmera recusou o usuário ou a senha. Confira as credenciais no cadastro.';
   }
   if (/timeout|unreachable|network|porta|conex[aã]o|\bECONN/i.test(raw)) {
-    return 'A câmera não respondeu ao controle. Confira se ela está online e se a porta ONVIF ou HTTP está correta.';
+    return isZoom
+      ? 'O vídeo e o movimento continuam disponíveis, mas esta câmera não respondeu ao zoom.'
+      : 'O vídeo pode continuar normalmente, mas o canal de controle não respondeu. Confira a porta ONVIF ou HTTP no cadastro.';
   }
   if (/sem PTZ|fixa|recusou|n[aã]o aceitou|not support|SOAP|endpoint|profile/i.test(raw)) {
-    return 'A câmera não aceitou o movimento. Ela pode não ter PTZ ou pode estar com a porta ONVIF/HTTP incorreta.';
+    return isZoom
+      ? 'Esta câmera aceita movimento, mas não oferece controle de zoom.'
+      : 'Esta câmera transmite vídeo, mas não aceitou o movimento. Ela pode ser uma câmera fixa, sem PTZ.';
   }
-  return 'Não foi possível mover a câmera agora. Aguarde alguns segundos e tente novamente.';
+  return isZoom
+    ? 'O zoom não está disponível nesta câmera.'
+    : 'Não foi possível mover a câmera agora. Aguarde alguns segundos e tente novamente.';
 }

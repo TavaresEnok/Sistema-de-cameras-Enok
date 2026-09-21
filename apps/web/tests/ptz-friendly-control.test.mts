@@ -13,6 +13,8 @@ test('PTZ mostra deslocamento em graus e não expõe velocidade ao operador', ()
   }
   assert.doesNotMatch(page, />Velocidade</);
   assert.doesNotMatch(page, /durationMs:\s*160|speed:\s*5/);
+  assert.match(page, /\[2, 5, 10, 20\]/);
+  assert.doesNotMatch(page, /onPointerUp=\{onStop\}/, 'soltar um toque não deve enviar uma segunda parada');
 });
 
 test('cliente PTZ troca mensagens técnicas por orientação humana', () => {

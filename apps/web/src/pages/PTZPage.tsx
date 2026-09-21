@@ -63,15 +63,13 @@ function ControlButton({
   icon,
   active,
   disabled,
-  onStart,
-  onStop,
+  onActivate,
 }: {
   label: string;
   icon: React.ReactNode;
   active?: boolean;
   disabled?: boolean;
-  onStart: () => void;
-  onStop: () => void;
+  onActivate: () => void;
 }) {
   return (
     <button
@@ -79,27 +77,7 @@ function ControlButton({
       disabled={disabled}
       title={label}
       aria-label={label}
-      onPointerDown={(event) => {
-        event.preventDefault();
-        event.currentTarget.setPointerCapture(event.pointerId);
-        onStart();
-      }}
-      onPointerUp={onStop}
-      onPointerCancel={onStop}
-      onLostPointerCapture={onStop}
-      onKeyDown={(event) => {
-        if ((event.key === ' ' || event.key === 'Enter') && !event.repeat) {
-          event.preventDefault();
-          onStart();
-        }
-      }}
-      onKeyUp={(event) => {
-        if (event.key === ' ' || event.key === 'Enter') {
-          event.preventDefault();
-          onStop();
-        }
-      }}
-      onBlur={onStop}
+      onClick={onActivate}
       className={[
         'flex h-12 w-12 items-center justify-center rounded-xl border transition-all select-none',
         active
@@ -125,7 +103,7 @@ export default function PTZPage() {
     [cameras],
   );
   const [selectedCamId, setSelectedCamId] = useState('');
-  const [angleDegrees, setAngleDegrees] = useState(3);
+  const [angleDegrees, setAngleDegrees] = useState(5);
   const [activeDirection, setActiveDirection] = useState<PTZDirection | null>(null);
   const [commandState, setCommandState] = useState<CommandState>('idle');
   const [lastCommand, setLastCommand] = useState<string>('Nenhum comando enviado');
@@ -144,12 +122,10 @@ export default function PTZPage() {
     [cameras],
   );
 
-  const situacaoDeDeteccao = useCallback((camera: typeof cameras[number]) => {
-    if (!camera.isOnline) {
-      return { podeTestar: false, motivo: 'Esta câmera está offline. Aguarde o sinal voltar antes de verificar o controle PTZ.' };
-    }
-    return { podeTestar: true, motivo: 'A verificação consulta o equipamento e informa se o controle PTZ está disponível.' };
-  }, []);
+  const situacaoDeDeteccao = useCallback((_camera: typeof cameras[number]) => ({
+    podeTestar: true,
+    motivo: 'A verificação consulta o canal de controle da câmera. Vídeo e PTZ usam conexões diferentes.',
+  }), []);
 
   const requestedCameraId = useMemo(() => {
     if (typeof window === 'undefined') return null;
@@ -173,7 +149,9 @@ export default function PTZPage() {
   }, [ptzCameras, requestedCameraId, selectedCamId]);
 
   const selectedCam = ptzCameras.find((camera) => camera.id === selectedCamId) ?? null;
-  const controlsDisabled = !selectedCam || !selectedCam.isOnline;
+  // RTMP é enviado pela câmera ao servidor, enquanto PTZ volta pelo canal
+  // HTTP/ONVIF. O estado de um não prova o estado do outro.
+  const controlsDisabled = !selectedCam;
   const requestedCameraUnavailable = Boolean(
     requestedCameraId && !ptzCameras.some((camera) => camera.id === requestedCameraId),
   );
@@ -205,11 +183,7 @@ export default function PTZPage() {
         setCommandState('error');
         setLastError(message);
         setLastCommand(`Falha ao mover para ${DIRECTION_LABEL[direction]} em ${selectedCam.name}`);
-        toast({
-          title: 'Falha no PTZ',
-          description: message,
-          variant: 'destructive',
-        });
+        toast({ title: 'Movimento não disponível', description: message });
       }
     },
     [angleDegrees, controlsDisabled, selectedCam],
@@ -224,7 +198,7 @@ export default function PTZPage() {
     setCommandState('sending');
 
     try {
-      await movement.startPromise?.catch(() => undefined);
+      // Ação explícita de emergência: não espere o passo terminar para parar.
       await sendPtzCommand(movement.cameraId, { action: 'stop', direction: currentDirection });
       setCommandState('ok');
       setLastError(null);
@@ -234,41 +208,9 @@ export default function PTZPage() {
       setCommandState('error');
       setLastError(message);
       setLastCommand(`Falha ao parar movimento para ${DIRECTION_LABEL[currentDirection]} em ${movement.cameraName}`);
-      toast({
-        title: 'Falha ao parar PTZ',
-        description: message,
-        variant: 'destructive',
-      });
+      toast({ title: 'O controle não confirmou a parada', description: message });
     }
   }, []);
-
-  const stopMoveSilently = useCallback(() => {
-    const movement = activeMovementRef.current;
-    if (!movement) return;
-    activeMovementRef.current = null;
-    setActiveDirection(null);
-    void (async () => {
-      await movement.startPromise?.catch(() => undefined);
-      await sendPtzCommand(movement.cameraId, { action: 'stop', direction: movement.direction });
-    })().catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
-    const stopOnHidden = () => {
-      if (document.visibilityState === 'hidden') stopMoveSilently();
-    };
-    window.addEventListener('blur', stopMoveSilently);
-    window.addEventListener('pagehide', stopMoveSilently);
-    document.addEventListener('visibilitychange', stopOnHidden);
-    return () => {
-      stopMoveSilently();
-      window.removeEventListener('blur', stopMoveSilently);
-      window.removeEventListener('pagehide', stopMoveSilently);
-      document.removeEventListener('visibilitychange', stopOnHidden);
-    };
-  }, [stopMoveSilently]);
-
-  useEffect(() => stopMoveSilently, [selectedCamId, stopMoveSilently]);
 
   const runDiagnostics = useCallback(async () => {
     if (!selectedCam || !accessToken) return;
@@ -445,7 +387,7 @@ export default function PTZPage() {
             Movimento por toque
           </div>
           <div className="flex gap-1" role="group" aria-label="Deslocamento aproximado por toque">
-            {[1, 3, 5, 10].map((degrees) => (
+            {[2, 5, 10, 20].map((degrees) => (
               <button
                 key={degrees}
                 type="button"
@@ -489,7 +431,7 @@ export default function PTZPage() {
       <div className="grid flex-1 min-h-0 gap-4 p-4 md:p-5 xl:grid-cols-[minmax(0,1.35fr)_420px]">
         <div className="flex min-h-0 flex-col gap-4">
           <div className="relative min-h-[320px] flex-1 overflow-hidden rounded-lg border border-border bg-[linear-gradient(160deg,hsl(222_22%_9%),hsl(220_18%_7%))] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-            {selectedCam?.isOnline ? (
+            {selectedCam ? (
               <LiveStreamPlayer
                 cameraId={selectedCam.id}
                 cameraName={selectedCam.name}
@@ -510,13 +452,13 @@ export default function PTZPage() {
               </div>
             </div>
 
-            {!selectedCam?.isOnline && (
+            {!selectedCam && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/45">
                 <div className="rounded-lg border border-border bg-black/45 px-5 py-4 text-center">
                   <AlertTriangle className="mx-auto mb-2 h-5 w-5 text-[hsl(var(--muted-foreground))]" />
                   <div className="text-sm font-medium">Stream indisponível</div>
                   <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
-                    A câmera selecionada está offline ou sem sinal.
+                    Selecione uma câmera para abrir o vídeo.
                   </div>
                 </div>
               </div>
@@ -527,7 +469,7 @@ export default function PTZPage() {
                 {selectedCam?.code ?? 'SEM CAMERA'}
               </span>
               <span className="rounded-md border border-white/10 bg-black/45 px-2 py-1 text-[10px] text-white/70">
-                {selectedCam?.isOnline ? 'Ao vivo' : 'Offline'}
+                {selectedCam?.isOnline ? 'Ao vivo' : 'Verificando vídeo'}
               </span>
               {activeDirection && (
                 <span className="rounded-md border border-[hsl(var(--primary)_/_0.4)] bg-[hsl(var(--primary)_/_0.14)] px-2 py-1 font-mono text-[10px] text-[hsl(var(--primary-foreground))]">
@@ -629,8 +571,7 @@ export default function PTZPage() {
                 icon={<ArrowUp className="h-4 w-4" />}
                 active={activeDirection === 'Up'}
                 disabled={controlsDisabled}
-                onStart={() => void startMove('Up')}
-                onStop={() => void stopMove()}
+                onActivate={() => void startMove('Up')}
               />
               <div />
               <ControlButton
@@ -638,8 +579,7 @@ export default function PTZPage() {
                 icon={<ArrowLeft className="h-4 w-4" />}
                 active={activeDirection === 'Left'}
                 disabled={controlsDisabled}
-                onStart={() => void startMove('Left')}
-                onStop={() => void stopMove()}
+                onActivate={() => void startMove('Left')}
               />
               <button
                 type="button"
@@ -655,8 +595,7 @@ export default function PTZPage() {
                 icon={<ArrowRight className="h-4 w-4" />}
                 active={activeDirection === 'Right'}
                 disabled={controlsDisabled}
-                onStart={() => void startMove('Right')}
-                onStop={() => void stopMove()}
+                onActivate={() => void startMove('Right')}
               />
               <div />
               <ControlButton
@@ -664,8 +603,7 @@ export default function PTZPage() {
                 icon={<ArrowDown className="h-4 w-4" />}
                 active={activeDirection === 'Down'}
                 disabled={controlsDisabled}
-                onStart={() => void startMove('Down')}
-                onStop={() => void stopMove()}
+                onActivate={() => void startMove('Down')}
               />
               <div />
             </div>
@@ -676,16 +614,14 @@ export default function PTZPage() {
                 icon={<ZoomIn className="h-4 w-4" />}
                 active={activeDirection === 'ZoomIn'}
                 disabled={controlsDisabled}
-                onStart={() => void startMove('ZoomIn')}
-                onStop={() => void stopMove()}
+                onActivate={() => void startMove('ZoomIn')}
               />
               <ControlButton
                 label="Afastar zoom"
                 icon={<ZoomOut className="h-4 w-4" />}
                 active={activeDirection === 'ZoomOut'}
                 disabled={controlsDisabled}
-                onStart={() => void startMove('ZoomOut')}
-                onStop={() => void stopMove()}
+                onActivate={() => void startMove('ZoomOut')}
               />
             </div>
 

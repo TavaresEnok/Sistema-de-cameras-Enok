@@ -583,7 +583,7 @@ export default function CameraDetailPage() {
   const [commandState, setCommandState] = useState<CommandState>('idle');
   const [lastCommand, setLastCommand] = useState('Nenhum comando PTZ enviado');
   const [lastError, setLastError] = useState<string | null>(null);
-  const [ptzAngleDegrees, setPtzAngleDegrees] = useState(3);
+  const [ptzAngleDegrees, setPtzAngleDegrees] = useState(5);
 
   const [videoMuted, setVideoMuted] = useState(true);
   const [videoZoom, setVideoZoom] = useState(1);
@@ -729,7 +729,9 @@ export default function CameraDetailPage() {
     };
   }, []);
 
-  const controlsDisabled = !cam?.isOnline;
+  // RTMP e PTZ usam caminhos diferentes; o estado do vídeo não bloqueia o
+  // teste do canal HTTP/ONVIF.
+  const controlsDisabled = !cam;
 
   const startMove = useCallback(async (direction: PTZDirection) => {
     if (!cam || controlsDisabled || activeMovementRef.current) return;
@@ -1654,7 +1656,7 @@ export default function CameraDetailPage() {
                       Movimento por toque
                     </div>
                     <div className="grid grid-cols-4 gap-1" role="group" aria-label="Deslocamento aproximado por toque">
-                      {[1, 3, 5, 10].map((degrees) => (
+                      {[2, 5, 10, 20].map((degrees) => (
                         <button
                           key={degrees}
                           type="button"

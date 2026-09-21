@@ -74,8 +74,8 @@ export function diagnosticarFalhaPtz(tentativas: string[]): DiagnosticoPtz {
     return {
       causa: 'inalcancavel',
       mensagem:
-        'A câmera não respondeu no endereço e nas portas configuradas. Verifique se ela está online e '
-        + 'se a porta ONVIF do cadastro está correta.',
+        'O vídeo pode continuar normalmente, mas o canal de controle não respondeu. '
+        + 'Confira a porta ONVIF ou HTTP no cadastro da câmera.',
       detalhesTecnicos,
     };
   }
@@ -87,8 +87,8 @@ export function diagnosticarFalhaPtz(tentativas: string[]): DiagnosticoPtz {
     return {
       causa: 'sem-suporte',
       mensagem:
-        'Esta câmera respondeu, mas recusou todos os comandos de movimento — o modelo provavelmente é fixo, '
-        + 'sem PTZ. Se ela se move, confira a porta ONVIF/HTTP e as credenciais configuradas.',
+        'Esta câmera transmite vídeo, mas recusou os comandos de movimento. O modelo provavelmente é fixo, '
+        + 'sem PTZ. Se ela se move, confira a porta ONVIF/HTTP no cadastro.',
       detalhesTecnicos,
     };
   }

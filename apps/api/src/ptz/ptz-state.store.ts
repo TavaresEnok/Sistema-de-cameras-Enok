@@ -14,6 +14,12 @@ type CameraPtzState = {
   onvifPasswordEncrypted?: string;
   capabilities?: Record<string, boolean>;
   presets?: StoredPreset[];
+  /** Última rota CGI que realmente aceitou PTZ. Evita procurar portas a cada toque. */
+  proprietaryRoute?: {
+    cameraIp: string;
+    port: number;
+    channel: number;
+  };
 };
 
 type PtzStateFile = {
@@ -61,4 +67,3 @@ export class PtzStateStore {
     return state.cameras[cameraId];
   }
 }
-
