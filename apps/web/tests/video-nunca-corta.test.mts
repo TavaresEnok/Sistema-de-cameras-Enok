@@ -4,10 +4,9 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// "os vídeos nunca devem ser cortados para caber nos quadrados; se por acaso
-//  algum vídeo tiver o formato da tela diferente, deve colocar as colunas
-//  pretas para o vídeo não ser cortado — tanto na visualização única como em
-//  grid" (dono, 26/08/2026)
+// A visualização INDIVIDUAL e a reprodução preservam o quadro inteiro. A grade
+// preenche tiles uniformes; antes disso, o backend tenta selecionar uma fonte
+// com a mesma proporção da principal para evitar corte desnecessário.
 //
 // A grade usava `object-cover`, que preenche a célula CORTANDO as bordas. A
 // justificativa registrada no código era estética: "some a borda preta e as
@@ -20,8 +19,8 @@ import { join } from 'node:path';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const RAIZ = join(process.cwd(), 'src');
-/** Logo e avatar PODEM cortar: são enfeite, não imagem de câmera. */
-const PERMITIDOS = ['ui/item.tsx'];
+/** Logo/avatar e o mosaico ao vivo podem preencher a caixa. */
+const PERMITIDOS = ['ui/item.tsx', 'components/LiveStreamPlayer.tsx'];
 
 function arquivos(dir: string, acc: string[] = []): string[] {
   for (const e of readdirSync(dir)) {
@@ -50,14 +49,10 @@ test('NENHUMA imagem de câmera ou gravação é cortada', () => {
   assert.deepEqual(culpados, [], 'cortar imagem de câmera esconde a periferia da cena');
 });
 
-test('o player usa object-contain nos DOIS modos', () => {
+test('o mosaico preenche o tile e a câmera individual preserva o quadro inteiro', () => {
   const t = readFileSync(join(RAIZ, 'components/LiveStreamPlayer.tsx'), 'utf8');
-  assert.doesNotMatch(
-    t,
-    /liveViewMode === 'grid' \? 'object-cover'/,
-    'a grade não pode voltar a cortar',
-  );
-  assert.match(t, /pointer-events-none object-contain/, 'o vídeo mostra o quadro inteiro');
+  assert.match(t, /liveViewMode === 'grid' \? 'object-cover' : 'object-contain'/);
+  assert.match(t, /Na visualização individual usamos `contain`/);
 });
 
 test('o editor de zonas usa a proporção REAL da câmera', () => {
