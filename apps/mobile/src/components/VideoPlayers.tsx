@@ -105,6 +105,10 @@ export function LiveVideo(props: LiveVideoProps) {
     return () => clearTimeout(timer);
   }, [webrtcFailed, whepIdentity, failures, manualHls]);
 
+  if (props.hlsOnConfirmedWhepIncompatibility && props.uri && !whepUri) {
+    return <HlsLiveVideo {...props} />;
+  }
+
   if (manualHls && (!props.webrtcOnly || props.hlsOnConfirmedWhepIncompatibility)) return <HlsLiveVideo {...props} />;
 
   if (whepUri && !webrtcFailed) {

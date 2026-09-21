@@ -177,10 +177,14 @@ test('PTZ respeita a permissão também em tela cheia, fecha ao sair e não desl
 });
 
 test('HD+ preserva a imagem original via HLS somente quando WHEP confirma incompatibilidade', () => {
+  const app = readFileSync('App.tsx', 'utf8');
   const player = readFileSync('src/components/VideoPlayers.tsx', 'utf8');
   const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
+  assert(app.includes('setHdUrl(hls)'), 'a URL HLS original não pode ser descartada ao preparar HD+');
+  assert(app.includes('if (!whep && !hls)'), 'HD+ deve aceitar WHEP ou HLS do mesmo stream original');
   assert(player.includes('hlsOnConfirmedWhepIncompatibility'), 'o player precisa distinguir incompatibilidade confirmada de falha transitória');
   assert(player.includes("/HTTP 400/.test(reason ?? '')"), 'somente a recusa confirmada da negociação pode abrir HLS automaticamente');
+  assert(player.includes('props.uri && !whepUri'), 'quando o servidor não oferece WHEP, o original deve abrir diretamente no player nativo');
   assert(redesign.includes('uri={hdActive ? hdUrl : streamUrl}'), 'HLS de HD+ deve receber o stream original, não o perfil reduzido');
   assert(redesign.includes('hlsOnConfirmedWhepIncompatibility={hdActive}'), 'a exceção de compatibilidade deve valer apenas no HD+');
 });

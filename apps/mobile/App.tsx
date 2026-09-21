@@ -506,8 +506,12 @@ function AppInner() {
       const whepRaw = data.protocols?.whepUrl
         ?? (data.protocols?.webrtcUrl ? `${data.protocols.webrtcUrl.replace(/\/+$/, '')}/whep` : null);
       const whep = authenticatedMediaUrl(whepRaw, session.apiUrl, data.streamToken);
-      if (!whep) throw new Error('sem URL WHEP para HD+');
-      setHdUrl(null);
+      const hls = authenticatedMediaUrl(data.protocols?.hlsUrl ?? null, session.apiUrl, data.streamToken);
+      if (!whep && !hls) throw new Error('sem URL de máxima qualidade');
+      // Guardamos os dois caminhos do MESMO stream original. WHEP continua
+      // prioritário; HLS só é usado quando a negociação comprova que o codec
+      // original (ex.: H.265) não existe na oferta WebRTC deste Android.
+      setHdUrl(hls);
       setHdWhepUrl(whep);
       void loadStream(cameraId, 'grid');
       return true;

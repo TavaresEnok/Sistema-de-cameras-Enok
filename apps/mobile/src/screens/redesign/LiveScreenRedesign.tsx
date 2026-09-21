@@ -127,7 +127,7 @@ export function LiveScreenRedesign(props: Props) {
   // Diagnóstico: HD+ usa exclusivamente WebRTC/WHEP; Economia mantém seu fallback.
   const [hdMode, setHdMode] = useState(true);
   const [hdRequestFailed, setHdRequestFailed] = useState(false);
-  const hdAvailable = !!hdWhepUrl;
+  const hdAvailable = !!hdWhepUrl || !!hdUrl;
   const hdActive = hdMode;
   const requestHdRef = useRef(onRequestHd);
   requestHdRef.current = onRequestHd;
