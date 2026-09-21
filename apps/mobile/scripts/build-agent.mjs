@@ -128,6 +128,24 @@ function ensureBuildWorktree(commit, slug) {
     }
   }
 
+  // A release pode acrescentar/remover dependências sem que o checkout ativo
+  // do agente tenha sido reinstalado. Copiar node_modules antigos nesse caso
+  // produz um APK que falha no Metro com "Unable to resolve module". O install
+  // incremental roda DENTRO do worktree aprovado, usa seu lockfile exato e
+  // normalmente só relinka o que já existe no store local do pnpm.
+  const dependencies = spawnSync('corepack', [
+    'pnpm', '--filter', 'mobile...', 'install', '--frozen-lockfile', '--prefer-offline',
+  ], {
+    cwd: worktree,
+    encoding: 'utf8',
+    timeout: 10 * 60 * 1000,
+    maxBuffer: 8 * 1024 * 1024,
+    env: process.env,
+  });
+  if (dependencies.status !== 0) {
+    throw new Error(`não foi possível sincronizar as dependências da release: ${(dependencies.stderr || dependencies.stdout || '').trim()}`);
+  }
+
   // CMake grava fingerprints binários dentro de node_modules/**/android/.cxx.
   // Como os worktrees reutilizam dependências por hardlink, esse cache pode ter
   // sido produzido por outra geração e o Gradle falha com CXX1420. É conteúdo
@@ -174,7 +192,10 @@ function summarizeBuildFailure(log, code) {
   if (/firebase|google-services\.json|messaging/i.test(text)) {
     return 'Não foi possível preparar as notificações do aplicativo. Confira a configuração do Firebase.';
   }
-  if (/logo|icon|adaptive.?icon|imagem|image|png|jpeg|sharp/i.test(text)) {
+  if (/unable to resolve module|module not found|cannot find module|could not resolve .+ from/i.test(text)) {
+    return 'Um componente necessário do aplicativo não foi instalado corretamente. Gere novamente; se persistir, consulte o suporte.';
+  }
+  if (/logo do cliente|adaptive.?icon|(?:process|decode|convert|read).{0,40}(?:imagem|image|png|jpe?g)|sharp.{0,80}(?:error|fail)|invalid.{0,30}(?:png|jpe?g|image)/i.test(text)) {
     return 'Uma imagem da personalização não pôde ser processada. Escolha outra imagem e tente novamente.';
   }
   if (/network|timed? ?out|econn|could not (get|resolve|download)|unable to resolve|npm registry/i.test(text)) {

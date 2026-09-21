@@ -136,7 +136,9 @@ test('build-agent limpa cache CMake compartilhado e expõe a causa da falha', ()
   assert(agent.includes("git(['fetch', '--prune', 'origin']"), 'agente deve buscar uma release recém-aprovada antes de recusá-la');
   assert(agent.includes("'-name', '.cxx'"), 'agente deve remover todo cache .cxx contaminado, inclusive dentro de android/build');
   assert(agent.includes("path.join(worktree, 'node_modules')"), 'limpeza deve alcançar dependências hoisted na raiz do monorepo');
+  assert(agent.includes("'install', '--frozen-lockfile', '--prefer-offline'"), 'cada release deve sincronizar dependências pelo próprio lockfile antes de compilar');
   assert(agent.includes('summarizeBuildFailure'), 'agente deve guardar um motivo útil para falhas de build');
+  assert(agent.indexOf('unable to resolve module') < agent.indexOf('logo do cliente|adaptive.?icon'), 'erro de módulo deve ser classificado antes de qualquer diagnóstico de imagem');
   assert(!agent.includes("return detail.slice(0, 900)"), 'agente não deve despejar erro técnico do Gradle na interface');
   assert(agent.includes('O aplicativo anterior continua disponível'), 'falha desconhecida deve preservar e orientar em linguagem humana');
   assert(agent.includes("error: lastJob.status === 'failed'"), 'lista de clientes deve entregar a causa da última falha à Central');
