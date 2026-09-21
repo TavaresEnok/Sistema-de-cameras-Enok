@@ -456,11 +456,13 @@ const API_REQUEST_TIMEOUT_MS = 15_000;
 const FULL_LOAD_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 30_000] as const;
 let fullLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let fullLoadRetryAttempt = 0;
+let operationalFailureStreak = 0;
 
 function clearFullLoadRetry() {
   if (fullLoadRetryTimer) clearTimeout(fullLoadRetryTimer);
   fullLoadRetryTimer = null;
   fullLoadRetryAttempt = 0;
+  operationalFailureStreak = 0;
 }
 
 function scheduleFullLoadRetry() {
@@ -710,20 +712,28 @@ export const useVmsDataStore = create<VmsDataState>((set, get) => ({
       Object.entries(resources).filter(([, result]) => result.error).map(([name, result]) => [name, result.error as string]),
     );
     const criticalErrors = [camerasRes, overviewRes, eventsRes, alarmsRes, recordingStatusesRes, systemRes].filter((result) => result.error);
+    operationalFailureStreak = criticalErrors.length > 0 ? operationalFailureStreak + 1 : 0;
+    // Um único ciclo pode coincidir com rotação do token, troca de rede ou um
+    // deploy de poucos segundos. Os dados anteriores continuam válidos e não
+    // justificam assustar o operador com uma faixa amarela. A primeira falha
+    // agenda a recuperação; só uma falha consecutiva confirma desatualização.
+    const confirmedStale = criticalErrors.length > 0
+      && (previous.stale || operationalFailureStreak >= 2);
     set({
       cameras, events, alarms,
       overview: overviewRes.data?.summary ?? previous.overview,
       system: systemRes.data ?? previous.system,
       isRefreshing: false,
-      stale: criticalErrors.length > 0,
+      stale: confirmedStale,
       lastUpdatedAt: criticalErrors.length ? previous.lastUpdatedAt : new Date().toISOString(),
-      resourceErrors,
-      error: criticalErrors.length ? criticalErrors.map((result) => result.error).filter(Boolean).join(' · ') : null,
+      resourceErrors: confirmedStale ? resourceErrors : {},
+      error: confirmedStale ? criticalErrors.map((result) => result.error).filter(Boolean).join(' · ') : null,
     });
     // Qualquer falha operacional depois de um deploy dispara uma recarga
     // COMPLETA. Assim usuários, gravações, auditoria e timeline também voltam;
     // o polling leve sozinho só recuperava seis recursos e deixava telas vazias.
     if (criticalErrors.length > 0) scheduleFullLoadRetry();
+    else clearFullLoadRetry();
   },
   updateUserActive: async (id, active) => {
     await api().patch(`/users/${id}`, { isActive: active });

@@ -32,6 +32,8 @@ type LiveStreamPlayerProps = {
   aiEnabled?: boolean;
   liveViewMode?: 'selected' | 'grid';
   startDelayMs?: number;
+  /** A rota que contém o player está realmente visível na SPA. */
+  routeActive?: boolean;
   onStatusChange?: (status: LivePlayerStatus) => void;
   /** A API confirmou que a fonte efetiva da grade já é a fonte original. */
   onGridSourceIsOriginal?: (isOriginal: boolean) => void;
@@ -312,6 +314,7 @@ export function LiveStreamPlayer({
   aiEnabled = true,
   liveViewMode = 'selected',
   startDelayMs = 0,
+  routeActive = true,
   onStatusChange,
   onGridSourceIsOriginal,
 }: LiveStreamPlayerProps) {
@@ -338,6 +341,8 @@ export function LiveStreamPlayer({
   const activeProtocolRef = useRef<ActiveLiveProtocol | null>(null);
   const primaryProtocolRef = useRef<LiveProtocol>('webrtc');
   const hiddenAtRef = useRef<number | null>(null);
+  const routeWasActiveRef = useRef(routeActive);
+  const routeResumeTimerRef = useRef<number | null>(null);
   const liveReloadAtRef = useRef(0);
   const preserveFrameOnReloadRef = useRef(false);
   const lastProgressRef = useRef<PlaybackProgress>({ wallTime: Date.now(), mediaTime: 0 });
@@ -708,6 +713,48 @@ export function LiveStreamPlayer({
     }
     setReloadNonce((value) => value + 1);
   }, []);
+
+  useEffect(() => {
+    const wasActive = routeWasActiveRef.current;
+    routeWasActiveRef.current = routeActive;
+
+    if (routeResumeTimerRef.current != null) {
+      window.clearTimeout(routeResumeTimerRef.current);
+      routeResumeTimerRef.current = null;
+    }
+    if (!routeActive || wasActive) return;
+
+    // Navegar dentro da aplicação não muda document.visibilityState. A árvore
+    // de /live fica retida por alguns segundos para preservar o WebRTC, mas o
+    // Chromium pode parar de compor o <video> enquanto o ancestral está
+    // `hidden`. Antes, ao voltar, o selo continuava exibindo WEBRTC/FPS embora
+    // o quadro permanecesse preto até um reload completo.
+    const element = videoRef.current;
+    const renderedBefore = lastRenderedFrameRef.current.presentedFrames;
+    if (autoPlay && element) void element.play().catch(() => undefined);
+
+    routeResumeTimerRef.current = window.setTimeout(() => {
+      routeResumeTimerRef.current = null;
+      const current = videoRef.current;
+      if (!current || !routeWasActiveRef.current || document.hidden) return;
+
+      const renderedAfter = lastRenderedFrameRef.current.presentedFrames;
+      const resumedRendering = renderedAfter > renderedBefore
+        && current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+      if (resumedRendering) return;
+
+      // Sessão retida sem novo quadro: refaz apenas este transporte, como o
+      // botão Recarregar fazia, sem recarregar a aplicação nem perder a grade.
+      requestFreshLiveBoot('Retomando câmera em tempo real…', false, true);
+    }, 700);
+
+    return () => {
+      if (routeResumeTimerRef.current != null) {
+        window.clearTimeout(routeResumeTimerRef.current);
+        routeResumeTimerRef.current = null;
+      }
+    };
+  }, [autoPlay, requestFreshLiveBoot, routeActive]);
 
   useEffect(() => {
     if (previousLiveViewModeRef.current === liveViewMode) return;
@@ -2177,7 +2224,7 @@ export function LiveStreamPlayer({
     };
 
     const interval = window.setInterval(() => {
-      if (document.hidden || isLoading || error || !hasFrameRef.current) return;
+      if (!routeActive || document.hidden || isLoading || error || !hasFrameRef.current) return;
 
       const element = videoRef.current;
       if (!element) return;
@@ -2289,7 +2336,7 @@ export function LiveStreamPlayer({
     }, LIVE_STALL_CHECK_INTERVAL_MS);
 
     return () => window.clearInterval(interval);
-  }, [autoPlay, error, failActiveProtocol, framesAreProgressing, isLikelyBlackFrame, isLoading, liveViewMode, reportLiveFailure, requestFreshLiveBoot]);
+  }, [autoPlay, error, failActiveProtocol, framesAreProgressing, isLikelyBlackFrame, isLoading, liveViewMode, reportLiveFailure, requestFreshLiveBoot, routeActive]);
 
   useEffect(() => {
     if (!aiOverlayEnabled || !tokenHeadersRef.current) return;

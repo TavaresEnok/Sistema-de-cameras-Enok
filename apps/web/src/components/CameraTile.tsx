@@ -15,6 +15,7 @@ interface CameraTileProps {
   onAction?: (action: string, camera: Camera) => void;
   compact?: boolean;
   streamStartDelayMs?: number;
+  routeActive?: boolean;
   showDetectionOverlay?: boolean;
   liveViewMode?: 'selected' | 'grid';
   wallMode?: boolean;
@@ -39,6 +40,7 @@ export function CameraTile({
   onAction,
   compact,
   streamStartDelayMs = 0,
+  routeActive = true,
   showDetectionOverlay = false,
   liveViewMode = 'grid',
   wallMode: wallModeProp,
@@ -102,6 +104,7 @@ export function CameraTile({
             className="h-full w-full"
             muted
             startDelayMs={streamStartDelayMs}
+            routeActive={routeActive}
             onStatusChange={setPlayerStatus}
             onGridSourceIsOriginal={(isOriginal) => onGridSourceIsOriginal?.(camera.id, isOriginal)}
           />

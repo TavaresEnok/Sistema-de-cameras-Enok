@@ -903,6 +903,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
             cameraId={prewarmCamera.id}
             cameraName={prewarmCamera.name}
             liveViewMode="selected"
+            routeActive={pageActive}
             muted
             showOverlay={false}
             aiEnabled={false}
@@ -1155,6 +1156,7 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
                     onDoubleClick={() => handleCamDoubleClick(cam)}
                     onAction={handleCamAction}
                     streamStartDelayMs={displayIndex * 700 + streamStartDelay(i, count)}
+                    routeActive={pageActive}
                     onGridSourceIsOriginal={markGridSourceIsOriginal}
                   />
                   <div // Aparecem também quando o quadro está SELECIONADO: em tela sensível
