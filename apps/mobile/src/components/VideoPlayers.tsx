@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { ehPreparoEmAndamento, esperaAteRetentar } from '../utils/playback-source';
 import { useVideoPlayer, VideoView, type VideoSource } from 'expo-video';
 import { WebRtcVideo } from './WebRtcVideo';
+import { HevcWebRtcVideo } from './HevcWebRtcVideo';
 import { webRtcRetryDelay } from '../utils/webrtc-recovery';
 import { Icon } from './Icon';
 import { useTheme } from '../theme/ThemeProvider';
@@ -73,6 +74,7 @@ export function LiveVideo(props: LiveVideoProps) {
   const [webrtcFailureReason, setWebrtcFailureReason] = useState<string | null>(null);
   const [failures, setFailures] = useState(0);
   const [manualHls, setManualHls] = useState(false);
+  const [hevcWebRtc, setHevcWebRtc] = useState(false);
   let whepIdentity = whepUri;
   try {
     if (whepUri) {
@@ -88,6 +90,7 @@ export function LiveVideo(props: LiveVideoProps) {
     setWebrtcFailureReason(null);
     setFailures(0);
     setManualHls(false);
+    setHevcWebRtc(false);
   // Renovar apenas o token/query não deve reiniciar um WHEP que já falhou; isso
   // criaria um loop WHEP→token novo→WHEP e impediria o HLS de permanecer ativo.
   // Uma câmera/path realmente diferente ainda ganha uma nova tentativa WebRTC.
@@ -111,6 +114,23 @@ export function LiveVideo(props: LiveVideoProps) {
 
   if (manualHls && (!props.webrtcOnly || props.hlsOnConfirmedWhepIncompatibility)) return <HlsLiveVideo {...props} />;
 
+  if (hevcWebRtc && whepUri) {
+    return (
+      <HevcWebRtcVideo
+        whepUrl={whepUri}
+        posterUri={props.posterUri}
+        videoStyle={props.videoStyle}
+        posterStyle={props.posterStyle}
+        emptyTextStyle={props.emptyTextStyle}
+        onStatusChange={props.onStatusChange}
+        muted={props.muted}
+        contentFit={props.contentFit}
+        onAudioAvailable={props.onAudioAvailable}
+        onFailover={() => setManualHls(true)}
+      />
+    );
+  }
+
   if (whepUri && !webrtcFailed) {
     return (
       <WebRtcVideo
@@ -128,11 +148,11 @@ export function LiveVideo(props: LiveVideoProps) {
         onAudioAvailable={props.onAudioAvailable}
         onNeedRefresh={props.onNeedRefresh}
         onFailover={(reason) => {
-          // Não é fallback por timeout: MediaMTX só devolve 400 aqui quando a
-          // oferta não aceita os codecs do stream. HLS usa o decodificador
-          // nativo Android e preserva H.265/resolução originais.
+          // HTTP 400 confirma incompatibilidade da AAR M124. Antes de recorrer
+          // ao HLS, tentamos o Chromium/WebView moderno, que anuncia H.265 em
+          // aparelhos compatíveis e mantém latência WebRTC sem transcodificar.
           if (props.hlsOnConfirmedWhepIncompatibility && props.uri && /HTTP 400/.test(reason ?? '')) {
-            setManualHls(true);
+            setHevcWebRtc(true);
             return;
           }
           setWebrtcFailureReason(reason ?? 'A conexão WebRTC não entregou vídeo.');
@@ -192,6 +212,15 @@ function HlsLiveVideo({
     instance.loop = false;
     instance.muted = false;
     instance.timeUpdateEventInterval = 1;
+    // O padrão do expo-video/Media3 no Android mantém até 20 s à frente. Isso é
+    // adequado para filmes, não para CFTV. O MediaMTX já entrega LL-HLS em partes
+    // de 200 ms; um buffer curto mantém o fallback perto da borda ao vivo.
+    instance.bufferOptions = {
+      preferredForwardBufferDuration: 1,
+      minBufferForPlayback: 0.5,
+      maxBufferBytes: 0,
+      prioritizeTimeOverSizeThreshold: true,
+    };
   });
 
   const [status, setStatus] = useState<LiveStatus>('idle');

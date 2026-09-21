@@ -185,8 +185,21 @@ test('HD+ preserva a imagem original via HLS somente quando WHEP confirma incomp
   assert(player.includes('hlsOnConfirmedWhepIncompatibility'), 'o player precisa distinguir incompatibilidade confirmada de falha transitória');
   assert(player.includes("/HTTP 400/.test(reason ?? '')"), 'somente a recusa confirmada da negociação pode abrir HLS automaticamente');
   assert(player.includes('props.uri && !whepUri'), 'quando o servidor não oferece WHEP, o original deve abrir diretamente no player nativo');
+  assert(player.includes('preferredForwardBufferDuration: 1'), 'LL-HLS ao vivo não pode herdar o buffer de até 20 s do player de filmes');
+  assert(player.includes('minBufferForPlayback: 0.5'), 'fallback deve começar perto da borda ao vivo');
+  assert(player.includes('setHevcWebRtc(true)'), 'antes do HLS, HD+ deve testar H.265 no WebRTC do Chromium Android');
+  assert(player.includes('<HevcWebRtcVideo'), 'o player experimental H.265 precisa estar ligado ao fluxo HD+');
   assert(redesign.includes('uri={hdActive ? hdUrl : streamUrl}'), 'HLS de HD+ deve receber o stream original, não o perfil reduzido');
   assert(redesign.includes('hlsOnConfirmedWhepIncompatibility={hdActive}'), 'a exceção de compatibilidade deve valer apenas no HD+');
+});
+
+test('WebRTC H.265 só assume o vídeo quando o WebView anuncia e decodifica HEVC', () => {
+  const source = readFileSync('src/components/HevcWebRtcVideo.tsx', 'utf8');
+  assert(source.includes("RTCRtpReceiver.getCapabilities?.('video')"), 'deve consultar os codecs reais do Android WebView');
+  assert(source.includes("/video\\\\/(h265|hevc)/i"), 'deve exigir H.265/HEVC na capacidade WebRTC');
+  assert(source.includes("report.framesDecoded"), 'conexão ICE sem frame não pode ser declarada ao vivo');
+  assert(source.includes("resolved.origin !== original.origin"), 'Location WHEP não pode enviar token para outra origem');
+  assert(source.includes('mixedContentMode="never"'), 'player não pode liberar conteúdo inseguro');
 });
 
 test('permissões do app são renovadas ao retomar e não somem por uma falha transitória', () => {
