@@ -1,6 +1,6 @@
 /** Reprodução paginada: player, filtros e lista virtualizada de gravações. */
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Icon } from '../components/Icon';
 import { SkeletonBlock } from '../components/Skeleton';
@@ -17,6 +17,9 @@ const FILTERS: Array<{ key: PlaybackFilter; label: string }> = [
   { key: 'continuous', label: 'Contínuas' },
   { key: 'unavailable', label: 'Indisponíveis' },
 ];
+const DVR_HOUR_WIDTH = 78;
+const DVR_TIMELINE_WIDTH = 24 * DVR_HOUR_WIDTH;
+const DAY_SECONDS = 24 * 60 * 60;
 
 interface PlaybackScreenProps {
   cameras: Camera[];
@@ -32,7 +35,7 @@ interface PlaybackScreenProps {
   canDownload: boolean;
   downloadingIds: string[];
   onSelectCamera: (cameraId: string) => void;
-  onOpenPlayback: (recording: Recording) => void;
+  onOpenPlayback: (recording: Recording, initialPositionSeconds?: number) => void;
   onClosePlayback: () => void;
   onRetryPlayback: () => void;
   /** Gravação cujo token está sendo emitido (retorno imediato ao toque). */
@@ -57,10 +60,48 @@ export function PlaybackScreen({
   const { theme } = useTheme();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [filter, setFilter] = useState<PlaybackFilter>('all');
+  const [playbackPosition, setPlaybackPosition] = useState(0);
+  const timelineRef = useRef<ScrollView>(null);
   const isToday = recordingDate >= localDateKey();
   const playerPoster = activePlayback?.recording.thumbnailUrl ?? recordings[0]?.thumbnailUrl ?? null;
   const filteredRecordings = useMemo(() => recordings.filter((recording) => matchesPlaybackFilter(recording, filter)), [recordings, filter]);
   const filterCounts = useMemo(() => Object.fromEntries(FILTERS.map(({ key }) => [key, recordings.filter((recording) => matchesPlaybackFilter(recording, key)).length])), [recordings]);
+
+  useEffect(() => { setPlaybackPosition(0); }, [activePlayback?.recording.id]);
+  useEffect(() => {
+    const focus = activePlayback?.recording.startedAt
+      ? new Date(activePlayback.recording.startedAt)
+      : new Date(`${recordingDate}T12:00:00`);
+    const seconds = focus.getHours() * 3600 + focus.getMinutes() * 60 + focus.getSeconds();
+    const timer = setTimeout(() => timelineRef.current?.scrollTo({ x: Math.max(0, (seconds / DAY_SECONDS) * DVR_TIMELINE_WIDTH - 145), animated: false }), 0);
+    return () => clearTimeout(timer);
+  }, [recordingDate, activePlayback?.recording.id]);
+
+  const openTimelinePosition = (x: number) => {
+    if (!canPlayback || recordings.length === 0) return;
+    const daySeconds = Math.max(0, Math.min(1, x / DVR_TIMELINE_WIDTH)) * DAY_SECONDS;
+    const candidates = recordings.map((recording) => {
+      const start = new Date(recording.startedAt);
+      const startSeconds = start.getHours() * 3600 + start.getMinutes() * 60 + start.getSeconds();
+      const duration = recording.durationSeconds && recording.durationSeconds > 0
+        ? recording.durationSeconds
+        : recording.endedAt ? Math.max(1, (new Date(recording.endedAt).getTime() - start.getTime()) / 1000) : 60;
+      const distance = daySeconds < startSeconds
+        ? startSeconds - daySeconds
+        : daySeconds > startSeconds + duration ? daySeconds - startSeconds - duration : 0;
+      return { recording, startSeconds, duration, distance };
+    }).filter(({ recording }) => recording.fileUsable !== false && recording.fileExists !== false);
+    candidates.sort((a, b) => a.distance - b.distance);
+    const target = candidates[0];
+    if (!target) return;
+    const offset = Math.max(0, Math.min(Math.max(0, target.duration - 0.25), daySeconds - target.startSeconds));
+    onOpenPlayback(target.recording, offset);
+  };
+
+  const activeSeconds = activePlayback ? (() => {
+    const start = new Date(activePlayback.recording.startedAt);
+    return Math.min(DAY_SECONDS, start.getHours() * 3600 + start.getMinutes() * 60 + start.getSeconds() + playbackPosition);
+  })() : null;
 
   const header = (
     <View style={styles.headerContent}>
@@ -84,7 +125,7 @@ export function PlaybackScreen({
       <View style={[styles.player, { borderColor: theme.border }]}>
         {activePlayback ? (
           <>
-            <PlaybackVideo uri={activePlayback.url} posterUri={playerPoster} onRetry={onRetryPlayback} onNaoDecodificou={onNaoDecodificou} onProgresso={onProgressoPlayback} initialPositionSeconds={activePlayback.retomarEm ?? null} style={StyleSheet.absoluteFill} />
+            <PlaybackVideo uri={activePlayback.url} posterUri={playerPoster} recordingStartedAt={activePlayback.recording.startedAt} onRetry={onRetryPlayback} onNaoDecodificou={onNaoDecodificou} onProgresso={(seconds) => { onProgressoPlayback(seconds); const whole = Math.max(0, Math.floor(seconds)); setPlaybackPosition((current) => current === whole ? current : whole); }} initialPositionSeconds={activePlayback.retomarEm ?? null} style={StyleSheet.absoluteFill} />
             <Pressable
               style={styles.closePlayback}
               onPress={onClosePlayback}
@@ -149,31 +190,27 @@ export function PlaybackScreen({
           <Text style={[styles.timelineHint, { color: theme.textSub }]}>
             {recordingsTotal > recordings.length
               ? `${recordings.length} de ${recordingsTotal} — role a lista para carregar mais`
-              : 'toque no trecho para abrir'}
+              : 'arraste e toque no horário'}
           </Text>
         </View>
-        <View style={[styles.timelineTrack, { backgroundColor: theme.surfaceAlt }]}>
-          {[25, 50, 75].map((left) => <View key={left} style={[styles.timelineGridLine, { left: `${left}%`, backgroundColor: theme.border }]} />)}
-          {recordings.map((recording) => {
-            const range = timelineRange(recording);
-            const kind = recordingKind(recording);
-            const usable = recording.fileUsable !== false && recording.fileExists !== false;
-            const color = !usable ? theme.textMuted : kind === 'motion' ? theme.danger : kind === 'continuous' ? theme.accent : theme.warning;
-            return (
-              <Pressable
-                key={recording.id}
-                onPress={() => usable && onOpenPlayback(recording)}
-                disabled={!usable}
-                accessibilityRole="button"
-                accessibilityLabel={`Gravação às ${formatTime(recording.startedAt)}`}
-                style={[styles.timelineSegment, { left: `${range.left}%`, width: `${range.width}%`, backgroundColor: color }]}
-              />
-            );
-          })}
-        </View>
-        <View style={styles.timelineLabels}>
-          {['00h', '06h', '12h', '18h', '24h'].map((label) => <Text key={label} style={[styles.timelineLabel, { color: theme.textMuted }]}>{label}</Text>)}
-        </View>
+        <ScrollView ref={timelineRef} horizontal showsHorizontalScrollIndicator={false}>
+          <View style={{ width: DVR_TIMELINE_WIDTH }}>
+            <View style={styles.timelineLabelsDetailed} pointerEvents="none">
+              {Array.from({ length: 25 }, (_, hour) => <Text key={hour} style={[styles.timelineHourLabel, { left: Math.min(DVR_TIMELINE_WIDTH - 28, hour * DVR_HOUR_WIDTH), color: theme.textMuted }]}>{String(hour).padStart(2, '0')}h</Text>)}
+            </View>
+            <Pressable accessibilityRole="adjustable" accessibilityLabel="Linha do tempo das gravações" onPress={(event) => openTimelinePosition(event.nativeEvent.locationX)} style={[styles.timelineTrack, { width: DVR_TIMELINE_WIDTH, backgroundColor: theme.surfaceAlt }]}>
+              {Array.from({ length: 25 }, (_, hour) => <View key={hour} style={[styles.timelineGridLine, { left: Math.min(DVR_TIMELINE_WIDTH - 1, hour * DVR_HOUR_WIDTH), backgroundColor: theme.border }]} />)}
+              {recordings.map((recording) => {
+                const range = timelineRange(recording);
+                const kind = recordingKind(recording);
+                const usable = recording.fileUsable !== false && recording.fileExists !== false;
+                const color = !usable ? theme.textMuted : kind === 'motion' ? theme.danger : kind === 'continuous' ? theme.accent : theme.warning;
+                return <View key={recording.id} pointerEvents="none" style={[styles.timelineSegment, { left: (range.left / 100) * DVR_TIMELINE_WIDTH, width: Math.max(5, (range.width / 100) * DVR_TIMELINE_WIDTH), backgroundColor: color }]} />;
+              })}
+              {activeSeconds != null ? <View pointerEvents="none" style={[styles.timelineCursor, { left: (activeSeconds / DAY_SECONDS) * DVR_TIMELINE_WIDTH, backgroundColor: theme.accent }]} /> : null}
+            </Pressable>
+          </View>
+        </ScrollView>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
@@ -348,11 +385,12 @@ const styles = StyleSheet.create({
   timelineHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 },
   timelineTitle: { fontSize: 11.5, fontWeight: '800' },
   timelineHint: { fontSize: 9.5, fontWeight: '600' },
-  timelineTrack: { height: 22, borderRadius: 7, overflow: 'hidden', position: 'relative' },
+  timelineTrack: { height: 44, borderRadius: 7, overflow: 'hidden', position: 'relative' },
   timelineGridLine: { position: 'absolute', top: 0, bottom: 0, width: StyleSheet.hairlineWidth },
-  timelineSegment: { position: 'absolute', top: 3, bottom: 3, borderRadius: 4, minWidth: 2 },
-  timelineLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 },
-  timelineLabel: { fontSize: 8.5, fontWeight: '700' },
+  timelineSegment: { position: 'absolute', top: 7, bottom: 7, borderRadius: 4, minWidth: 2 },
+  timelineLabelsDetailed: { position: 'relative', height: 23 },
+  timelineHourLabel: { position: 'absolute', top: 1, width: 30, fontSize: 8.5, fontWeight: '700' },
+  timelineCursor: { position: 'absolute', top: 0, bottom: 0, width: 3, marginLeft: -1.5, zIndex: 4 },
   filters: { gap: 7, paddingRight: 4 },
   filterChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 7, paddingHorizontal: 11 },
   filterText: { fontSize: 11, fontWeight: '800' },

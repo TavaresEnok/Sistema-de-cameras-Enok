@@ -453,9 +453,11 @@ const PLAYBACK_RATES = [1, 1.5, 2, 0.5];
  * play/pause central, avançar/retroceder 10s, barra de progresso arrastável
  * (scrubbing), velocidade e tempo. Toque mostra/esconde; auto-esconde tocando.
  */
-export function PlaybackVideo({ uri, posterUri, style, onRetry, initialPositionSeconds, onNaoDecodificou, onProgresso }: {
+export function PlaybackVideo({ uri, posterUri, recordingStartedAt, style, onRetry, initialPositionSeconds, onNaoDecodificou, onProgresso }: {
   uri: string;
   posterUri?: string | null;
+  /** Horário real do início para exibir tempo de CFTV, além do tempo do arquivo. */
+  recordingStartedAt?: string | null;
   style: StyleProp<ViewStyle>;
   onRetry?: () => void;
   /** Seek inicial (s) aplicado assim que a gravação fica pronta — usado pela
@@ -712,6 +714,9 @@ export function PlaybackVideo({ uri, posterUri, style, onRetry, initialPositionS
 
   const shownPos = scrubbingRef.current ? scrubPos : position;
   const progress = duration > 0 ? Math.max(0, Math.min(1, shownPos / duration)) : 0;
+  const absoluteTime = recordingStartedAt
+    ? new Date(new Date(recordingStartedAt).getTime() + shownPos * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+    : null;
 
   return (
     <View style={[style, playerLocal.root]}>
@@ -783,7 +788,7 @@ export function PlaybackVideo({ uri, posterUri, style, onRetry, initialPositionS
           {/* Barra de progresso arrastável + tempos */}
           <LinearGradient colors={['transparent', 'rgba(0,0,0,0.7)']} style={playerLocal.bottomScrim} pointerEvents="box-none">
             <View style={playerLocal.timeRow}>
-              <Text style={playerLocal.timeText}>{formatTime(shownPos)}</Text>
+              <Text style={playerLocal.timeText}>{absoluteTime ? `${absoluteTime}  ·  ${formatTime(shownPos)}` : formatTime(shownPos)}</Text>
               <Text style={[playerLocal.timeText, playerLocal.timeMuted]}>{formatTime(duration)}</Text>
             </View>
             <View

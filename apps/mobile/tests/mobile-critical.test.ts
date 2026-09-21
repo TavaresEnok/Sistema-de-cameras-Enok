@@ -235,6 +235,20 @@ test('controles ao vivo distinguem ouvir, captura em curso e clipe de cinco minu
   assert(app.includes("'Ela será encerrada automaticamente em 5 minutos."), 'o usuário deve conhecer o limite assim que a gravação começa');
 });
 
+test('reprodução usa controles de CFTV e abre no horário escolhido da régua', () => {
+  const player = readFileSync('src/components/VideoPlayers.tsx', 'utf8');
+  const live = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
+  const playback = readFileSync('src/screens/PlaybackScreen.tsx', 'utf8');
+  assert(player.includes('nativeControls={false}'), 'o app não deve exibir o player genérico do Android');
+  assert(player.includes('accessibilityLabel="Voltar 10 segundos"'), 'o player precisa retroceder rapidamente');
+  assert(player.includes('accessibilityLabel="Avançar 10 segundos"'), 'o player precisa avançar rapidamente');
+  assert(player.includes('recordingStartedAt'), 'o player deve mostrar o horário real da gravação');
+  assert(live.includes('TIMELINE_WIDTH = 24 * TIMELINE_HOUR_WIDTH'), 'a régua dentro da câmera não pode comprimir 24 horas na tela');
+  assert(live.includes('onOpenPlayback(nearest.recording, offset)'), 'tocar na régua deve abrir dentro do trecho, não apenas no início');
+  assert(playback.includes('onOpenPlayback(target.recording, offset)'), 'a página geral de gravações também deve abrir no horário exato');
+  assert(playback.includes('timelineRef.current?.scrollTo'), 'a régua deve navegar horizontalmente até o período útil');
+});
+
 test('release mobile: iOS tem identidade e builds de loja incrementam versão', () => {
   const base = JSON.parse(readFileSync('app.base.json', 'utf8')).expo;
   const eas = JSON.parse(readFileSync('eas.json', 'utf8'));

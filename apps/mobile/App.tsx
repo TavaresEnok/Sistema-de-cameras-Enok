@@ -1690,7 +1690,7 @@ function AppInner() {
             audioLigado={audioAoVivo}
             onAudioLigadoChange={definirAudioAoVivo}
             onSnapshot={takeSnapshot}
-            onOpenPlayback={openPlayback}
+            onOpenPlayback={(recording, initialPositionSeconds) => openPlayback(recording, { retomarEm: initialPositionSeconds })}
             onClosePlayback={closePlayback}
             onRetryPlayback={retryPlayback}
             onNaoDecodificou={tentarFonteCompativel}
@@ -1880,7 +1880,7 @@ function AppInner() {
             canDownload={capabilities.exportEvidence}
             downloadingIds={downloadingIds}
             onSelectCamera={(cameraId) => { setSelectedCameraId(cameraId); closePlayback(); }}
-            onOpenPlayback={openPlayback}
+            onOpenPlayback={(recording, initialPositionSeconds) => openPlayback(recording, { retomarEm: initialPositionSeconds })}
             onClosePlayback={closePlayback}
             onRetryPlayback={retryPlayback}
             onNaoDecodificou={tentarFonteCompativel}

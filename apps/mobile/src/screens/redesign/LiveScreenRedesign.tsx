@@ -21,6 +21,8 @@ import { localDateKey } from '../../utils/format';
 const TITLE = 'Sora';
 const UI = 'InstrumentSans';
 const MONO = 'JetBrainsMono';
+const TIMELINE_HOUR_WIDTH = 78;
+const TIMELINE_WIDTH = 24 * TIMELINE_HOUR_WIDTH;
 
 interface Props {
   camera: Camera;
@@ -63,7 +65,7 @@ interface Props {
   onSendPtz: (d: Direction) => void;
   onToggleRecording: (c: Camera) => void;
   onSnapshot: (c: Camera) => void;
-  onOpenPlayback: (r: Recording) => void;
+  onOpenPlayback: (r: Recording, initialPositionSeconds?: number) => void;
   onClosePlayback: () => void;
   onRetryPlayback: () => void;
   /** Gravação cujo token está sendo emitido (retorno imediato ao toque). */
@@ -112,6 +114,11 @@ export function LiveScreenRedesign(props: Props) {
   // null = ainda não sabemos (conectando/HLS); false = stream sem faixa de áudio.
   const [audioAvailable, setAudioAvailable] = useState<boolean | null>(null);
   const [status, setStatus] = useState<LiveStatus>('connecting');
+  // Posição inteira (1 atualização/s) para o cursor da linha do tempo do dia.
+  // Evita redesenhar a tela quatro vezes por segundo, frequência usada internamente
+  // pelo player para preservar a barra suave do próprio clipe.
+  const [playbackPosition, setPlaybackPosition] = useState(0);
+  useEffect(() => { setPlaybackPosition(0); }, [activePlayback?.recording.id]);
   const [fullscreen, setFullscreen] = useState(false);
   const [fsSize, setFsSize] = useState({ width: 0, height: 0 });
   // Tela cheia gira para PAISAGEM (vídeo de câmera é horizontal); ao sair — ou
@@ -173,7 +180,20 @@ export function LiveScreenRedesign(props: Props) {
   // Entrar/sair da tela cheia remonta o player (o stream reconecta em ~1s),
   // mesmo custo de trocar de câmera — aceitável e simples.
   const video = isPlaying ? (
-    <PlaybackVideo uri={activePlayback!.url} posterUri={activePlayback!.recording.thumbnailUrl} onRetry={props.onRetryPlayback} onNaoDecodificou={props.onNaoDecodificou} onProgresso={props.onProgressoPlayback} initialPositionSeconds={activePlayback!.retomarEm ?? null} style={s.videoFill} />
+    <PlaybackVideo
+      uri={activePlayback!.url}
+      posterUri={activePlayback!.recording.thumbnailUrl}
+      recordingStartedAt={activePlayback!.recording.startedAt}
+      onRetry={props.onRetryPlayback}
+      onNaoDecodificou={props.onNaoDecodificou}
+      onProgresso={(seconds) => {
+        props.onProgressoPlayback(seconds);
+        const wholeSecond = Math.max(0, Math.floor(seconds));
+        setPlaybackPosition((current) => current === wholeSecond ? current : wholeSecond);
+      }}
+      initialPositionSeconds={activePlayback!.retomarEm ?? null}
+      style={s.videoFill}
+    />
   ) : hdMode && !hdAvailable ? (
     <View style={s.qualityLoading}>
       {hdRequestFailed ? (
@@ -416,6 +436,7 @@ export function LiveScreenRedesign(props: Props) {
           recordingsLoadingMore={props.recordingsLoadingMore} recordingsError={props.recordingsError}
           recordingsTotal={props.recordingsTotal} downloadingIds={props.downloadingIds}
           myRecordings={myRecordings} activePlayback={activePlayback}
+          playbackPosition={playbackPosition}
           canPlayback={canPlayback} canDownload={canDownload}
           onOpenPlayback={onOpenPlayback} onSelectDate={onSelectDate}
           onPreviousDate={props.onPreviousDate} onNextDate={props.onNextDate}
@@ -431,22 +452,22 @@ export function LiveScreenRedesign(props: Props) {
 /** Modo "Gravações" (réplica do modeRec do mockup): fonte Servidor/Neste aparelho,
  * chips de data, linha do tempo 24h, download do trecho, e clipes locais. */
 function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMore, recordingsError, recordingsTotal,
-  downloadingIds, recordingDate, myRecordings, activePlayback,
+  downloadingIds, recordingDate, myRecordings, activePlayback, playbackPosition,
   canPlayback, canDownload, onOpenPlayback, onSelectDate, onPreviousDate, onNextDate, onDownloadRecording, onLoadMoreRecordings,
   onRetryRecordings, onThumbnailError, onPlayLocal, onDeleteLocal }: {
   s: any; theme: any; recordings: Recording[]; recordingsLoading: boolean; recordingsLoadingMore: boolean;
   recordingsError: string | null; recordingsTotal: number; downloadingIds: string[]; recordingDate: string;
-  myRecordings: SavedClip[]; activePlayback: { recording: Recording; url: string } | null;
+  myRecordings: SavedClip[]; activePlayback: { recording: Recording; url: string } | null; playbackPosition: number;
   canPlayback: boolean; canDownload: boolean;
-  onOpenPlayback: (r: Recording) => void; onSelectDate: (d: string) => void;
+  onOpenPlayback: (r: Recording, initialPositionSeconds?: number) => void; onSelectDate: (d: string) => void;
   onPreviousDate: () => void; onNextDate: () => void;
   onDownloadRecording: (r: Recording) => void; onLoadMoreRecordings: () => void;
   onRetryRecordings: () => void; onThumbnailError: () => void;
   onPlayLocal: (c: SavedClip) => void; onDeleteLocal: (c: SavedClip) => void;
 }) {
   const [source, setSource] = useState<'server' | 'local'>('server');
-  const [trackWidth, setTrackWidth] = useState(0);
   const dateScrollRef = useRef<ScrollView>(null);
+  const timelineScrollRef = useRef<ScrollView>(null);
   const chips = recentDateChips();
 
   // Segmentos da linha do tempo 24h a partir das gravações do dia.
@@ -470,18 +491,39 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
   // Toque na linha do tempo: abre a gravação que COBRE aquele horário; se cair
   // num buraco, vai para a gravação mais próxima do ponto tocado.
   const seekTimeline = (x: number) => {
-    if (!canPlayback || !trackWidth || segs.length === 0) return;
-    const daySec = Math.max(0, Math.min(1, x / trackWidth)) * 86400;
+    if (!canPlayback || segs.length === 0) return;
+    const daySec = Math.max(0, Math.min(1, x / TIMELINE_WIDTH)) * 86400;
     const hit = segs.find((sg) => daySec >= sg.startSec && daySec <= sg.startSec + Math.max(sg.durSec, 60));
     const nearest = hit ?? [...segs].sort((a, b) => {
       const da = Math.min(Math.abs(a.startSec - daySec), Math.abs(a.startSec + a.durSec - daySec));
       const db = Math.min(Math.abs(b.startSec - daySec), Math.abs(b.startSec + b.durSec - daySec));
       return da - db;
     })[0];
-    if (nearest) onOpenPlayback(nearest.recording);
+    if (nearest) {
+      const maxOffset = Math.max(0, nearest.durSec - 0.25);
+      const offset = Math.max(0, Math.min(maxOffset, daySec - nearest.startSec));
+      onOpenPlayback(nearest.recording, offset);
+    }
   };
   const isToday = recordingDate === localDateKey();
   const nowPct = isToday ? ((new Date().getHours() * 3600 + new Date().getMinutes() * 60) / 86400) * 100 : null;
+  const activeDaySec = activePlayback
+    ? (() => {
+        const start = new Date(activePlayback.recording.startedAt);
+        return Math.min(86400, start.getHours() * 3600 + start.getMinutes() * 60 + start.getSeconds() + playbackPosition);
+      })()
+    : null;
+
+  // Ao abrir outro dia ou outro trecho, posiciona a régua perto do horário útil.
+  // Depois o operador continua livre para arrastá-la sem auto-scroll brigando.
+  useEffect(() => {
+    const targetSec = activePlayback
+      ? (() => { const d = new Date(activePlayback.recording.startedAt); return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds(); })()
+      : isToday ? new Date().getHours() * 3600 + new Date().getMinutes() * 60 : 12 * 3600;
+    const targetX = (targetSec / 86400) * TIMELINE_WIDTH;
+    const timer = setTimeout(() => timelineScrollRef.current?.scrollTo({ x: Math.max(0, targetX - 145), animated: false }), 0);
+    return () => clearTimeout(timer);
+  }, [recordingDate, activePlayback?.recording.id]);
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40, paddingHorizontal: 14 }}>
@@ -522,7 +564,10 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
             })}
           </ScrollView>
 
-          {/* Linha do tempo 24h */}
+          {/* Linha do tempo de CFTV: régua horizontal detalhada. Em 24h espremidas
+              na largura do celular, um minuto tinha menos de 1 px e era impossível
+              escolher um instante. Agora cada hora tem largura útil e a régua pode
+              ser arrastada como nos aplicativos de câmera dedicados. */}
           <View style={s.tlCard}>
             <View style={s.tlHead}>
               <Text style={s.tlTitle}>Linha do tempo</Text>
@@ -531,23 +576,26 @@ function RecMode({ s, theme, recordings, recordingsLoading, recordingsLoadingMor
                 <View style={s.tlLegend}><View style={[s.tlDot, { backgroundColor: theme.warning }]} /><Text style={s.tlLegendText}>Movimento</Text></View>
               </View>
             </View>
-            <Pressable
-              style={s.tlTrack}
-              onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
-              onPress={(e) => seekTimeline(e.nativeEvent.locationX)}
-            >
-              {segs.map((sg) => (
-                <View key={sg.id} style={[s.tlSeg, { left: `${sg.left}%`, width: `${sg.width}%`, backgroundColor: sg.motion ? theme.warning : 'rgba(62,139,255,0.75)' }]} />
-              ))}
-              {activePlayback ? (
-                <View style={[s.tlActiveMark, { left: `${Math.min(100, ((new Date(activePlayback.recording.startedAt).getHours() * 3600 + new Date(activePlayback.recording.startedAt).getMinutes() * 60) / 86400) * 100)}%`, backgroundColor: theme.accent }]} />
-              ) : null}
-              {nowPct != null ? <View style={[s.tlPlayhead, { left: `${nowPct}%` }]} /> : null}
-            </Pressable>
-            <View style={s.tlAxis}>
-              {['00h', '06h', '12h', '18h', '24h'].map((h) => <Text key={h} style={s.tlAxisText}>{h}</Text>)}
-            </View>
-            <Text style={s.tlHint}>Toque na linha do tempo para abrir o horário</Text>
+            <ScrollView ref={timelineScrollRef} horizontal showsHorizontalScrollIndicator={false} style={s.tlViewport}>
+              <View style={{ width: TIMELINE_WIDTH }}>
+                <View style={s.tlAxisDetailed} pointerEvents="none">
+                  {Array.from({ length: 25 }, (_, hour) => (
+                    <View key={hour} style={[s.tlHour, { left: Math.min(TIMELINE_WIDTH - 1, hour * TIMELINE_HOUR_WIDTH) }]}>
+                      <Text style={s.tlAxisText}>{String(hour).padStart(2, '0')}h</Text>
+                    </View>
+                  ))}
+                </View>
+                <Pressable style={[s.tlTrack, { width: TIMELINE_WIDTH }]} onPress={(e) => seekTimeline(e.nativeEvent.locationX)}>
+                  {Array.from({ length: 25 }, (_, hour) => <View key={hour} style={[s.tlGridLine, { left: Math.min(TIMELINE_WIDTH - 1, hour * TIMELINE_HOUR_WIDTH) }]} />)}
+                  {segs.map((sg) => (
+                    <View key={sg.id} style={[s.tlSeg, { left: (sg.startSec / 86400) * TIMELINE_WIDTH, width: Math.max(5, (sg.durSec / 86400) * TIMELINE_WIDTH), backgroundColor: sg.motion ? theme.warning : 'rgba(62,139,255,0.82)' }]} />
+                  ))}
+                  {activeDaySec != null ? <View style={[s.tlActiveMark, { left: (activeDaySec / 86400) * TIMELINE_WIDTH, backgroundColor: theme.accent }]} /> : null}
+                  {nowPct != null ? <View style={[s.tlPlayhead, { left: (nowPct / 100) * TIMELINE_WIDTH }]} /> : null}
+                </Pressable>
+              </View>
+            </ScrollView>
+            <Text style={s.tlHint}>Arraste para navegar pelo dia e toque no horário desejado</Text>
           </View>
 
           {/* Baixar trecho atual */}
@@ -777,12 +825,15 @@ function makeStyles(t: any) {
     tlLegend: { flexDirection: 'row', alignItems: 'center', gap: 5 },
     tlDot: { width: 8, height: 8, borderRadius: 3 },
     tlLegendText: { fontFamily: UI, fontSize: 10.5, fontWeight: '600', color: t.textSub },
-    tlTrack: { position: 'relative', height: 34, borderRadius: 10, backgroundColor: t.surfaceAlt, overflow: 'hidden' },
-    tlSeg: { position: 'absolute', top: 0, bottom: 0, borderRadius: 4 },
-    tlPlayhead: { position: 'absolute', top: 0, bottom: 0, width: 2.5, marginLeft: -1.25, backgroundColor: t.danger },
-    tlActiveMark: { position: 'absolute', top: 0, bottom: 0, width: 3, marginLeft: -1.5, borderRadius: 2 },
+    tlViewport: { marginHorizontal: -4 },
+    tlAxisDetailed: { position: 'relative', height: 24 },
+    tlHour: { position: 'absolute', top: 0, width: 42, marginLeft: -2 },
+    tlTrack: { position: 'relative', height: 48, borderRadius: 10, backgroundColor: t.surfaceAlt, overflow: 'hidden' },
+    tlGridLine: { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: t.border },
+    tlSeg: { position: 'absolute', top: 8, bottom: 8, borderRadius: 5 },
+    tlPlayhead: { position: 'absolute', top: 0, bottom: 0, width: 2, marginLeft: -1, backgroundColor: t.danger },
+    tlActiveMark: { position: 'absolute', top: -2, bottom: -2, width: 3, marginLeft: -1.5, borderRadius: 2, zIndex: 4 },
     tlHint: { fontFamily: UI, fontSize: 10.5, color: t.textMuted, textAlign: 'center', marginTop: 8 },
-    tlAxis: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, paddingHorizontal: 2 },
     tlAxisText: { fontFamily: MONO, fontSize: 9.5, fontWeight: '500', color: t.textMuted },
 
     downloadBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, marginTop: 16, height: 48, borderRadius: 15, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border },
