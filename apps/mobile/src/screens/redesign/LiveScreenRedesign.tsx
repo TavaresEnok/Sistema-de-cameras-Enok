@@ -43,6 +43,7 @@ interface Props {
   activePlayback: ActivePlayback | null;
   recordingActive: boolean;
   recordingBusy: boolean;
+  snapshotBusy: boolean;
   ptzActive: Direction | null;
   ptzFeedback: string | null;
   /** Permissão efetiva: perfil do usuário E acesso à câmera já avaliados pelo App. */
@@ -252,10 +253,10 @@ export function LiveScreenRedesign(props: Props) {
         ) : null}
         {!isPlaying ? (
           <View style={[s.fsBottom, { bottom: 40 + insets.bottom, left: insets.left, right: insets.right }]}>
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Áudio" style={[s.fsBtn, !muted && audioAvailable !== false && s.fsBtnOn]} disabled={audioAvailable === false} onPress={() => { const querSom = muted; setMuted(!querSom); onAudioLigadoChange?.(querSom); }} activeOpacity={0.8}>
-              <Icon name="mic" size={20} color={audioAvailable === false ? 'rgba(255,255,255,0.4)' : '#fff'} />
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={muted ? 'Ouvir áudio da câmera' : 'Desligar áudio da câmera'} style={[s.fsBtn, !muted && audioAvailable !== false && s.fsBtnOn]} disabled={audioAvailable === false} onPress={() => { const querSom = muted; setMuted(!querSom); onAudioLigadoChange?.(querSom); }} activeOpacity={0.8}>
+              <Icon name="volume" size={20} color={audioAvailable === false ? 'rgba(255,255,255,0.4)' : '#fff'} />
             </TouchableOpacity>
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Tirar foto" style={s.fsBtn} onPress={() => onSnapshot(camera)} activeOpacity={0.8}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={props.snapshotBusy ? 'Capturando foto' : 'Tirar foto'} style={[s.fsBtn, props.snapshotBusy && { opacity: 0.55 }]} disabled={props.snapshotBusy} onPress={() => onSnapshot(camera)} activeOpacity={0.8}>
               <Icon name="camera" size={20} color="#fff" />
             </TouchableOpacity>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel={recordingActive ? 'Parar gravação no aparelho' : 'Gravar no aparelho'} accessibilityState={{ selected: recordingActive }} style={[s.fsBtn, recordingActive && s.fsBtnRec]} onPress={() => onToggleRecording(camera)} activeOpacity={0.8}>
@@ -328,9 +329,9 @@ export function LiveScreenRedesign(props: Props) {
         <View style={{ flex: 1, paddingBottom: 10 + insets.bottom }}>
           {/* Barra de ações */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.actionsRow} contentContainerStyle={s.actions}>
-            <ActionBtn s={s} theme={theme} icon="mic" label={audioAvailable === false ? 'Sem áudio' : 'Áudio'} active={!muted && audioAvailable !== false} disabled={audioAvailable === false} onPress={() => { const querSom = muted; setMuted(!querSom); onAudioLigadoChange?.(querSom); }} />
-            <ActionBtn s={s} theme={theme} icon="camera" label="Capturar" onPress={() => onSnapshot(camera)} />
-            <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label={props.recordingBusy ? 'Salvando…' : 'Gravar'} active={recordingActive} danger={recordingActive} disabled={props.recordingBusy} onPress={() => onToggleRecording(camera)} />
+            <ActionBtn s={s} theme={theme} icon="volume" label={audioAvailable === false ? 'Sem áudio' : muted ? 'Ouvir' : 'Som ligado'} active={!muted && audioAvailable !== false} disabled={audioAvailable === false} onPress={() => { const querSom = muted; setMuted(!querSom); onAudioLigadoChange?.(querSom); }} />
+            <ActionBtn s={s} theme={theme} icon="camera" label={props.snapshotBusy ? 'Capturando…' : 'Capturar'} disabled={props.snapshotBusy} onPress={() => onSnapshot(camera)} />
+            <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label={props.recordingBusy ? (recordingActive ? 'Salvando…' : 'Preparando…') : recordingActive ? 'Parar' : 'Gravar'} active={recordingActive} danger={recordingActive} disabled={props.recordingBusy} onPress={() => onToggleRecording(camera)} />
             <ActionBtn s={s} theme={theme} icon="bell" label={notificationsMuted ? 'Silenciada' : 'Notificar'} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
             <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'Economia' : 'HD+'} active={hdMode} onPress={toggleHd} />
             {canPtz ? (

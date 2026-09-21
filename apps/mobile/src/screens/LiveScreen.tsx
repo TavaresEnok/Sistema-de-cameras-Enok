@@ -52,6 +52,7 @@ interface LiveScreenProps {
   activePlayback: ActivePlayback | null;
   recordingActive: boolean;
   recordingBusy: boolean;
+  snapshotBusy: boolean;
   onBack: () => void;
   onSendPtz: (direction: Direction) => void;
   onToggleRecording: (camera: Camera) => void;
@@ -127,7 +128,7 @@ function tokensFor(glass: boolean, theme: Theme): ControlTokens {
 export function LiveScreen({
   camera, topInset = 0, streamUrl, whepUrl, posterUrl, hdWhepUrl, onRequestHd, onExitHd, detections, ptzActive, ptzFeedback,
   recordings, recordingsTotal, recordingsLoading, recordingsLoadingMore, recordingsError,
-  myRecordings, onPlayLocal, onDeleteLocal, recordingDate, activePlayback, recordingActive, recordingBusy,
+  myRecordings, onPlayLocal, onDeleteLocal, recordingDate, activePlayback, recordingActive, recordingBusy, snapshotBusy,
   onBack, onSendPtz, onToggleRecording, onSnapshot,
   onOpenPlayback, onClosePlayback, onRetryPlayback, onNaoDecodificou, onProgressoPlayback, onDownloadRecording, onPreviousDate, onNextDate,
   onLoadMoreRecordings, onRetryRecordings, onThumbnailError, onRefreshStream,
@@ -409,8 +410,8 @@ export function LiveScreen({
               ) : null}
               <View style={styles.ctrlRow}>
                 <RecordButton recording={recordingActive} busy={recordingBusy} disabled={playing && !recordingActive} c={c} onPress={() => onToggleRecording(camera)} />
-                <ControlButton label="Foto" icon="camera" c={c} onPress={() => onSnapshot(camera)} />
-                <ControlButton label="Áudio" icon="mic" c={c} active={!muted && audioAvailable !== false} disabled={playing} onPress={toggleAudio} />
+                <ControlButton label={snapshotBusy ? 'Capturando' : 'Foto'} icon="camera" c={c} disabled={snapshotBusy} onPress={() => onSnapshot(camera)} />
+                <ControlButton label={muted ? 'Ouvir' : 'Som ligado'} icon="volume" c={c} active={!muted && audioAvailable !== false} disabled={playing} onPress={toggleAudio} />
                 <ControlButton label="Alertas" icon="bell" c={c} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
                 {onToggleGravacaoSistema ? (
                   <ControlButton
@@ -462,8 +463,8 @@ export function LiveScreen({
 
       <View style={styles.actionRow}>
         <RecordButton recording={recordingActive} busy={recordingBusy} disabled={playing && !recordingActive} c={c} onPress={() => onToggleRecording(camera)} />
-        <ControlButton label="Foto" icon="camera" c={c} onPress={() => onSnapshot(camera)} />
-        <ControlButton label="Áudio" icon="mic" c={c} active={!muted && audioAvailable !== false} disabled={playing} onPress={toggleAudio} />
+        <ControlButton label={snapshotBusy ? 'Capturando' : 'Foto'} icon="camera" c={c} disabled={snapshotBusy} onPress={() => onSnapshot(camera)} />
+        <ControlButton label={muted ? 'Ouvir' : 'Som ligado'} icon="volume" c={c} active={!muted && audioAvailable !== false} disabled={playing} onPress={toggleAudio} />
         <ControlButton label="Alertas" icon="bell" c={c} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
                 {onToggleGravacaoSistema ? (
                   <ControlButton

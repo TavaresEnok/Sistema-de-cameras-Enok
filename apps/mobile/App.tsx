@@ -61,6 +61,9 @@ import { montarUrlDeReproducao } from './src/utils/playback-source';
 // O play-token vale 5 min no servidor; renovar aos 4 dá folga para a
 // requisição e a troca de fonte acontecerem antes de vencer.
 const PLAY_TOKEN_RENEW_MS = 4 * 60 * 1000;
+// O servidor também impõe este teto. O timer no app encerra um pouco antes
+// para finalizar e baixar o clipe sem disputar com a parada de segurança.
+const MANUAL_CLIP_MAX_MS = 5 * 60 * 1000;
 
 const RECORDINGS_PAGE_SIZE = 50;
 const POSTER_REFRESH_BATCH = 30;
@@ -162,6 +165,7 @@ function AppInner() {
   const [ptzFeedback, setPtzFeedback] = useState<string | null>(null);
   const [recordingActive, setRecordingActive] = useState(false);
   const [recordingBusy, setRecordingBusy] = useState(false);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
   // Id do clipe em gravação no servidor (gravação "no celular": o servidor grava
   // o trecho EXATO start→stop e o app baixa o arquivo ao parar).
   const [clipId, setClipId] = useState<string | null>(null);
@@ -188,6 +192,7 @@ function AppInner() {
   const clipStopPromiseRef = useRef<Promise<void> | null>(null);
   const clipCancelRequestedRef = useRef(false);
   const clipFinalizeSilentRef = useRef(false);
+  const clipLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordingRequestRef = useRef(0);
   const playbackRequestRef = useRef(0);
   const hdRequestRef = useRef(0);
@@ -1023,11 +1028,14 @@ function AppInner() {
     // Mensagem SEMPRE limpa (nunca o erro técnico cru): o PTZ falha tanto com
     // HTTP 200 { status:'error' } (câmera recusa) quanto lançando exceção
     // (ONVIF indisponível). Nos dois casos o usuário só precisa saber isto:
+    const isZoom = direction === 'ZoomIn' || direction === 'ZoomOut';
     const ptzFail = (message?: string) => {
       setPtzFeedback(null);
       showAppNotice(
-        'Controle PTZ indisponível',
-        message || 'Não foi possível enviar o comando para a câmera. Tente novamente em alguns segundos.',
+        isZoom ? 'Zoom indisponível' : 'Controle PTZ indisponível',
+        isZoom
+          ? (/zoom/i.test(message ?? '') ? message! : 'Não foi possível usar o zoom desta câmera. Ela pode não oferecer zoom óptico.')
+          : message || 'Não foi possível enviar o comando para a câmera. Tente novamente em alguns segundos.',
         'warning',
       );
     };
@@ -1050,6 +1058,8 @@ function AppInner() {
   };
 
   const resetClipState = () => {
+    if (clipLimitTimerRef.current) clearTimeout(clipLimitTimerRef.current);
+    clipLimitTimerRef.current = null;
     clipPhaseRef.current = 'idle';
     clipIdRef.current = null;
     clipCameraRef.current = null;
@@ -1184,6 +1194,7 @@ function AppInner() {
     clipCameraRef.current = camera;
     clipCancelRequestedRef.current = false;
     setRecordingBusy(true);
+    showAppNotice('Preparando gravação…', 'Aguarde um instante enquanto iniciamos o clipe.', 'info', 4000);
 
     const run = (async () => {
       try {
@@ -1218,6 +1229,12 @@ function AppInner() {
         clipPhaseRef.current = 'recording';
         setRecordingActive(true);
         setRecordingBusy(false);
+        showAppNotice('Gravação iniciada', 'Ela será encerrada automaticamente em 5 minutos. Você pode parar antes quando quiser.', 'success', 6000);
+        clipLimitTimerRef.current = setTimeout(() => {
+          if (clipPhaseRef.current === 'recording' && clipIdRef.current === data.clipId) {
+            void finalizeClip(camera, data.clipId, false);
+          }
+        }, MANUAL_CLIP_MAX_MS - 1000);
       } catch (error) {
         const shouldNotify = sessionTokenRef.current === currentSession.token && !clipFinalizeSilentRef.current;
         resetClipState();
@@ -1471,13 +1488,16 @@ function AppInner() {
   };
 
   const takeSnapshot = async (camera: Camera) => {
-    if (!session) return;
+    if (!session || snapshotBusy) return;
     const currentSession = session;
+    setSnapshotBusy(true);
+    showAppNotice('Capturando foto…', 'Buscando a imagem mais recente da câmera.', 'info', 3500);
     // Emite token novo e pede ao endpoint um frame fresco; não reutiliza o
     // snapshot que pode estar há minutos visível no tile.
     const poster = await refreshPoster(camera.id) ?? streamPosters[camera.id];
     if (!poster) {
       showAppNotice('Imagem indisponível', 'Aguarde a câmera carregar e tente novamente.', 'warning');
+      setSnapshotBusy(false);
       return;
     }
     const target = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}snapshot-${camera.id.replace(/[^a-zA-Z0-9_-]/g, '-')}-${Date.now()}.jpg`;
@@ -1499,6 +1519,7 @@ function AppInner() {
       }
     } finally {
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
+      if (sessionTokenRef.current === currentSession.token) setSnapshotBusy(false);
     }
   };
 
@@ -1648,6 +1669,7 @@ function AppInner() {
             activePlayback={activePlayback}
             recordingActive={recordingActive}
             recordingBusy={recordingBusy}
+            snapshotBusy={snapshotBusy}
             ptzActive={ptzActive}
             ptzFeedback={ptzFeedback}
             // A câmera já vem marcada pela API com o nível de acesso efetivo.
@@ -1711,6 +1733,7 @@ function AppInner() {
           activePlayback={activePlayback}
           recordingActive={recordingActive}
           recordingBusy={recordingBusy}
+          snapshotBusy={snapshotBusy}
           onBack={() => leaveLive()}
           onSendPtz={sendPtz}
           onToggleRecording={toggleRecording}

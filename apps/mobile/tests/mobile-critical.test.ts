@@ -157,7 +157,7 @@ test('barra ao vivo deixa PTZ fechado, acessível e mantém as ações na ordem 
   const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
   assert(redesign.includes("const [ptzOpen, setPtzOpen] = useState(false)"), 'PTZ não pode iniciar pressionado');
   const row = redesign.slice(redesign.indexOf('/* Barra de ações */'), redesign.indexOf('/* Feedback do PTZ */'));
-  const labels = ['Áudio', 'Capturar', 'Gravar', 'Notificar', 'HD'];
+  const labels = ['Ouvir', 'Capturar', 'Gravar', 'Notificar', 'HD'];
   let previous = -1;
   for (const label of labels) {
     const current = row.indexOf(label);
@@ -221,6 +221,18 @@ test('erro de PTZ usa o diagnóstico da API, inclusive para câmera sem suporte'
   const app = readFileSync('App.tsx', 'utf8');
   assert(app.includes("if (data?.status === 'error') { ptzFail(data.message); return; }"), 'a mensagem classificada pela API não pode ser descartada');
   assert(app.includes("'Controle PTZ indisponível'"), 'o título deve orientar sem atribuir culpa a credenciais');
+  assert(app.includes("isZoom ? 'Zoom indisponível'"), 'falha de zoom não pode afirmar que todo o PTZ está indisponível');
+});
+
+test('controles ao vivo distinguem ouvir, captura em curso e clipe de cinco minutos', () => {
+  const app = readFileSync('App.tsx', 'utf8');
+  const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
+  const icons = readFileSync('src/components/Icon.tsx', 'utf8');
+  assert(icons.includes("case 'volume':"), 'áudio de reprodução deve usar alto-falante, não microfone');
+  assert(redesign.includes('icon="volume"'), 'o controle de ouvir deve exibir o ícone de volume');
+  assert(redesign.includes("props.snapshotBusy ? 'Capturando…' : 'Capturar'"), 'a captura precisa responder imediatamente ao toque');
+  assert(app.includes('const MANUAL_CLIP_MAX_MS = 5 * 60 * 1000'), 'o clipe manual deve ter teto de cinco minutos');
+  assert(app.includes("'Ela será encerrada automaticamente em 5 minutos."), 'o usuário deve conhecer o limite assim que a gravação começa');
 });
 
 test('release mobile: iOS tem identidade e builds de loja incrementam versão', () => {
