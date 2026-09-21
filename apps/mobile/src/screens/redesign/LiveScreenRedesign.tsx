@@ -93,7 +93,7 @@ function ClockBadge({ style, textStyle }: { style: any; textStyle: any }) {
 }
 
 export function LiveScreenRedesign(props: Props) {
-  const { camera, topInset, streamUrl, whepUrl, posterUrl, hdWhepUrl, onRequestHd, onExitHd, detections,
+  const { camera, topInset, streamUrl, whepUrl, posterUrl, hdUrl, hdWhepUrl, onRequestHd, onExitHd, detections,
     recordings, recordingsLoading, recordingDate, activePlayback, recordingActive, ptzActive, ptzFeedback, canPtz,
     canPlayback, canDownload, myRecordings, notificationsMuted, onToggleNotifications, onBack, onSendPtz, onToggleRecording,
     audioLigado = false, onAudioLigadoChange,
@@ -189,9 +189,12 @@ export function LiveScreenRedesign(props: Props) {
     </View>
   ) : (
     <LiveVideo
-      uri={hdActive ? null : streamUrl}
+      // HD+ é o stream original. WHEP é prioritário; se o servidor confirmar
+      // incompatibilidade de codec, HLS nativo toca esta mesma URL original.
+      uri={hdActive ? hdUrl : streamUrl}
       whepUri={hdActive ? hdWhepUrl : whepUrl}
       webrtcOnly={hdActive}
+      hlsOnConfirmedWhepIncompatibility={hdActive}
       posterUri={posterUrl}
       // IGUAL AO APP ANTIGO (LiveScreen): videoStyle = flex:1 (NÃO absoluteFill).
       // O wrapper interno do player força position:relative; com absoluteFill os

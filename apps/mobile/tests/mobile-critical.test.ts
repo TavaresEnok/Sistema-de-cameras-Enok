@@ -168,12 +168,21 @@ test('barra ao vivo deixa PTZ fechado e mantém as cinco ações na ordem operac
 test('PTZ respeita a permissão também em tela cheia, fecha ao sair e não desloca o pad', () => {
   const app = readFileSync('App.tsx', 'utf8');
   const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
-  assert(app.includes('canPtz={capabilities.ptzControl && live.canControl !== false}'), 'a permissão efetiva precisa chegar à tela ao vivo');
+  assert(app.includes('canPtz={live.canControl !== false}'), 'a câmera controlável deve manter o caminho visual de PTZ');
   assert(redesign.includes('if (!canPtz || isPlaying) setPtzOpen(false);'), 'perder permissão ou abrir playback deve fechar PTZ');
   assert(redesign.includes('setPtzOpen(false); setFullscreen(false);'), 'sair da tela cheia não pode vazar o pad para a tela normal');
   assert(redesign.includes('ptzOpen && canPtz && !isPlaying'), 'o pad em tela cheia precisa exigir permissão');
   assert(redesign.includes('ptzOpen && canPtz ? ('), 'o pad normal precisa exigir permissão');
   assert(redesign.includes('ptzFeedbackSlot: { height: 43'), 'o aviso deve reservar espaço fixo para não fazer o pad saltar');
+});
+
+test('HD+ preserva a imagem original via HLS somente quando WHEP confirma incompatibilidade', () => {
+  const player = readFileSync('src/components/VideoPlayers.tsx', 'utf8');
+  const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
+  assert(player.includes('hlsOnConfirmedWhepIncompatibility'), 'o player precisa distinguir incompatibilidade confirmada de falha transitória');
+  assert(player.includes("/HTTP 400/.test(reason ?? '')"), 'somente a recusa confirmada da negociação pode abrir HLS automaticamente');
+  assert(redesign.includes('uri={hdActive ? hdUrl : streamUrl}'), 'HLS de HD+ deve receber o stream original, não o perfil reduzido');
+  assert(redesign.includes('hlsOnConfirmedWhepIncompatibility={hdActive}'), 'a exceção de compatibilidade deve valer apenas no HD+');
 });
 
 test('permissões do app são renovadas ao retomar e não somem por uma falha transitória', () => {

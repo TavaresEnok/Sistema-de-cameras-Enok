@@ -42,6 +42,12 @@ type LiveVideoProps = {
   whepUri?: string | null;
   /** Diagnóstico HD+: nunca reproduz HLS nem troca de perfil após falha WHEP. */
   webrtcOnly?: boolean;
+  /**
+   * HTTP 400 na negociação WHEP é uma incompatibilidade já confirmada pelo
+   * servidor (por exemplo, H.265 original que o WebRTC nativo não anuncia).
+   * Nesse caso, HLS mantém o MESMO stream original sem fazer transcodificação.
+   */
+  hlsOnConfirmedWhepIncompatibility?: boolean;
   posterUri?: string | null;
   videoStyle: StyleProp<ViewStyle>;
   emptyStyle: StyleProp<ViewStyle>;
@@ -99,7 +105,7 @@ export function LiveVideo(props: LiveVideoProps) {
     return () => clearTimeout(timer);
   }, [webrtcFailed, whepIdentity, failures, manualHls]);
 
-  if (manualHls && !props.webrtcOnly) return <HlsLiveVideo {...props} />;
+  if (manualHls && (!props.webrtcOnly || props.hlsOnConfirmedWhepIncompatibility)) return <HlsLiveVideo {...props} />;
 
   if (whepUri && !webrtcFailed) {
     return (
@@ -118,6 +124,13 @@ export function LiveVideo(props: LiveVideoProps) {
         onAudioAvailable={props.onAudioAvailable}
         onNeedRefresh={props.onNeedRefresh}
         onFailover={(reason) => {
+          // Não é fallback por timeout: MediaMTX só devolve 400 aqui quando a
+          // oferta não aceita os codecs do stream. HLS usa o decodificador
+          // nativo Android e preserva H.265/resolução originais.
+          if (props.hlsOnConfirmedWhepIncompatibility && props.uri && /HTTP 400/.test(reason ?? '')) {
+            setManualHls(true);
+            return;
+          }
           setWebrtcFailureReason(reason ?? 'A conexão WebRTC não entregou vídeo.');
           setFailures((count) => count + 1);
           setWebrtcFailed(true);

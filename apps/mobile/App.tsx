@@ -1646,7 +1646,11 @@ function AppInner() {
             recordingBusy={recordingBusy}
             ptzActive={ptzActive}
             ptzFeedback={ptzFeedback}
-            canPtz={capabilities.ptzControl && live.canControl !== false}
+            // A câmera já vem marcada pela API com o nível de acesso efetivo.
+            // Não escondemos o controle por uma leitura temporária de perfil:
+            // o endpoint PTZ continua sendo a autoridade final e devolve uma
+            // mensagem clara se a permissão tiver sido revogada.
+            canPtz={live.canControl !== false}
             detections={liveDetections}
             canPlayback={capabilities.playback}
             canDownload={capabilities.exportEvidence}
