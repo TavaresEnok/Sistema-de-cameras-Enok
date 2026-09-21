@@ -1096,18 +1096,24 @@ export default function LiveViewPage({ pageActive = true }: { pageActive?: boole
           </Tooltip>
         </div>
 
-        {/* No mural, a grade é travada na proporção (colunas·16):(linhas·9) e
-            CENTRALIZADA. Assim cada célula fica exatamente 16:9, o vídeo
-            (object-contain) a preenche sem tarja lateral, e os quadros se
-            encostam — sem a "coluna preta imensa no meio". A sobra vai só para
-            as bordas externas do telão. Fora do mural, o wrapper é `contents`
-            (invisível ao layout): a grade normal segue idêntica. */}
-        <div className={wallMode ? 'flex-1 min-h-0 grid place-items-center bg-black p-0.5' : 'contents'}>
+        {/* A grade inteira — normal ou mural — mantém a proporção combinada dos
+            seus quadros 16:9. Antes a grade normal esticava as linhas para usar
+            toda a altura disponível: cada célula virava, por exemplo, 1.60:1,
+            e uma câmera 1080p (1.78:1) ganhava tarjas dentro do próprio tile.
+            Agora a pequena sobra fica apenas na BORDA EXTERNA da grade. Assim
+            todos os vídeos permanecem inteiros, alinhados e com o mesmo tamanho. */}
+        <div className={`flex-1 min-h-0 grid place-items-center bg-black ${wallMode ? 'p-0.5' : 'p-1'}`}>
         <div
-          className={wallMode ? 'grid gap-0.5 max-w-full max-h-full' : 'cam-grid-bg flex-1 p-1 grid gap-1 min-h-0'}
-          style={wallMode
-            ? { gridTemplateColumns: `repeat(${visibleGridCols}, 1fr)`, gridTemplateRows: `repeat(${visibleGridRows}, 1fr)`, aspectRatio: `${visibleGridCols * 16} / ${visibleGridRows * 9}`, width: '100%', maxWidth: '100%', maxHeight: '100%' }
-            : { gridTemplateColumns: `repeat(${visibleGridCols}, 1fr)`, gridTemplateRows: `repeat(${visibleGridRows}, 1fr)` }}
+          className={`cam-grid-bg grid min-h-0 max-h-full max-w-full ${wallMode ? 'gap-0.5' : 'gap-1'}`}
+          style={{
+            gridTemplateColumns: `repeat(${visibleGridCols}, 1fr)`,
+            gridTemplateRows: `repeat(${visibleGridRows}, 1fr)`,
+            aspectRatio: `${visibleGridCols * 16} / ${visibleGridRows * 9}`,
+            width: '100%',
+            height: 'auto',
+            maxWidth: '100%',
+            maxHeight: '100%',
+          }}
         >
           {displayedCams.map((cam, i) => (
             <div
