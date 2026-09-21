@@ -333,6 +333,9 @@ export function LiveScreenRedesign(props: Props) {
             <ActionBtn s={s} theme={theme} icon={recordingActive ? 'pause' : 'aperture'} label={props.recordingBusy ? 'Salvando…' : 'Gravar'} active={recordingActive} danger={recordingActive} disabled={props.recordingBusy} onPress={() => onToggleRecording(camera)} />
             <ActionBtn s={s} theme={theme} icon="bell" label={notificationsMuted ? 'Silenciada' : 'Notificar'} active={!notificationsMuted} onPress={() => onToggleNotifications(camera)} />
             <ActionBtn s={s} theme={theme} icon="maximize" label={hdMode ? 'Economia' : 'HD+'} active={hdMode} onPress={toggleHd} />
+            {canPtz ? (
+              <ActionBtn s={s} theme={theme} icon="crosshair" label="PTZ" active={ptzOpen} onPress={() => setPtzOpen((open) => !open)} />
+            ) : null}
             <ActionBtn s={s} theme={theme} icon="expand" label="Tela" onPress={() => setFullscreen(true)} />
           </ScrollView>
 

@@ -153,7 +153,7 @@ test('white-label: ícone próprio vem da Central sem substituir a logo do clien
   assert(!agent.includes('iconContentCrop'), 'agente não pode alterar novamente o recorte escolhido visualmente na Central');
 });
 
-test('barra ao vivo deixa PTZ fechado e mantém as cinco ações na ordem operacional', () => {
+test('barra ao vivo deixa PTZ fechado, acessível e mantém as ações na ordem operacional', () => {
   const redesign = readFileSync('src/screens/redesign/LiveScreenRedesign.tsx', 'utf8');
   assert(redesign.includes("const [ptzOpen, setPtzOpen] = useState(false)"), 'PTZ não pode iniciar pressionado');
   const row = redesign.slice(redesign.indexOf('/* Barra de ações */'), redesign.indexOf('/* Feedback do PTZ */'));
@@ -164,7 +164,12 @@ test('barra ao vivo deixa PTZ fechado e mantém as cinco ações na ordem operac
     assert(current > previous, `${label} deve respeitar a ordem da barra`);
     previous = current;
   }
-  assert(!row.includes('label="PTZ"'), 'PTZ não deve ficar marcado como ação principal da barra');
+  const hd = row.indexOf("label={hdMode ? 'Economia' : 'HD+'}");
+  const ptz = row.indexOf('label="PTZ"');
+  const tela = row.indexOf('label="Tela"');
+  assert(hd >= 0 && ptz > hd && tela > ptz, 'PTZ autorizado deve aparecer depois da qualidade e antes da tela cheia');
+  assert(row.includes('active={ptzOpen}'), 'o botão deve refletir abertura sem iniciar pressionado');
+  assert(row.includes('{canPtz ? ('), 'usuário sem autorização não pode receber o botão PTZ');
 });
 
 test('PTZ respeita a permissão também em tela cheia, fecha ao sair e não desloca o pad', () => {
