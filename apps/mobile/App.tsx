@@ -170,6 +170,9 @@ function AppInner() {
   const [recordingDate, setRecordingDate] = useState(() => localDateKey());
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<MobileCapabilities>({ liveView: true, playback: true, exportEvidence: false, alarmAck: false, ptzControl: false });
+  // Permissões podem ser alteradas enquanto o usuário está logado. Este contador
+  // força uma nova leitura ao voltar ao app, sem obrigá-lo a sair e entrar.
+  const [permissionsRefreshNonce, setPermissionsRefreshNonce] = useState(0);
   const [downloadingIds, setDownloadingIds] = useState<string[]>([]);
   const selectedCamera = cameras.find((camera) => camera.id === selectedCameraId) ?? cameras[0] ?? null;
   const sessionScope = session ? `${session.apiUrl}|${session.user.id}` : 'anonymous';
@@ -375,9 +378,16 @@ function AppInner() {
   useEffect(() => {
     if (!session) { setCanManageAlarms(false); return; }
     const token = session.token;
-    void request<{ permissions?: Partial<MobileCapabilities> }>(session.apiUrl, '/role-permissions/me', token)
-      .then((data) => {
-        if (sessionTokenRef.current !== token) return;
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // A chamada é pequena, mas não pode determinar silenciosamente que o
+    // operador perdeu PTZ: uma renovação de token ou retomada da rede podia
+    // falhar uma vez e esconder o botão até o próximo login.
+    const loadCapabilities = async (attempt = 0): Promise<void> => {
+      try {
+        const data = await request<{ permissions?: Partial<MobileCapabilities> }>(session.apiUrl, '/role-permissions/me', token);
+        if (cancelled || sessionTokenRef.current !== token) return;
         const next = {
           liveView: data.permissions?.liveView !== false,
           playback: data.permissions?.playback !== false,
@@ -387,15 +397,24 @@ function AppInner() {
         };
         setCapabilities(next);
         setCanManageAlarms(next.alarmAck);
-      })
-      .catch(() => {
-        if (sessionTokenRef.current === token) {
-          const fallback = { liveView: true, playback: true, exportEvidence: false, alarmAck: false, ptzControl: false };
-          setCapabilities(fallback);
-          setCanManageAlarms(false);
+      } catch {
+        if (cancelled || sessionTokenRef.current !== token) return;
+        // Duas novas tentativas curtas cobrem a troca de rede/refresh do token.
+        // Mantemos a última permissão conhecida enquanto isso; nunca a elevamos.
+        if (attempt < 2) {
+          retryTimer = setTimeout(() => { void loadCapabilities(attempt + 1); }, 1_500 * (attempt + 1));
+          return;
         }
-      });
-  }, [session?.token, session?.apiUrl]);
+        setCanManageAlarms(false);
+      }
+    };
+
+    void loadCapabilities();
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [session?.token, session?.apiUrl, permissionsRefreshNonce]);
 
   // Push de alarmes + sessão expirada. Ao autenticar: registra o handler de 401
   // (logout gracioso quando o token morre) e o aparelho para push; ao tocar na
@@ -1522,6 +1541,8 @@ function AppInner() {
     const sub = AppState.addEventListener('change', (state) => {
       appStateRef.current = state;
       if (state === 'active') {
+        // Revalida permissões concedidas/revogadas pela Central sem exigir logout.
+        if (session) setPermissionsRefreshNonce((current) => current + 1);
         if (session && !refreshing) void loadAll(true);
         if (cameras.length) void loadAllPosters(cameras);
         if (session) void resumePendingClips(session);

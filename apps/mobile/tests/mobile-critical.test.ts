@@ -176,6 +176,14 @@ test('PTZ respeita a permissão também em tela cheia, fecha ao sair e não desl
   assert(redesign.includes('ptzFeedbackSlot: { height: 43'), 'o aviso deve reservar espaço fixo para não fazer o pad saltar');
 });
 
+test('permissões do app são renovadas ao retomar e não somem por uma falha transitória', () => {
+  const app = readFileSync('App.tsx', 'utf8');
+  assert(app.includes('permissionsRefreshNonce'), 'o retorno ao primeiro plano deve disparar nova leitura de permissões');
+  assert(app.includes("setPermissionsRefreshNonce((current) => current + 1)"), 'o app deve revalidar permissões ao voltar ao primeiro plano');
+  assert(app.includes('loadCapabilities(attempt + 1)'), 'uma falha momentânea precisa tentar novamente antes de ocultar recursos');
+  assert(!app.includes('const fallback = { liveView: true, playback: true, exportEvidence: false, alarmAck: false, ptzControl: false }'), 'falha de rede não pode desligar PTZ silenciosamente');
+});
+
 test('erro de PTZ usa o diagnóstico da API, inclusive para câmera sem suporte', () => {
   const app = readFileSync('App.tsx', 'utf8');
   assert(app.includes("if (data?.status === 'error') { ptzFail(data.message); return; }"), 'a mensagem classificada pela API não pode ser descartada');
